@@ -25,6 +25,8 @@ export interface QueryOptions {
   limit?: number;
   /** Supplied by the memory watermark owner to describe branch/code-tree drift. */
   freshness?: (cwd: string) => Promise<string[]>;
+  /** Prebuilt indexes; read-only callers pass them so the on-disk cache is never rewritten. */
+  indexes?: KnowledgeIndexes;
 }
 
 type CatalogDocument = KnowledgeIndexes["catalog"]["documents"][number];
@@ -73,7 +75,7 @@ export async function queryKnowledgeResult(cwd: string, query: string, options: 
   const warnings = await (options.freshness ?? defaultFreshnessWarnings)(cwd);
   if (terms.length === 0) return { hits: [], warnings };
 
-  const indexes = await loadIndexes(cwd);
+  const indexes = options.indexes ?? await loadIndexes(cwd);
   const scores = new Map<string, number>();
   for (const term of terms) {
     const matching = new Set(Object.entries(indexes.search.terms)

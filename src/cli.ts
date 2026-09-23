@@ -31,6 +31,7 @@ import {
   memoryCommitReviewDigest,
   requestDiscovery,
 } from "./memory/workflow.js";
+import { buildContext, renderContext } from "./context/context.js";
 import { queryKnowledgeResult } from "./query/query.js";
 import { adoptHead, diagnose, restoreStateFromHead, rollbackToLastGate } from "./repair/repair.js";
 import { projectStatus, readStatus, statusMatches } from "./state/status.js";
@@ -125,6 +126,12 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
       return 0;
     }
     throw new Error("Usage: ways repair [diagnose|adopt-head|restore-state|last-gate --discard]");
+  }
+
+  if (command === "context") {
+    const packet = await buildContext(cwd);
+    process.stdout.write(args.includes("--json") ? stableJson(packet) : renderContext(packet));
+    return 0;
   }
 
   if (command === "status") {
