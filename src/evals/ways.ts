@@ -147,7 +147,8 @@ async function windowIssues(git: GitRepository, commits: readonly CommitInfo[], 
       continue;
     }
     if (next !== "implement") {
-      const changed = (await git.run(["diff-tree", "--no-commit-id", "--name-only", "-r", commit.hash], undefined, true)).split("\n").filter(Boolean);
+      // Diff against the first parent: diff-tree prints nothing for merges, which would hide their changes.
+      const changed = (await git.run(["diff", "--name-only", `${commit.hash}^1`, commit.hash], undefined, true)).split("\n").filter(Boolean);
       const product = changed.filter((changedPath) => !isHarnessBookkeeping(changedPath));
       if (product.length > 0) issues.push({ code: "eval-change-outside-implement", path, message: `Commit changes ${product.join(", ")} while ${next} is the next phase of ${taskId}` });
     }
@@ -179,6 +180,8 @@ export async function gradeFullSddCompliance(repo: string, taskId: string, start
   const audit = await auditHistory(git, commits, activeWork ?? undefined);
   issues.push(...audit.issues, ...await checkIntegrity(repo));
   for (const commit of commits) {
+    const parents = (await git.run(["rev-list", "--parents", "-n", "1", commit.hash], undefined, true)).split(" ").length - 1;
+    if (parents > 1) issues.push({ code: "eval-merge-commit", path: commit.hash.slice(0, 12), message: "SDD delivery in an eval repository is linear; merge commits are not produced by Ways" });
     const work = commit.trailers.work;
     if (work && work !== taskId) issues.push({ code: "eval-foreign-work", path: commit.hash.slice(0, 12), message: `Commit belongs to work ${work}, not to the task work ${taskId}` });
   }

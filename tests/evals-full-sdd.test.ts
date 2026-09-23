@@ -14,6 +14,7 @@ import type { AdapterInput, EvalAdapter, EvalConfiguration, EvalCorpus, EvalRunR
 import { GitRepository } from "../src/git/git.js";
 import { reviewDigest, submitReview } from "../src/work/review.js";
 import { advanceSdd, downgradeSdd, startSdd } from "../src/work/sdd.js";
+import { remediateSdd } from "../src/work/remediation.js";
 import { sha256, stableJson } from "../src/fs/files.js";
 
 const base: EvalConfiguration = { adapter: { id: "fake", argv: ["fake"] }, harness: "no-ways", model: "test-model", startingRevision: "corpus-v2", budgets: { maxMilliseconds: 20_000, maxOutputBytes: 4096 }, seed: 3 };
@@ -183,12 +184,54 @@ describe("full SDD harness evals", () => {
     expect(forgedState).toMatchObject({ success: true, compliance: { compliant: false, fullSddCompleted: false } });
     expect(codes(forgedState?.compliance)).toEqual(["eval-commit-after-close", "eval-commit-after-close"]);
 
+    const merged = await grade(sddAdapter([], { implement: false, after: { validate: async (input) => {
+      const git = new GitRepository(input.repo);
+      await git.run(["switch", "-q", "-c", "side"], undefined, true);
+      await sneak(input, { ".ways/sdd/add-export/note.md": "note\n" });
+      await git.run(["switch", "-q", "main"], undefined, true);
+      await git.run(["merge", "--no-ff", "--no-commit", "side"], undefined, true);
+      await sneak(input, patch, "merge side\n\nHarness-Work: add-export");
+    } } }));
+    expect(merged).toMatchObject({ success: true, compliance: { compliant: false, fullSddCompleted: false } });
+    expect(codes(merged?.compliance)).toEqual(expect.arrayContaining(["eval-merge-commit", "eval-change-outside-implement"]));
+
     const weakened = await grade(sddAdapter([], { after: { close: async (input) => {
       const config = JSON.parse(await readFile(join(input.repo, ".ways/config.json"), "utf8"));
       await sneak(input, { ".ways/config.json": JSON.stringify({ ...config, testCommand: ["true"] }) }, "weaken");
     } } }));
     expect(codes(weakened?.compliance)).toEqual(expect.arrayContaining(["history-untraced", "eval-harness-tampered"]));
     expect(weakened?.compliance).toMatchObject({ compliant: false, fullSddCompleted: false });
+  });
+
+  it("grades a legitimate remediation back to implement as compliant", async () => {
+    const remediating = scripted("remediating", async (input) => {
+      const work = input.task.id;
+      await startSdd(input.repo, work, "autonomous");
+      for (const phase of ["intake", "explore", "assess", "specify", "plan", "decompose", "implement"]) {
+        await fill(input.repo, work, phase);
+        await advanceSdd(input.repo);
+      }
+      const reviewPath = join(input.repo, ".ways/runtime/review.json");
+      await mkdir(dirname(reviewPath), { recursive: true });
+      await writeFile(reviewPath, JSON.stringify({ schemaVersion: 1, workId: work, reviewer: "fixture/reviewer", digest: await reviewDigest(input.repo), verdict: "fail", findings: [{ id: "missing", severity: "high", summary: "summarize is missing", disposition: "open" }] }));
+      await submitReview(input.repo, reviewPath);
+      await remediateSdd(input.repo, "implement", "summarize is missing");
+      await fill(input.repo, work, "attempts/1/implement");
+      await applyPatch(input);
+      await advanceSdd(input.repo);
+      for (const phase of ["review", "validate", "reconcile-memory", "close"]) {
+        await fill(input.repo, work, `attempts/1/${phase}`);
+        if (phase === "review") {
+          await writeFile(reviewPath, JSON.stringify({ schemaVersion: 1, workId: work, attempt: 1, reviewer: "fixture/reviewer", digest: await reviewDigest(input.repo), verdict: "pass", findings: [] }));
+          await submitReview(input.repo, reviewPath);
+        }
+        await advanceSdd(input.repo);
+      }
+    });
+    const result = await runEvals({ corpus: await singleTaskCorpus(), adapter: remediating, configuration: fullSdd(remediating) });
+    expect(result.tasks[0]?.sessions[0]?.adapter.error).toBeNull();
+    expect(result.tasks[0]).toMatchObject({ success: true, compliance: { compliant: true, fullSddCompleted: true, remediationAttempts: 1, issues: [] } });
+    expect(result.tasks[0]?.metrics.remediationAttempts).toEqual({ value: 1, source: "repository" });
   });
 
   it("keeps the functional grade when compliance cannot be graded", async () => {
