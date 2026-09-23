@@ -5,51 +5,62 @@
   "mode": "sdd",
   "status": "active",
   "profile": "autonomous",
-  "phase": "review",
+  "phase": "implement",
   "baseCommit": "68715aca0f257ff39b9699c7e133acef741c6358",
-  "gateCommit": "b2320f676d22d4779af044eb0626c56269d8ec84",
+  "gateCommit": "ecbf37b8b791c3fd37403f26ffe1a951682ffe06",
   "createdAt": "2026-09-23T17:49:31.892Z",
-  "updatedAt": "2026-09-23T18:21:15.168Z",
+  "updatedAt": "2026-09-23T18:23:11.310Z",
   "tasks": [],
-  "attempt": 5,
+  "attempt": 6,
   "remediation": {
     "source": "review",
     "target": "implement",
-    "reason": "Re-review failed: git replace objects or grafts substitute the bootstrap commit under the grader",
+    "reason": "Re-review failed: index flags and core.worktree hide uncommitted product changes; rename detection hides deletions",
     "evidence": {
       "kind": "review",
       "review": {
         "schemaVersion": 1,
         "workId": "issue-5-full-sdd-evals",
         "reviewer": "ways-reviewer",
-        "digest": "883766be84afecb5434c3f1b76ec7ea52ac31d5d260abd180bec1ac32dbb4739",
-        "attempt": 4,
+        "digest": "f5b08a91dc1e0cbf1bc9245fe8fc15d6c2200893f8aef0bef8c7e5e92564b21e",
+        "attempt": 5,
         "verdict": "fail",
         "findings": [
           {
-            "id": "R6-amended-bootstrap-anchor-hides-product-change",
+            "id": "R7-git-replace-object-hides-product-change",
             "severity": "high",
-            "summary": "Verified fixed: amended bootstrap, orphan root and rewritten fixture variants raise eval-history-rewritten; reset-to-bootstrap plus genuine SDD stays legitimate; no regressions.",
+            "summary": "Verified fixed: replace refs (loose or packed) and grafts raise eval-history-rewritten; no regressions.",
             "disposition": "fixed"
           },
           {
-            "id": "R7-git-replace-object-hides-product-change",
+            "id": "R8-index-flags-and-worktree-config-hide-uncommitted-product-change",
             "severity": "high",
-            "summary": "Amending the bootstrap with the product change, resetting soft to startRevision and running `git replace <startRevision> X` before an empty-implement SDD through close is graded compliant: all grader git commands honour refs/replace (and info/grafts), so the ancestry check passes while the change sits in the replaced parent tree. Disable or reject replace objects and grafts, with a test.",
+            "summary": "After a legitimate empty-implement SDD through close, an uncommitted product change hidden by skip-worktree, assume-unchanged plus info/exclude, or core.worktree pointing elsewhere is invisible to git status and graded compliant while the functional grade reads it from disk. Make the uncommitted check independent of agent-controlled index flags and config, with tests.",
             "disposition": "open"
+          },
+          {
+            "id": "R9-rename-detection-hides-product-deletions",
+            "severity": "low",
+            "summary": "windowIssues uses git diff --name-only with rename detection, so moving a product file into a bookkeeping path outside implement hides the product deletion. Use --no-renames.",
+            "disposition": "open"
+          },
+          {
+            "id": "A1-alternates-patched-git-and-env",
+            "severity": "low",
+            "summary": "Alternates cannot substitute content-addressed objects; grader env is runner-controlled; a patched git or host tampering subverts the tooling itself and belongs to sandbox isolation, the same class as L1.",
+            "disposition": "accepted"
           },
           {
             "id": "L1-forged-full-certification-chain",
             "severity": "low",
-            "summary": "A fully forged certification chain, including rewriting the agent's own post-bootstrap commits, cannot be proven locally; documented, consistent with the README authorship caveat.",
+            "summary": "A fully forged certification chain or subverted host git tooling cannot be proven locally; documented, consistent with the README authorship caveat.",
             "disposition": "accepted"
           }
         ]
       }
     },
-    "priorCheckpoint": "ef716fd1130926668d63552734e4b0ccecef324b",
-    "attempt": 5,
-    "timestamp": "2026-09-23T18:19:39.054Z"
-  },
-  "lastCompletedPhase": "implement"
+    "priorCheckpoint": "ecbf37b8b791c3fd37403f26ffe1a951682ffe06",
+    "attempt": 6,
+    "timestamp": "2026-09-23T18:23:11.310Z"
+  }
 }
