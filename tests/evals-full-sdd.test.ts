@@ -17,7 +17,7 @@ import { advanceSdd, downgradeSdd, startSdd } from "../src/work/sdd.js";
 import { remediateSdd } from "../src/work/remediation.js";
 import { sha256, stableJson } from "../src/fs/files.js";
 
-const base: EvalConfiguration = { adapter: { id: "fake", argv: ["fake"] }, harness: "no-ways", model: "test-model", startingRevision: "corpus-v2", budgets: { maxMilliseconds: 90_000, maxOutputBytes: 4096 }, seed: 3 };
+const base: EvalConfiguration = { adapter: { id: "fake", argv: ["fake"] }, harness: "no-ways", model: "test-model", startingRevision: "corpus-v3", budgets: { maxMilliseconds: 90_000, maxOutputBytes: 4096 }, seed: 3 };
 
 async function singleTaskCorpus(): Promise<EvalCorpus> {
   const corpus = await loadCorpus();
@@ -110,7 +110,7 @@ describe("full SDD harness evals", { timeout: 120_000 }, () => {
     const result = await runEvals({ corpus: await singleTaskCorpus(), adapter, configuration: fullSdd(adapter) });
     const task = result.tasks[0];
     expect(task).toMatchObject({ success: true, incorrectDoneClaim: false });
-    expect(task?.compliance).toMatchObject({ applicable: true, compliant: true, fullSddCompleted: true, sddWorksStarted: 1, sddWorksClosed: 1, downgrades: 0, remediationAttempts: 0, activeWork: null, issues: [] });
+    expect(task?.compliance).toMatchObject({ applicable: true, compliant: true, workflow: "sdd", completed: true, worksStarted: 1, worksClosed: 1, effectivePolicy: { profile: "autonomous", execution: "inline" }, downgrades: 0, remediationAttempts: 0, activeWork: null, issues: [] });
     expect(task?.metrics.remediationAttempts).toEqual({ value: 0, source: "repository" });
     expect(task?.metrics.toolCalls).toEqual({ value: 12, source: "adapter" });
     expect(task?.metrics.contextCompactions).toMatchObject({ value: null, reason: "adapter did not report contextCompactions for the initial session" });
@@ -125,7 +125,7 @@ describe("full SDD harness evals", { timeout: 120_000 }, () => {
 
   it("separates functional success from harness compliance when SDD is bypassed", async () => {
     const uncommitted = await runEvals({ corpus: await singleTaskCorpus(), adapter: fakeAdapter, configuration: { ...base, harness: "full-sdd" } });
-    expect(uncommitted.tasks[0]).toMatchObject({ success: true, compliance: { applicable: true, compliant: false, fullSddCompleted: false } });
+    expect(uncommitted.tasks[0]).toMatchObject({ success: true, compliance: { applicable: true, compliant: false, completed: false } });
     expect(uncommitted.tasks[0]?.compliance.applicable && uncommitted.tasks[0].compliance.issues.map((issue) => issue.code)).toContain("eval-uncommitted-changes");
 
     const bypass = scripted("bypass", async (input) => {
@@ -135,7 +135,7 @@ describe("full SDD harness evals", { timeout: 120_000 }, () => {
       await git.run(["commit", "-q", "--no-verify", "-m", "sneak"], undefined, true);
     });
     const bypassed = await runEvals({ corpus: await singleTaskCorpus(), adapter: bypass, configuration: fullSdd(bypass) });
-    expect(bypassed.tasks[0]).toMatchObject({ success: true, compliance: { compliant: false, fullSddCompleted: false } });
+    expect(bypassed.tasks[0]).toMatchObject({ success: true, compliance: { compliant: false, completed: false } });
     expect(codes(bypassed.tasks[0]?.compliance)).toContain("history-untraced");
   });
 
@@ -143,12 +143,12 @@ describe("full SDD harness evals", { timeout: 120_000 }, () => {
     const corpus = await singleTaskCorpus();
     const noop = scripted("noop", async () => {});
     const idle = await runEvals({ corpus, adapter: noop, configuration: fullSdd(noop) });
-    expect(idle.tasks[0]).toMatchObject({ success: false, compliance: { compliant: false, fullSddCompleted: false, sddWorksStarted: 0 } });
+    expect(idle.tasks[0]).toMatchObject({ success: false, compliance: { compliant: false, completed: false, worksStarted: 0 } });
     expect(codes(idle.tasks[0]?.compliance)).toEqual(["eval-sdd-not-closed"]);
 
     const foreign = sddAdapter([], { workId: "unrelated-work" });
     const elsewhere = await runEvals({ corpus, adapter: foreign, configuration: fullSdd(foreign) });
-    expect(elsewhere.tasks[0]).toMatchObject({ success: true, compliance: { compliant: false, fullSddCompleted: false, sddWorksClosed: 1 } });
+    expect(elsewhere.tasks[0]).toMatchObject({ success: true, compliance: { compliant: false, completed: false, worksClosed: 1 } });
     expect(codes(elsewhere.tasks[0]?.compliance)).toEqual(expect.arrayContaining(["eval-foreign-work", "eval-sdd-not-closed"]));
 
     const downgrade = scripted("downgrade", async (input) => {
@@ -163,7 +163,7 @@ describe("full SDD harness evals", { timeout: 120_000 }, () => {
       await finishQuick(input.repo, "feat: add summarize export");
     });
     const downgraded = await runEvals({ corpus, adapter: downgrade, configuration: fullSdd(downgrade) });
-    expect(downgraded.tasks[0]).toMatchObject({ success: true, compliance: { compliant: false, fullSddCompleted: false, downgrades: 1 } });
+    expect(downgraded.tasks[0]).toMatchObject({ success: true, compliance: { compliant: false, completed: false, downgrades: 1 } });
     expect(codes(downgraded.tasks[0]?.compliance)).toEqual(expect.arrayContaining(["eval-downgraded", "eval-sdd-not-closed"]));
   });
 
@@ -173,7 +173,7 @@ describe("full SDD harness evals", { timeout: 120_000 }, () => {
       await sneak(input, { ".ways/config.json": JSON.stringify({ ...config, testCommand: ["true"] }) }, "weaken");
     } } });
     const result = await runEvals({ corpus: await singleTaskCorpus(), adapter: weakening, configuration: fullSdd(weakening) });
-    expect(result.tasks[0]).toMatchObject({ success: true, compliance: { compliant: false, fullSddCompleted: false } });
+    expect(result.tasks[0]).toMatchObject({ success: true, compliance: { compliant: false, completed: true } });
     expect(codes(result.tasks[0]?.compliance)).toEqual(expect.arrayContaining(["history-untraced", "eval-harness-tampered"]));
   });
 
@@ -204,7 +204,7 @@ describe("full SDD harness evals", { timeout: 120_000 }, () => {
     });
     const result = await runEvals({ corpus: await singleTaskCorpus(), adapter: remediating, configuration: fullSdd(remediating) });
     expect(result.tasks[0]?.sessions[0]?.adapter.error).toBeNull();
-    expect(result.tasks[0]).toMatchObject({ success: true, compliance: { compliant: true, fullSddCompleted: true, remediationAttempts: 1, issues: [] } });
+    expect(result.tasks[0]).toMatchObject({ success: true, compliance: { compliant: true, completed: true, remediationAttempts: 1, issues: [] } });
     expect(result.tasks[0]?.metrics.remediationAttempts).toEqual({ value: 1, source: "repository" });
   });
 
@@ -234,7 +234,7 @@ describe("full SDD harness evals", { timeout: 120_000 }, () => {
       const adapter = commandAdapter(process.execPath, ["-e", script]);
       const result = await runEvals({ corpus: await singleTaskCorpus(), adapter, configuration: fullSdd(adapter) });
       expect(result.tasks[0]?.sessions[0]?.adapter).toMatchObject({ exitCode: 0, error: null });
-      expect(result.tasks[0]).toMatchObject({ success: true, compliance: { compliant: false, fullSddCompleted: false } });
+      expect(result.tasks[0]).toMatchObject({ success: true, compliance: { compliant: false, completed: false } });
       expect(codes(result.tasks[0]?.compliance)).toEqual(["eval-sdd-not-closed"]);
       expect(result.evidence.kind).toBe("real");
     } finally {
@@ -279,7 +279,7 @@ describe("full SDD harness evals", { timeout: 120_000 }, () => {
       return fakeAdapter.run(input);
     } };
     const result = await runEvals({ corpus: await singleTaskCorpus(), adapter, configuration: { ...base, harness: "checks-only", adapter: { id: "probe", argv: ["probe"] } } });
-    expect(result.tasks[0]?.compliance).toEqual({ applicable: false, reason: "harness checks-only does not run Ways SDD" });
+    expect(result.tasks[0]?.compliance).toEqual({ applicable: false, reason: "harness checks-only does not run a Ways workflow" });
     expect(result.tasks[0]?.metrics.remediationAttempts.value).toBeNull();
     expect(result.summary.compliantCount).toBeNull();
     expect(result.harnessPrompt).toBeNull();
@@ -332,13 +332,13 @@ describe("harness comparison report", () => {
     expect(fixtures.runs.find((entry) => entry.artifact.path === "seed.json")).toMatchObject({ status: "non-comparable", reasons: ["seed differs from the reference run"] });
     expect(fixtures.harnesses.map((score) => score.harness)).toEqual(["no-ways", "checks-only", "full-sdd"]);
     const [a, , d] = fixtures.harnesses;
-    expect(a).toMatchObject({ runs: 1, taskSuccess: { succeeded: 3, tasks: 3, rate: 1 }, harnessCompliance: { applicable: false } });
+    expect(a).toMatchObject({ runs: 1, configuration: "A", taskSuccess: { count: 6, trials: 6, rate: 1 }, harnessCompliance: { applicable: false } });
     expect(a?.artifacts).toEqual([{ path: "a.json", sha256: sha256(inputs[0]!.content), runId: runs.a!.runId }]);
-    expect(d).toMatchObject({ taskSuccess: { succeeded: 3 }, harnessCompliance: { applicable: true, compliant: 0, fullSddCompleted: 0, tasks: 3, rate: 0 } });
-    expect(d?.metrics.toolCalls).toMatchObject({ total: null, observedTotal: null, available: 0, unavailable: 3 });
-    expect(d?.metrics.resumeSuccess).toMatchObject({ total: null, observedTotal: 1, available: 1, unavailable: 2 });
-    expect(d?.metrics.timeouts).toMatchObject({ total: 0, available: 3 });
-    expect(fixtures.tasks.find((task) => task.harness === "full-sdd" && task.taskId === "add-export")).toEqual({ taskId: "add-export", harness: "full-sdd", success: true, compliant: false, artifact: "d.json", pointer: "/tasks/0" });
+    expect(d).toMatchObject({ configuration: "D", taskSuccess: { count: 6 }, harnessCompliance: { applicable: true, workflow: "sdd", compliant: { count: 0, trials: 6, rate: 0 }, completed: { count: 0, trials: 6 } } });
+    expect(d?.metrics.toolCalls).toMatchObject({ total: null, observedTotal: null, available: 0, unavailable: 6 });
+    expect(d?.metrics.resumeSuccess).toMatchObject({ total: null, observedTotal: 1, available: 1, unavailable: 5 });
+    expect(d?.metrics.timeouts).toMatchObject({ total: 0, available: 6 });
+    expect(fixtures.tasks.find((task) => task.harness === "full-sdd" && task.taskId === "add-export")).toMatchObject({ taskId: "add-export", kind: "feature", harness: "full-sdd", runId: runs.d!.runId, success: true, compliant: false, completed: false, artifact: "d.json", pointer: "/tasks/0" });
 
     const markdown = renderComparisonMarkdown(fixtures);
     expect(markdown).toContain("## Task success (independent functional grading)");

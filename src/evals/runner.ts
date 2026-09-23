@@ -6,8 +6,8 @@ import { GitRepository } from "../git/git.js";
 import { fakeAdapter, unavailableUsage } from "./adapters.js";
 import { loadCorpus } from "./corpus.js";
 import { gradeTask } from "./grader.js";
-import { captureWaysRevision, complianceGradingError, FULL_SDD_PROMPT, fullSddPrompt, gradeFullSddCompliance, prepareFullSdd } from "./ways.js";
-import { ADAPTER_METRICS, type AdapterExecution, type AdapterInput, type EvalAdapter, type EvalConfiguration, type EvalRunOptions, type EvalRunResult, type EvalSessionResult, type EvalTask, type EvalTaskResult, type HarnessCompliance, type ObservedMetric, type TaskMetrics, type UsageMetrics } from "./types.js";
+import { captureWaysRevision, complianceGradingError, gradeCompliance, harnessPrompt, harnessTaskPrompt, HARNESS_WORKFLOWS, prepareWays, taskTestCommand } from "./ways.js";
+import { ADAPTER_METRICS, DEFAULT_OUTCOME_POLICY, WAYS_HARNESSES, type AdapterExecution, type AdapterInput, type EvalAdapter, type EvalConfiguration, type EvalRunOptions, type EvalRunResult, type EvalSessionResult, type EvalTask, type EvalTaskResult, type EvalEnvironment, type HarnessCompliance, type ObservedMetric, type OutcomeEvalPolicy, type TaskMetrics, type UsageMetrics } from "./types.js";
 
 interface DisposableRepository {
   path: string;
@@ -40,7 +40,7 @@ async function createRepository(task: EvalTask, config: EvalConfiguration): Prom
     await git.run(["config", "user.email", "ways-eval@example.test"], gitEnv, true);
     await git.run(["add", "."], gitEnv, true);
     await git.run(["-c", "commit.gpgSign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "eval fixture"], gitEnv, true);
-    if (config.harness === "full-sdd") return { path, ...await prepareFullSdd(path, task, gitEnv) };
+    if (WAYS_HARNESSES.includes(config.harness)) return { path, ...await prepareWays(path, task, gitEnv) };
     return { path, revision: await git.run(["rev-parse", "HEAD"], gitEnv, true) };
   } catch (error) {
     await rm(path, { recursive: true, force: true });
@@ -74,6 +74,7 @@ function unavailableMetrics(reason: string): TaskMetrics {
     ...Object.fromEntries(ADAPTER_METRICS.map((name) => [name, missing("adapter")])) as Record<typeof ADAPTER_METRICS[number], ObservedMetric>,
     timeouts: missing("runner"),
     remediationAttempts: missing("repository"),
+    humanApprovals: missing("repository"),
     resumeSuccess: { value: null, source: "runner", reason },
   };
 }
@@ -91,7 +92,10 @@ function taskMetrics(task: EvalTask, sessions: readonly EvalSessionResult[], com
     timeouts: { value: sessions.filter((session) => session.adapter.timedOut).length, source: "runner" },
     remediationAttempts: compliance.applicable
       ? { value: compliance.remediationAttempts, source: "repository" }
-      : { value: null, source: "repository", reason: "remediation attempts are only observable with the full-sdd harness" },
+      : { value: null, source: "repository", reason: "remediation attempts are only observable with a Ways workflow harness" },
+    humanApprovals: compliance.applicable
+      ? { value: compliance.humanApprovals, source: "repository" }
+      : { value: null, source: "repository", reason: "approval commits are only observable with a Ways workflow harness" },
     resumeSuccess: task.freshSessionResume === undefined
       ? { value: null, source: "runner", reason: "task has no fresh-session resume" }
       : { value: resume !== undefined && sessionSucceeded(resume) && resume.grading.success, source: "runner" },
@@ -104,11 +108,11 @@ function sessionSucceeded(session: EvalSessionResult): boolean {
 
 async function runSession(repo: string, revision: string, task: EvalTask, adapter: EvalAdapter, config: EvalConfiguration, session: "initial" | "resume", prompt: string, waysBin?: string): Promise<EvalSessionResult> {
   const started = Date.now();
-  const harnessPrompt = config.harness === "full-sdd" ? fullSddPrompt(FULL_SDD_PROMPT[session], task.id, prompt) : prompt;
+  const template = harnessPrompt(config.harness, config.outcomePolicy);
   const result = await invoke(adapter, {
     task,
     repo,
-    prompt: harnessPrompt,
+    prompt: template ? harnessTaskPrompt(template[session], task.id, prompt) : prompt,
     session,
     harness: config.harness,
     model: config.model,
@@ -116,6 +120,7 @@ async function runSession(repo: string, revision: string, task: EvalTask, adapte
     seed: config.seed,
     maxOutputBytes: config.budgets.maxOutputBytes,
     ...(waysBin ? { waysBin } : {}),
+    ...(config.outcomePolicy ? { outcomePolicy: config.outcomePolicy } : {}),
     signal: new AbortController().signal,
   }, config.budgets.maxMilliseconds);
   const grading = await gradeTask(repo, task, config.budgets.maxMilliseconds, config.budgets.maxOutputBytes);
@@ -130,6 +135,25 @@ async function runSession(repo: string, revision: string, task: EvalTask, adapte
   };
 }
 
+function environment(task: EvalTask, config: EvalConfiguration): EvalEnvironment {
+  const waysInstalled = WAYS_HARNESSES.includes(config.harness);
+  return { waysInstalled, testCommand: waysInstalled ? taskTestCommand(task) : null, environmentChecks: task.environmentChecks ?? [] };
+}
+
+/** Records the effective outcome policy for E and refuses one on any other harness. */
+function normalizeConfiguration(configuration: EvalConfiguration): EvalConfiguration {
+  if (configuration.harness !== "outcome") {
+    if (configuration.outcomePolicy !== undefined) throw new Error("Outcome policies apply only to the outcome harness");
+    return configuration;
+  }
+  const policy: OutcomeEvalPolicy = { ...DEFAULT_OUTCOME_POLICY, ...configuration.outcomePolicy };
+  const allowed: Record<keyof OutcomeEvalPolicy, readonly string[]> = { isolation: ["required", "optional"], parallel: ["allowed", "disabled"], evaluation: ["independent", "self"], memory: ["none", "normal", "high"], approvals: ["none", "close", "close,remediate"] };
+  for (const [field, values] of Object.entries(allowed)) {
+    if (!values.includes(policy[field as keyof OutcomeEvalPolicy])) throw new Error(`Outcome policy ${field} must be one of ${values.join(", ")}`);
+  }
+  return { ...configuration, outcomePolicy: policy };
+}
+
 async function runTask(task: EvalTask, adapter: EvalAdapter, config: EvalConfiguration): Promise<EvalTaskResult> {
   const started = Date.now();
   let disposable: DisposableRepository | undefined;
@@ -140,12 +164,12 @@ async function runTask(task: EvalTask, adapter: EvalAdapter, config: EvalConfigu
     const final = sessions.at(-1);
     if (!final) throw new Error("Eval task produced no session");
     const incorrectDoneClaim = sessions.some((session) => session.doneClaim && !session.grading.success);
-    const compliance: HarnessCompliance = config.harness === "full-sdd"
-      ? await gradeFullSddCompliance(disposable.path, task.id, disposable.revision).catch(complianceGradingError)
-      : { applicable: false, reason: `harness ${config.harness} does not run Ways SDD` };
+    const compliance = await gradeCompliance(config.harness, disposable.path, task.id, disposable.revision, config.outcomePolicy);
     return {
       taskId: task.id,
+      kind: task.kind ?? "feature",
       startingRevision: disposable.revision,
+      environment: environment(task, config),
       freshSessionResume: task.freshSessionResume !== undefined,
       success: final.grading.success && sessions.every(sessionSucceeded),
       regressions: sessions.some((session) => session.grading.regressions),
@@ -158,9 +182,12 @@ async function runTask(task: EvalTask, adapter: EvalAdapter, config: EvalConfigu
     };
   } catch (error) {
     const reason = `task failed before grading: ${error instanceof Error ? error.message : String(error)}`;
+    const workflow = HARNESS_WORKFLOWS[config.harness];
     return {
       taskId: task.id,
+      kind: task.kind ?? "feature",
       startingRevision: disposable?.revision ?? "unavailable",
+      environment: environment(task, config),
       freshSessionResume: task.freshSessionResume !== undefined,
       success: false,
       regressions: false,
@@ -168,7 +195,7 @@ async function runTask(task: EvalTask, adapter: EvalAdapter, config: EvalConfigu
       elapsedMs: Date.now() - started,
       usage: unavailableUsage,
       metrics: unavailableMetrics(reason),
-      compliance: config.harness === "full-sdd" ? complianceGradingError(reason) : { applicable: false, reason },
+      compliance: workflow ? complianceGradingError(workflow, reason) : { applicable: false, reason },
       sessions: [{
         session: "initial",
         doneClaim: false,
@@ -187,7 +214,7 @@ async function runTask(task: EvalTask, adapter: EvalAdapter, config: EvalConfigu
 export async function runEvals(options: EvalRunOptions): Promise<EvalRunResult> {
   const corpus = options.corpus ?? await loadCorpus(options.corpusPath);
   const adapter = options.adapter ?? fakeAdapter;
-  const configuration = options.configuration;
+  const configuration = normalizeConfiguration(options.configuration);
   if (configuration.adapter.id !== adapter.id || JSON.stringify(configuration.adapter.argv) !== JSON.stringify(adapter.argv)) throw new Error("Eval configuration adapter identity does not match the adapter being run");
   if (configuration.startingRevision !== corpus.revision) throw new Error("Eval configuration revision must match corpus revision");
   const now = options.now ?? (() => new Date());
@@ -199,12 +226,12 @@ export async function runEvals(options: EvalRunOptions): Promise<EvalRunResult> 
   for (const task of corpus.tasks) tasks.push(await runTask(task, adapter, configuration));
   const finishedDate = now();
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     runId,
     corpus: { id: corpus.id, revision: corpus.revision, digest: sha256(stableJson(corpus)), taskCount: corpus.tasks.length },
     configuration,
     waysRevision,
-    harnessPrompt: configuration.harness === "full-sdd" ? FULL_SDD_PROMPT : null,
+    harnessPrompt: harnessPrompt(configuration.harness, configuration.outcomePolicy),
     startedAt: startedDate.toISOString(),
     finishedAt: finishedDate.toISOString(),
     evidence: evidenceKind === "fixture"
@@ -216,7 +243,8 @@ export async function runEvals(options: EvalRunOptions): Promise<EvalRunResult> 
       successCount: tasks.filter((task) => task.success).length,
       regressionCount: tasks.filter((task) => task.regressions).length,
       incorrectDoneClaimCount: tasks.filter((task) => task.incorrectDoneClaim).length,
-      compliantCount: configuration.harness === "full-sdd" ? tasks.filter((task) => task.compliance.applicable && task.compliance.compliant).length : null,
+      compliantCount: WAYS_HARNESSES.includes(configuration.harness) ? tasks.filter((task) => task.compliance.applicable && task.compliance.compliant).length : null,
+      completedCount: WAYS_HARNESSES.includes(configuration.harness) ? tasks.filter((task) => task.compliance.applicable && task.compliance.completed).length : null,
       elapsedMs: tasks.reduce((sum, task) => sum + task.elapsedMs, 0),
     },
   };
