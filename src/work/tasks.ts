@@ -8,6 +8,7 @@ import { GitRepository } from "../git/git.js";
 import { commitsAfter } from "../integrity/history.js";
 import { loadState, saveState } from "../state/store.js";
 import { attemptFailureCommit } from "./outcome.js";
+import { parallelFailure } from "./outcome-policy.js";
 import { attemptNumber, attemptPhasePath, isPriorAttemptArtifact, remediationTransitionCommit } from "./attempt.js";
 
 function requireTaskWork(state: WorkState | undefined): WorkState {
@@ -80,6 +81,8 @@ export async function prepareTask(cwd: string, id: string): Promise<TaskState> {
 
   const attempt = attemptNumber(state.attempt);
   const git = new GitRepository(cwd);
+  const serial = await parallelFailure(git, state, task.id);
+  if (serial) throw new Error(serial);
   const branch = `ways/${state.id}/attempt-${attempt}/${task.id}`;
   const worktree = join(cwd, ".ways", "worktrees", state.id, `attempt-${attempt}`, task.id);
   await mkdir(join(cwd, ".ways", "worktrees", state.id, `attempt-${attempt}`), { recursive: true });

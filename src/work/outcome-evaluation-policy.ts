@@ -31,14 +31,14 @@ function normalize(value: string): string {
   return value.trim().toLowerCase();
 }
 
-/** Author and committer names and emails of the task commits that implemented the increment. */
+/** Author and committer names and emails of the task commits, and direct commits under optional isolation, that implemented the increment. */
 export async function implementerIdentities(git: GitRepository, workId: string, openCommit: string, input: string): Promise<Set<string>> {
   const identities = new Set<string>();
   const hashes = (await git.run(["rev-list", `${openCommit}..${input}`])).split("\n").filter(Boolean);
   for (const hash of hashes) {
     const [author = "", authorEmail = "", committer = "", committerEmail = "", body = ""] = (await git.run(["show", "-s", "--format=%an%x00%ae%x00%cn%x00%ce%x00%b", hash])).split("\0");
     const trailers = parseTrailers(body);
-    if (trailers.work !== workId || !trailers.task) continue;
+    if (trailers.work !== workId || (!trailers.task && (trailers.phase?.startsWith("outcome-") ?? false))) continue;
     for (const identity of [author, authorEmail, committer, committerEmail]) if (identity.trim()) identities.add(normalize(identity));
   }
   return identities;
