@@ -53,7 +53,7 @@ import { applyUpgrade, planUpgrade } from "./upgrade/upgrade.js";
 import { runEvals } from "./evals/runner.js";
 import { commandAdapter, fakeAdapter } from "./evals/adapters.js";
 import { compareResultFiles, renderComparisonMarkdown } from "./evals/compare.js";
-import { HARNESS_LABELS, type HarnessLabel } from "./evals/types.js";
+import { DEFAULT_OUTCOME_POLICY, HARNESS_LABELS, type HarnessLabel, type OutcomeEvalPolicy } from "./evals/types.js";
 
 function option(args: readonly string[], name: string): string | undefined {
   return args.find((arg) => arg.startsWith(`${name}=`))?.slice(name.length + 1);
@@ -325,7 +325,7 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
       process.stdout.write(output);
       return report.runs.some((entry) => entry.status === "comparable") ? 0 : 1;
     }
-    if (action !== "run") throw new Error("Usage: ways evals run [--adapter=fake|command] [--command=<executable>] | compare --input=<result.json>...");
+    if (action !== "run") throw new Error("Usage: ways evals run [--adapter=fake|command] [--command=<executable>] [--harness=<label>] [--isolation= --parallel= --evaluation= --memory= --approvals= with --harness=outcome] | compare --input=<result.json>...");
     const adapterName = option(args, "--adapter") ?? "fake";
     const adapter = adapterName === "fake"
       ? fakeAdapter
@@ -341,6 +341,9 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
     if (!Number.isSafeInteger(maxMilliseconds) || maxMilliseconds <= 0) throw new Error("--timeout-ms must be a positive integer");
     if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes <= 0) throw new Error("--max-output-bytes must be a positive integer");
     if (!Number.isSafeInteger(seed) || seed < 0) throw new Error("--seed must be a non-negative integer");
+    const policyFlags = { isolation: option(args, "--isolation"), parallel: option(args, "--parallel"), evaluation: option(args, "--evaluation"), memory: option(args, "--memory"), approvals: option(args, "--approvals") };
+    const policy = Object.fromEntries(Object.entries(policyFlags).filter(([, value]) => value !== undefined)) as Partial<OutcomeEvalPolicy>;
+    if (harness !== "outcome" && Object.keys(policy).length > 0) throw new Error("--isolation, --parallel, --evaluation, --memory and --approvals apply only to --harness=outcome");
     const result = await runEvals({
       ...(corpusPath ? { corpusPath } : {}),
       adapter,
@@ -348,9 +351,10 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
         adapter: { id: adapter.id, argv: adapter.argv },
         harness: harness as HarnessLabel,
         model: option(args, "--model") ?? "unspecified",
-        startingRevision: option(args, "--revision") ?? "corpus-v2",
+        startingRevision: option(args, "--revision") ?? "corpus-v3",
         budgets: { maxMilliseconds, maxOutputBytes },
         seed,
+        ...(harness === "outcome" ? { outcomePolicy: { ...DEFAULT_OUTCOME_POLICY, ...policy } } : {}),
       },
     });
     const output = stableJson(result);

@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
-import type { EvalCheck, EvalCorpus, EvalFile, EvalResume, EvalTask } from "./types.js";
+import { TASK_KINDS, type EvalCheck, type EvalCorpus, type EvalFile, type EvalResume, type EvalTask } from "./types.js";
 
 export function defaultCorpusPath(): string {
   return fileURLToPath(new URL("../../assets/evals/corpus.json", import.meta.url));
@@ -35,6 +35,8 @@ function isTask(value: unknown): value is EvalTask {
     && Array.isArray(task.setup) && task.setup.every(isFile)
     && Array.isArray(task.success) && task.success.length > 0 && task.success.every(isCheck)
     && Array.isArray(task.regressions) && task.regressions.length > 0 && task.regressions.every(isCheck)
+    && (task.kind === undefined || (TASK_KINDS as readonly unknown[]).includes(task.kind))
+    && (task.environmentChecks === undefined || Array.isArray(task.environmentChecks) && task.environmentChecks.every(isCheck))
     && (task.fakePatch === undefined || Array.isArray(task.fakePatch) && task.fakePatch.every(isFile))
     && (task.freshSessionResume === undefined || isResume(task.freshSessionResume));
 }

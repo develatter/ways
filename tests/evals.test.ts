@@ -8,12 +8,12 @@ import { runEvals } from "../src/evals/runner.js";
 import { run } from "../src/cli.js";
 import type { EvalAdapter, EvalConfiguration, EvalTask } from "../src/evals/types.js";
 
-const configuration: EvalConfiguration = { adapter: { id: "fake", argv: ["fake"] }, harness: "checks-only", model: "test-model", startingRevision: "corpus-v2", budgets: { maxMilliseconds: 1000, maxOutputBytes: 1024 }, seed: 11 };
+const configuration: EvalConfiguration = { adapter: { id: "fake", argv: ["fake"] }, harness: "checks-only", model: "test-model", startingRevision: "corpus-v3", budgets: { maxMilliseconds: 1000, maxOutputBytes: 1024 }, seed: 11 };
 
 describe("reproducible eval runner", () => {
   it("runs functional corpus and fresh resume with unavailable usage", async () => {
     const result = await runEvals({ corpus: await loadCorpus(), configuration, adapter: fakeAdapter, now: () => new Date("2026-01-01T00:00:00Z") });
-    expect(result.summary).toMatchObject({ taskCount: 3, successCount: 3, regressionCount: 0, incorrectDoneClaimCount: 0 });
+    expect(result.summary).toMatchObject({ taskCount: 6, successCount: 6, regressionCount: 0, incorrectDoneClaimCount: 0 });
     expect(result.tasks.find((task) => task.taskId === "resume-session")?.sessions).toHaveLength(2);
     expect(result.tasks[0]?.usage).toMatchObject({ available: false, inputTokens: null, outputTokens: null, totalTokens: null, costUsd: null });
     expect(result.tasks[0]?.startingRevision).toMatch(/^[a-f0-9]{40}$/);
@@ -51,10 +51,10 @@ describe("reproducible eval runner", () => {
     }
   });
 
-  it("emits machine-readable CLI output and rejects non-A/B labels", async () => {
+  it("emits machine-readable CLI output and rejects labels outside A–E", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "ways-eval-cli-"));
     expect(await run(["evals", "run", "--adapter=fake", "--output=result.json"], cwd)).toBe(0);
-    expect(JSON.parse(await readFile(join(cwd, "result.json"), "utf8"))).toMatchObject({ schemaVersion: 2, evidence: { kind: "fixture", architecturalBenchmark: false } });
-    await expect(run(["evals", "run", "--harness=unknown"], cwd)).rejects.toThrow("no-ways, checks-only, full-sdd");
+    expect(JSON.parse(await readFile(join(cwd, "result.json"), "utf8"))).toMatchObject({ schemaVersion: 3, evidence: { kind: "fixture", architecturalBenchmark: false } });
+    await expect(run(["evals", "run", "--harness=unknown"], cwd)).rejects.toThrow("no-ways, checks-only, lightweight-state, full-sdd, outcome");
   });
 });

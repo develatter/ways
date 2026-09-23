@@ -209,7 +209,7 @@ Upgrades compare managed-file hashes and never overwrite modified files without 
 
 ## Harness evals
 
-`ways evals run` grades a fixed task corpus in disposable repositories under the no-ways (A), checks-only (B) or full-sdd (D) harness, and `ways evals compare` builds a report that links every score to its raw result files and keeps task success apart from harness compliance. See [docs/EVALS.md](docs/EVALS.md).
+`ways evals run` grades a fixed task corpus in disposable repositories under the no-ways (A), checks-only (B), lightweight-state (C), full-sdd (D) or outcome (E) harness, and `ways evals compare` builds a matched report that links every number to its raw result files and keeps task success, assurance violations, harness compliance and cost apart, with 95% intervals and no single score. See [docs/EVALS.md](docs/EVALS.md) for real-run instructions and decision thresholds.
 
 ## Development
 
