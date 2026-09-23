@@ -1,9 +1,10 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { runChecks, type CheckResult } from "../check/check.js";
+import { committedContract, effectiveContract, sameContract } from "../check/contract.js";
 import { loadConfig } from "../config/config.js";
-import type { LegacyValidationFailureEvidence, ValidationFailureRecord, WorkState } from "../domain/types.js";
-import { validateConfig, validateValidationFailure } from "../domain/validation.js";
+import type { CheckContract, LegacyValidationFailureEvidence, ValidationFailureRecord, WorkState } from "../domain/types.js";
+import { validateValidationFailure } from "../domain/validation.js";
 import { sha256, stableJson, writeAtomic } from "../fs/files.js";
 import { GitRepository } from "../git/git.js";
 import { attemptNumber, validationFailureRecordPath } from "./attempt.js";
@@ -38,6 +39,11 @@ export function legacyValidationEvidence(result: CheckResult): LegacyValidationF
   }
   return { kind: "validate", failures };
 }
+/** The command contract a failure record claims it ran under. */
+export function recordContract(record: Pick<ValidationFailureRecord, "testCommand" | "commands">): CheckContract {
+  return { testCommand: record.testCommand, ...(record.commands ? { commands: record.commands } : {}) };
+}
+
 export function validationFailureDigest(record: Omit<ValidationFailureRecord, "digest">): string {
   return sha256(stableJson(record));
 }
@@ -106,10 +112,7 @@ async function replayRecordedChecks(git: GitRepository, record: ValidationFailur
     if (await replayGit.head() !== record.inputCommit || await replayGit.run(["rev-parse", "HEAD^{tree}"]) !== record.inputTree) {
       replayFailure = "validation failure replay did not resolve the recorded input commit and tree";
     } else {
-      const config = await loadConfig(replayCwd);
-      const testCommandMatches = JSON.stringify(config.testCommand) === JSON.stringify(record.testCommand);
-      const namedCommandsMatch = JSON.stringify(config.commands) === JSON.stringify(record.commands);
-      if (!testCommandMatches || !namedCommandsMatch) {
+      if (!sameContract(effectiveContract(await loadConfig(replayCwd)), recordContract(record))) {
         replayFailure = "validation failure replay command contract does not match its recorded input";
       } else if (record.commands) {
         const replayed = canonicalChecks(await runChecks(replayCwd, false, record.commands, { services: true }));
@@ -217,15 +220,9 @@ export async function committedValidationFailureFailure(
   const added = (await git.run(["diff-tree", "--no-commit-id", "--name-only", "--diff-filter=A", "-r", commit, "--", path])).split("\n").includes(path);
   const changed = (await git.run(["diff-tree", "--no-commit-id", "--name-only", "-r", commit])).split("\n").filter(Boolean);
   if (!added || changed.length !== 1 || changed[0] !== path) return "validation failure record commit must add only its record";
-  try {
-    const config: unknown = JSON.parse(await git.run(["show", `${parent}:.ways/config.json`]));
-    if (!validateConfig(config) || JSON.stringify(config.testCommand) !== JSON.stringify(record.testCommand)
-      || JSON.stringify(config.commands) !== JSON.stringify(record.commands)) {
-      return "validation failure record command contract does not match its input tree";
-    }
-  } catch {
-    return "validation failure record input configuration is unreadable";
-  }
+  const contract = await committedContract(git, parent);
+  if (!contract) return "validation failure record input configuration is unreadable";
+  if (!sameContract(contract, recordContract(record))) return "validation failure record command contract does not match its input tree";
   return validationFailureReplayFailure(git, record);
 }
 
