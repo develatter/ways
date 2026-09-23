@@ -9,6 +9,7 @@ import { attemptNumber, attemptPhasePath, attemptReviewPath, isPriorAttemptArtif
 import { remediationEvidenceFailure } from "../work/remediation.js";
 import { validationFailureRecordFailure, validationFailureReplayFailure } from "../work/validation-failure.js";
 import { committedMismatch } from "../work/sdd.js";
+import { indexReader, outcomeApprovalFailure } from "../work/outcome-approvals.js";
 import { attemptFailureCommit, closeCommitExtraPaths, isPriorOutcomeArtifact, OUTCOME_PHASES, OUTCOME_STATES, outcomeCheckFailurePath, outcomeCloseFailure, outcomeEvaluationPath, outcomeEvidencePath, outcomeMemoryReviewPath, outcomeReviewPath, remediationContentFailure } from "../work/outcome.js";
 
 export interface HookVerdict {
@@ -157,7 +158,8 @@ async function outcomeCommitFailure(git: GitRepository, active: WorkState, trail
     }
     if (remediating) {
       if (attempt < 1 || !active.remediation || active.remediation.attempt !== attempt) return "remediation trailers do not match the active attempt";
-      return remediationContentFailure(git, active.id, attempt, await git.head(), "");
+      return await remediationContentFailure(git, active.id, attempt, await git.head(), "")
+        ?? await outcomeApprovalFailure(git, active.id, "remediate", attempt - 1, await git.head(), indexReader(git));
     }
     return "unknown evaluate transition";
   }
@@ -260,6 +262,8 @@ export async function judgeCommitMessage(cwd: string, message: string): Promise<
         const failure = await outcomeCloseFailure(git, closing.id, await git.head(), await staged(outcomeReviewPath(closing.id, closing.attempt)),
           closing.attempt ?? 0, await staged(outcomeMemoryReviewPath(closing.id, closing.attempt)));
         if (failure) return { accepted: false, reason: `Close of outcome ${closing.id} refused: ${failure}` };
+        const approval = await outcomeApprovalFailure(git, closing.id, "close", closing.attempt ?? 0, await git.head(), indexReader(git));
+        if (approval) return { accepted: false, reason: `Close of outcome ${closing.id} refused: ${approval}` };
       }
       if (trailers.phase === "close" && requiresApproval({ ...closing, phase: "close" })) {
         const failure = await deletedApprovalFailure(git, closing);

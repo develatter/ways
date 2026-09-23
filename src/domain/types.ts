@@ -30,6 +30,10 @@ export interface OutcomeCriterion {
 export type MemoryTier = "none" | "normal" | "high";
 export const MEMORY_TIERS: readonly MemoryTier[] = ["none", "normal", "high"];
 
+/** Externally meaningful outcome transitions a human may gate. */
+export type OutcomeCheckpoint = "close" | "remediate";
+export const OUTCOME_CHECKPOINTS: readonly OutcomeCheckpoint[] = ["close", "remediate"];
+
 /** The conservative policy of an outcome work, fixed when it opens. */
 export interface OutcomePolicy {
   isolation: "required";
@@ -37,6 +41,8 @@ export interface OutcomePolicy {
   checks: "configured";
   /** Absent in specs opened before memory tiers existed; read as normal. */
   memory?: MemoryTier;
+  /** Transitions that need interactive human approval; absent means none. */
+  approvals?: OutcomeCheckpoint[];
 }
 
 /** Immutable goal and acceptance criteria committed when an outcome work opens. */

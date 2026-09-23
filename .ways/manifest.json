@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "harnessVersion": "0.1.0",
-  "generatedAt": "2026-09-15T05:15:47.176Z",
+  "generatedAt": "2026-09-23T20:21:33.305Z",
   "managedFiles": {
     "AGENTS.md": "11c77d328aefb52c308c28d1acccef1527a70557be147385d2ed71bf4b0ad21d",
     "MAP.md": "3f00e500157d9e9be9256f4be948547c04fac612d0f76daaaf25dd35753f7a20",
@@ -23,7 +23,7 @@
       ".claude/agents/ways-reviewer.md": "ba9a1cb46d49deb49523933538c577bfe9eecc9ef35eb1a1b1ff8b870eb321e0",
       ".claude/agents/ways-sweeper.md": "28ffd32f1adf4797e680cb4dc1b6612fa55963bc6faead686ef5a2e2f8fe25a5",
       ".claude/ways-statusline.sh": "3b721f08a46f9a4a3322f9c3a76d8c7ebba5e31b271c08363ffe4a5411d8bfc1",
-      ".claude/ways-guard.sh": "e2bedcd636d45f09f8f9b0955916620ebd36f5771c469570b899f3182db38b7b"
+      ".claude/ways-guard.sh": "a36ab969031ab3cfdae3437a6ff04c0e6b9cfe697f83aad7d4ef00db6320bae6"
     },
     "codex": {
       ".agents/skills/ways-memory/SKILL.md": "dfcc7393b77c36d781a0fffe2584e77b7d63aa1118a766ad8f3eefb0f46b9c32",
@@ -37,7 +37,7 @@
       ".codex/agents/ways-qa.toml": "ab8c05096f7edbe8cad51b5e09fbe9df0ead85709988b346804cff1cc80daa24",
       ".codex/agents/ways-reviewer.toml": "39cac5d288b8350a2b197c140f34b9a014500083e5601c5fee55f4a3695ea49c",
       ".codex/agents/ways-sweeper.toml": "e5540327860d4b371000ac8f5827a786a616a1da8c0153c51109312e7b5347a3",
-      ".codex/ways-guard.sh": "c41108c33bb2e9bf6c479f89458b0470d2db6a7438d1ef156e26ad029d596c01"
+      ".codex/ways-guard.sh": "3c6d4d865c275cc8f16febe279f79de6122f4389911f2436326fe8f84e0be90c"
     },
     "cursor": {
       ".cursor/skills/ways-memory/SKILL.md": "3cf13fa9ff846cf2fa71044039dc45dc7c29fac6406c5fff2a31c546850b5c3f",
@@ -51,7 +51,7 @@
       ".cursor/agents/ways-qa.md": "cc6b3b5a8ca9b3355600ab02413ef350bc3e94d99ff39f3819aa17d8eec0fc46",
       ".cursor/agents/ways-reviewer.md": "6afcbd7e1bcc8c0af2e222431e650f03ef07654c2dd8b03e670cca74c95a11bf",
       ".cursor/agents/ways-sweeper.md": "86001315b2bf7b6ff434f4c8540b1f78b00d948d1d7feb519e0b09b7f34a07ee",
-      ".cursor/ways-guard.sh": "e2bedcd636d45f09f8f9b0955916620ebd36f5771c469570b899f3182db38b7b"
+      ".cursor/ways-guard.sh": "a36ab969031ab3cfdae3437a6ff04c0e6b9cfe697f83aad7d4ef00db6320bae6"
     },
     "pi": {
       ".pi/prompts/ways-memory.md": "7fd95b602264bf6930eab2c4382f9c4319532adec41d59ef1cafb88439711ff2",
@@ -67,7 +67,7 @@
       ".pi/agents/ways-sweeper.md": "28ffd32f1adf4797e680cb4dc1b6612fa55963bc6faead686ef5a2e2f8fe25a5",
       ".pi/extensions/ways/index.ts": "4e65c2535f28ddfc987ee8f9dee3e553d6001c9892c08a6504bba0a12d4f6e07",
       ".pi/ways-statusline.sh": "3b721f08a46f9a4a3322f9c3a76d8c7ebba5e31b271c08363ffe4a5411d8bfc1",
-      ".pi/ways-guard.sh": "e2bedcd636d45f09f8f9b0955916620ebd36f5771c469570b899f3182db38b7b"
+      ".pi/ways-guard.sh": "a36ab969031ab3cfdae3437a6ff04c0e6b9cfe697f83aad7d4ef00db6320bae6"
     }
   }
 }

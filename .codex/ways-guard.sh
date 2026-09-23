@@ -15,7 +15,7 @@ process.stdin.on("data", (chunk) => { data += chunk; }).on("end", () => {
   const option = "(?:-[^\\s]+\\s+(?:[^-\\s][^\\s]*\\s+)?)*";
   const prefix = "(?:(?:command|exec|builtin)\\s+|[^\\s;&|(`]*/)?";
   const commits = new RegExp("(?:^|[;&|(`\\x22\\x27]\\s*|\\$\\(\\s*)" + prefix + "git\\s+" + option + "commit(?:\\s|$)", "m");
-  const evidence = /(?:^|[\s/])\.ways\/sdd\/[^\/\s]+\/(?:attempts\/[0-9]+\/)?(?:approvals|reviews)(?:\/|$)/;
+  const evidence = /(?:^|[\s/])\.ways\/(?:sdd\/[^\/\s]+\/(?:attempts\/[0-9]+\/)?(?:approvals|reviews)|outcomes\/[^\/\s]+\/approvals)(?:\/|$)/;
   const edited = event.tool_input?.file_path ?? event.tool_input?.notebook_path ?? event.tool_input?.path;
   const patch = String(event.tool_input?.patch ?? event.tool_input?.input ?? "");
   const patchPaths = [...patch.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$|^\*\*\* Move to: (.+)$/gm)].map((match) => match[1] ?? match[2]);
