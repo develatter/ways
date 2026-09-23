@@ -5,63 +5,68 @@
   "mode": "sdd",
   "status": "active",
   "profile": "autonomous",
-  "phase": "review",
+  "phase": "implement",
   "baseCommit": "68715aca0f257ff39b9699c7e133acef741c6358",
-  "gateCommit": "67fd6f2a48821fabcda28cd6690338c67fae6e23",
+  "gateCommit": "c00ac4da4aeceb2fde04d3e2b6fae8caa249f6e5",
   "createdAt": "2026-09-23T17:49:31.892Z",
-  "updatedAt": "2026-09-23T18:25:56.800Z",
+  "updatedAt": "2026-09-23T18:32:05.444Z",
   "tasks": [],
-  "attempt": 6,
+  "attempt": 7,
   "remediation": {
     "source": "review",
     "target": "implement",
-    "reason": "Re-review failed: index flags and core.worktree hide uncommitted product changes; rename detection hides deletions",
+    "reason": "Scoped review failed: anti-tampering checks misgrade honest runs; simplify the grader to the honest-agent threat model",
     "evidence": {
       "kind": "review",
       "review": {
         "schemaVersion": 1,
         "workId": "issue-5-full-sdd-evals",
+        "attempt": 6,
         "reviewer": "ways-reviewer",
-        "digest": "f5b08a91dc1e0cbf1bc9245fe8fc15d6c2200893f8aef0bef8c7e5e92564b21e",
-        "attempt": 5,
+        "digest": "0c069085d17b61440f7b4c2399fbce8b2f1efc0b03a3042b4b7d8a31558434e1",
         "verdict": "fail",
         "findings": [
           {
-            "id": "R7-git-replace-object-hides-product-change",
+            "id": "R6-F1-memory-evidence-graded-as-product",
             "severity": "high",
-            "summary": "Verified fixed: replace refs (loose or packed) and grafts raise eval-history-rewritten; no regressions.",
-            "disposition": "fixed"
-          },
-          {
-            "id": "R8-index-flags-and-worktree-config-hide-uncommitted-product-change",
-            "severity": "high",
-            "summary": "After a legitimate empty-implement SDD through close, an uncommitted product change hidden by skip-worktree, assume-unchanged plus info/exclude, or core.worktree pointing elsewhere is invisible to git status and graded compliant while the functional grade reads it from disk. Make the uncommitted check independent of agent-controlled index flags and config, with tests.",
+            "summary": "isHarnessBookkeeping omits .ways/memory/, so canonical discovery completion and memory commits outside the implement window are flagged eval-change-outside-implement and honest D runs grade non-compliant, breaking AC1 and AC4.",
             "disposition": "open"
           },
           {
-            "id": "R9-rename-detection-hides-product-deletions",
-            "severity": "low",
-            "summary": "windowIssues uses git diff --name-only with rename detection, so moving a product file into a bookkeeping path outside implement hides the product deletion. Use --no-renames.",
+            "id": "R6-F2-untracked-tool-files-flag-uncommitted",
+            "severity": "medium",
+            "summary": "divergentPaths ignores .gitignore, so ignored local tool files (e.g. per-user settings, caches) grade honest real runs non-compliant.",
             "disposition": "open"
           },
           {
-            "id": "A1-alternates-patched-git-and-env",
+            "id": "R6-F3-resume-task-prompt-conflict",
             "severity": "low",
-            "summary": "Alternates cannot substitute content-addressed objects; grader env is runner-controlled; a patched git or host tampering subverts the tooling itself and belongs to sandbox isolation, the same class as L1.",
+            "summary": "The full-sdd initial prefix demands certifying through close while the resume task asks to stop, and the resume prefix assumes an active work.",
+            "disposition": "open"
+          },
+          {
+            "id": "R6-F4-d-task-precheck-failure-compliance-na",
+            "severity": "low",
+            "summary": "A full-sdd task failing before grading records compliance applicable:false, shown as compliant:null in compare while counted in the denominator.",
+            "disposition": "open"
+          },
+          {
+            "id": "R6-F5-command-adapter-always-real",
+            "severity": "low",
+            "summary": "Command adapter runs are always evidence.kind real, consistent with spec decision 2.",
             "disposition": "accepted"
           },
           {
-            "id": "L1-forged-full-certification-chain",
+            "id": "L1",
             "severity": "low",
-            "summary": "A fully forged certification chain or subverted host git tooling cannot be proven locally; documented, consistent with the README authorship caveat.",
+            "summary": "Deliberate Git subversion by an agent with unrestricted shell is beyond local verification; out of scope under the honest-agent threat model.",
             "disposition": "accepted"
           }
         ]
       }
     },
-    "priorCheckpoint": "ecbf37b8b791c3fd37403f26ffe1a951682ffe06",
-    "attempt": 6,
-    "timestamp": "2026-09-23T18:23:11.310Z"
-  },
-  "lastCompletedPhase": "implement"
+    "priorCheckpoint": "c00ac4da4aeceb2fde04d3e2b6fae8caa249f6e5",
+    "attempt": 7,
+    "timestamp": "2026-09-23T18:32:05.444Z"
+  }
 }
