@@ -4,9 +4,9 @@
   "mode": "sdd",
   "id": "issue-5-full-sdd-evals",
   "status": "active",
-  "gateCommit": "85600306d73e069aa1a160108ee94bdf7a0d9641",
-  "updatedAt": "2026-09-23T17:50:50.840Z",
-  "phase": "assess",
+  "gateCommit": "a7bf02b099bbca35851432a4c220cf15a136691f",
+  "updatedAt": "2026-09-23T17:50:51.199Z",
+  "phase": "specify",
   "humanGate": false,
   "profile": "autonomous"
 }
