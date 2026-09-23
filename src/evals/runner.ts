@@ -6,7 +6,7 @@ import { GitRepository } from "../git/git.js";
 import { fakeAdapter, unavailableUsage } from "./adapters.js";
 import { loadCorpus } from "./corpus.js";
 import { gradeTask } from "./grader.js";
-import { captureWaysRevision, FULL_SDD_PROMPT, fullSddPrompt, gradeFullSddCompliance, prepareFullSdd } from "./ways.js";
+import { captureWaysRevision, complianceGradingError, FULL_SDD_PROMPT, fullSddPrompt, gradeFullSddCompliance, prepareFullSdd } from "./ways.js";
 import { ADAPTER_METRICS, type AdapterExecution, type AdapterInput, type EvalAdapter, type EvalConfiguration, type EvalRunOptions, type EvalRunResult, type EvalSessionResult, type EvalTask, type EvalTaskResult, type HarnessCompliance, type ObservedMetric, type TaskMetrics, type UsageMetrics } from "./types.js";
 
 interface DisposableRepository {
@@ -141,7 +141,7 @@ async function runTask(task: EvalTask, adapter: EvalAdapter, config: EvalConfigu
     if (!final) throw new Error("Eval task produced no session");
     const incorrectDoneClaim = sessions.some((session) => session.doneClaim && !session.grading.success);
     const compliance: HarnessCompliance = config.harness === "full-sdd"
-      ? await gradeFullSddCompliance(disposable.path)
+      ? await gradeFullSddCompliance(disposable.path, task.id, disposable.revision).catch(complianceGradingError)
       : { applicable: false, reason: `harness ${config.harness} does not run Ways SDD` };
     return {
       taskId: task.id,
@@ -201,7 +201,7 @@ export async function runEvals(options: EvalRunOptions): Promise<EvalRunResult> 
   return {
     schemaVersion: 2,
     runId,
-    corpus: { id: corpus.id, revision: corpus.revision, taskCount: corpus.tasks.length },
+    corpus: { id: corpus.id, revision: corpus.revision, digest: sha256(stableJson(corpus)), taskCount: corpus.tasks.length },
     configuration,
     waysRevision,
     harnessPrompt: configuration.harness === "full-sdd" ? FULL_SDD_PROMPT : null,

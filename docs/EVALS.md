@@ -6,7 +6,7 @@
 npx ways evals run --adapter=fake --harness=checks-only --model=fake-model --revision=corpus-v2 --seed=7 --output=eval-result.json
 ```
 
-Harness labels are `no-ways` (A), `checks-only` (B) and `full-sdd` (D). The label and `--model`, revision, seed and adapter argv are passed to every session and recorded unchanged. Results use `schemaVersion: 2` and record `waysRevision` (package and harness version, source Git revision when the runner is a clean checkout or `null` with a reason, and a content digest over `dist/` and `assets/`) plus `evidence.kind`: `fixture` for synthetic adapters such as `fake`, `real` otherwise.
+Harness labels are `no-ways` (A), `checks-only` (B) and `full-sdd` (D). The label and `--model`, revision, seed and adapter argv are passed to every session and recorded unchanged. Results use `schemaVersion: 2` and record `waysRevision` (package and harness version, source Git revision when the runner is a clean checkout or `null` with a reason, and a content digest over `dist/` and `assets/`) plus `evidence.kind`: `fixture` for synthetic adapters such as `fake`, `real` otherwise. `corpus.digest` identifies the exact task content. When the runner is a checkout, `sourceRevisionReason` notes uncommitted source and that `dist/` is an untracked build.
 
 ## Full SDD (D)
 
@@ -15,7 +15,7 @@ With `--harness=full-sdd` the runner bootstraps the running Ways package into ea
 After the last session every task is graded twice, independently:
 
 - `success` is the functional grade from the corpus checks, exactly as for A/B.
-- `compliance` is graded from the repository: history audit and integrity issues, uncommitted changes, a still-active work, SDD works started/closed, downgrades, remediation attempts and validation failures. `compliant` means no issues; `fullSddCompleted` additionally requires a certified close. For A/B it is `{ "applicable": false }`.
+- `compliance` is graded from the repository against the bootstrap revision. `fullSddCompleted` means an SDD work named after the task was certified through close. `compliant` means that and no issue at all: history-audit or integrity issues, commits of another work (`eval-foreign-work`), commits claiming the task work outside committed SDD state (`eval-untracked-work-commit`, which also covers quick-only delivery and forged trailers), changes to `.ways/config.json`, the manifest, managed hooks, `scripts/check.sh`, `AGENTS.md` or `core.hooksPath` (`eval-harness-tampered`), downgrades, uncommitted changes or a still-active work. The record also counts SDD works started/closed, remediation attempts and validation failures. If grading itself fails the task keeps its functional grade and compliance reports `eval-compliance-error`. For A/B compliance is `{ "applicable": false }`.
 
 A task can therefore succeed while bypassing SDD, or comply while failing functionally; reports never merge the two.
 
@@ -38,7 +38,7 @@ Token and cost usage keep the `usage` semantics below.
 npx ways evals compare --input=a.json --input=b.json --input=d.json --output=report.json --markdown=report.md
 ```
 
-Every input is digested and listed with its path, sha256 and run id. Unparseable or pre-v2 results are `invalid`. A run is `non-comparable` when its corpus id or revision, model, seed, budgets, adapter or runner content digest differ from the reference run (the first valid real run, else the first valid run), when it mixes fixture and real evidence, or when it duplicates a run id. Only comparable runs are scored per harness: task success, regressions and incorrect done claims; compliance for `full-sdd`; and metric totals with available/unavailable counts and reasons. Each score lists its source artifacts and each task row points into its artifact (`/tasks/<index>`). The report always states `architecturalClaim: false`; fixture comparisons only exercise the runner and grader. The command exits 1 when no run is comparable.
+Every input is digested and listed with its path, sha256 and run id. Unreadable, unparseable, pre-v2 or structurally malformed results (including missing or non-numeric metrics) are `invalid`. A run is `non-comparable` when its corpus id, revision or content digest, model, seed, budgets, adapter or runner content digest differ from the reference run (the first valid real run, else the first valid run), when it mixes fixture and real evidence, or when it duplicates a run id. Only comparable runs are scored per harness: task success, regressions and incorrect done claims; compliance for `full-sdd`; and metrics with available/unavailable counts and reasons. A metric `total` is present only when every task observed it; otherwise it is `null` and `observedTotal` holds the partial sum, which the Markdown labels as partial. Each score lists its source artifacts and each task row points into its artifact (`/tasks/<index>`). The report always states `architecturalClaim: false`; fixture comparisons only exercise the runner and grader. The command exits 1 when no run is comparable.
 
 ## Manual real adapter
 

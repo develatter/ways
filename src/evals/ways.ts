@@ -8,7 +8,8 @@ import { GitRepository } from "../git/git.js";
 import { auditHistory, commitsAfter, manifestIntroduction } from "../integrity/history.js";
 import { checkIntegrity } from "../integrity/integrity.js";
 import { loadState } from "../state/store.js";
-import type { EvalCheck, EvalTask, HarnessCompliance, HarnessPrompt, WaysRevision } from "./types.js";
+import { CONFIG_PATH, HOOKS_DIR, MANIFEST_PATH, STATE_PATH } from "../domain/constants.js";
+import type { ComplianceIssue, EvalCheck, EvalTask, HarnessCompliance, HarnessPrompt, WaysRevision } from "./types.js";
 
 const PACKAGE_LINK = "node_modules/@develatter/ways";
 const BIN_LINK = "node_modules/.bin/ways";
@@ -43,17 +44,21 @@ async function files(root: string, directory: string): Promise<string[]> {
 
 async function sourceRevision(root: string): Promise<Pick<WaysRevision, "sourceRevision" | "sourceRevisionReason">> {
   const git = new GitRepository(root);
+  const notCheckout = { sourceRevision: null, sourceRevisionReason: "installed package is not a Git checkout; contentDigest identifies it" };
   try {
-    if (await realpath(await git.run(["rev-parse", "--show-toplevel"], undefined, true)) !== await realpath(root)) {
-      return { sourceRevision: null, sourceRevisionReason: "installed package is not a Git checkout; contentDigest identifies it" };
-    }
+    if (await realpath(await git.run(["rev-parse", "--show-toplevel"], undefined, true)) !== await realpath(root)) return notCheckout;
     const head = await git.run(["rev-parse", "HEAD"], undefined, true);
     const dirty = (await git.run(["status", "--porcelain", "--", "src", "assets", "package.json"], undefined, true)) !== "";
-    return dirty
-      ? { sourceRevision: head, sourceRevisionReason: "source has uncommitted changes; contentDigest identifies the running content" }
-      : { sourceRevision: head };
+    const trackedDist = (await git.run(["ls-files", "--", "dist"], undefined, true)) !== "";
+    const reasons = [
+      ...(dirty ? ["source has uncommitted changes"] : []),
+      ...(trackedDist ? [] : ["dist/ is an untracked build that may differ from the source revision"]),
+    ];
+    return reasons.length === 0
+      ? { sourceRevision: head }
+      : { sourceRevision: head, sourceRevisionReason: `${reasons.join("; ")}; contentDigest identifies the running content` };
   } catch {
-    return { sourceRevision: null, sourceRevisionReason: "installed package is not a Git checkout; contentDigest identifies it" };
+    return notCheckout;
   }
 }
 
@@ -100,44 +105,102 @@ export async function prepareFullSdd(repo: string, task: EvalTask, gitEnv: NodeJ
   await mkdir(join(repo, "node_modules/@develatter"), { recursive: true });
   await symlink(root, join(repo, PACKAGE_LINK), "dir");
   await symlink(relative(join(repo, "node_modules/.bin"), join(repo, PACKAGE_LINK, "dist/cli.js")), join(repo, BIN_LINK));
-  await appendFile(join(repo, ".gitignore"), "node_modules/\n", "utf8");
+  let ignore = "";
+  try {
+    ignore = await readFile(join(repo, ".gitignore"), "utf8");
+  } catch {
+    // Fixtures without a .gitignore get a new one.
+  }
+  await appendFile(join(repo, ".gitignore"), `${ignore === "" || ignore.endsWith("\n") ? "" : "\n"}node_modules/\n`, "utf8");
   const git = new GitRepository(repo);
   await git.run(["add", "."], gitEnv, true);
   await git.run(["-c", "commit.gpgSign=false", "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "eval harness: bootstrap ways"], gitEnv, true);
   return { revision: await git.run(["rev-parse", "HEAD"], gitEnv, true), waysBin: join(repo, BIN_LINK) };
 }
 
-/** Grades SDD compliance from committed repository evidence, never from what the agent claims. */
-export async function gradeFullSddCompliance(repo: string): Promise<HarnessCompliance> {
+/** Harness files an agent must not change: rewriting them weakens the gates being measured. */
+const HARNESS_PATHS = [CONFIG_PATH, MANIFEST_PATH, HOOKS_DIR, "scripts/check.sh", "AGENTS.md"];
+
+async function activeWorkAt(git: GitRepository, revision: string): Promise<string | undefined> {
+  try {
+    const state = JSON.parse(await git.run(["show", `${revision}:${STATE_PATH}`], undefined, true)) as { id?: unknown };
+    return typeof state.id === "string" ? state.id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Grades SDD compliance from committed repository evidence, never from what the agent claims.
+ * Compliance means the task was delivered by exactly one SDD work named after the task, closed
+ * through every gate, with no foreign, forged or downgraded work and no weakened harness files.
+ */
+export async function gradeFullSddCompliance(repo: string, taskId: string, startRevision: string): Promise<HarnessCompliance> {
   const git = new GitRepository(repo);
-  const issues: { code: string; path: string; message: string }[] = [];
+  const issues: ComplianceIssue[] = [];
   let activeWork: string | null = null;
   try {
     activeWork = (await loadState(repo))?.id ?? null;
   } catch (error) {
-    issues.push({ code: "eval-unreadable-state", path: ".ways/state", message: error instanceof Error ? error.message : String(error) });
+    issues.push({ code: "eval-unreadable-state", path: STATE_PATH, message: error instanceof Error ? error.message : String(error) });
   }
   const anchor = await manifestIntroduction(git);
   const commits = anchor ? await commitsAfter(git, anchor) : [];
   const audit = await auditHistory(git, commits, activeWork ?? undefined);
   issues.push(...audit.issues, ...await checkIntegrity(repo));
+  for (const commit of commits) {
+    const work = commit.trailers.work;
+    if (!work) continue;
+    if (work !== taskId) issues.push({ code: "eval-foreign-work", path: commit.hash.slice(0, 12), message: `Commit belongs to work ${work}, not to the task work ${taskId}` });
+    else if (await activeWorkAt(git, `${commit.hash}^`) !== work && await activeWorkAt(git, commit.hash) !== work) {
+      issues.push({ code: "eval-untracked-work-commit", path: commit.hash.slice(0, 12), message: `Commit claims work ${work} outside any committed SDD state for that work` });
+    }
+  }
+  const tampered = (await git.run(["diff", "--name-only", startRevision, "HEAD", "--", ...HARNESS_PATHS], undefined, true)).split("\n").filter(Boolean);
+  for (const path of tampered) issues.push({ code: "eval-harness-tampered", path, message: "Harness file changed after bootstrap" });
+  let hooksPath = "";
+  try {
+    hooksPath = await git.run(["config", "--get", "core.hooksPath"], undefined, true);
+  } catch {
+    // An unset hooks path is reported below.
+  }
+  if (hooksPath !== HOOKS_DIR) issues.push({ code: "eval-harness-tampered", path: "core.hooksPath", message: `core.hooksPath is ${hooksPath || "unset"}, expected ${HOOKS_DIR}` });
   const uncommitted = (await git.run(["status", "--porcelain"], undefined, true)).split("\n").filter(Boolean);
   if (uncommitted.length > 0) issues.push({ code: "eval-uncommitted-changes", path: ".", message: `Run ended with ${uncommitted.length} uncommitted path(s)` });
-  if (activeWork !== null) issues.push({ code: "eval-active-work", path: ".ways/state", message: `Work ${activeWork} is still active` });
+  if (activeWork !== null) issues.push({ code: "eval-active-work", path: STATE_PATH, message: `Work ${activeWork} is still active` });
 
+  const downgrades = commits.filter((commit) => commit.trailers.state?.startsWith("downgraded")).length;
+  if (downgrades > 0) issues.push({ code: "eval-downgraded", path: ".", message: `SDD was downgraded ${downgrades} time(s)` });
   const sddWorks = new Set(commits.filter((commit) => commit.trailers.work && commit.trailers.phase).map((commit) => commit.trailers.work));
   const closed = new Set(audit.checkpoints.filter((checkpoint) => checkpoint.kind === "certification" && checkpoint.phase === "close").map((checkpoint) => checkpoint.work));
-  const compliant = issues.length === 0;
+  const fullSddCompleted = closed.has(taskId);
+  if (!fullSddCompleted) issues.push({ code: "eval-sdd-not-closed", path: ".", message: `No SDD work ${taskId} was certified through close` });
   return {
     applicable: true,
-    compliant,
-    fullSddCompleted: compliant && closed.size > 0,
+    compliant: issues.length === 0,
+    fullSddCompleted,
     sddWorksStarted: sddWorks.size,
     sddWorksClosed: closed.size,
-    downgrades: commits.filter((commit) => commit.trailers.state?.startsWith("downgraded")).length,
+    downgrades,
     remediationAttempts: audit.checkpoints.filter((checkpoint) => checkpoint.kind === "remediation").length,
     validationFailures: commits.filter((commit) => commit.trailers.state === "validation-failed").length,
     activeWork,
     issues,
+  };
+}
+
+/** Grading failures are compliance evidence, never a reason to discard the functional grade. */
+export function complianceGradingError(error: unknown): HarnessCompliance {
+  return {
+    applicable: true,
+    compliant: false,
+    fullSddCompleted: false,
+    sddWorksStarted: 0,
+    sddWorksClosed: 0,
+    downgrades: 0,
+    remediationAttempts: 0,
+    validationFailures: 0,
+    activeWork: null,
+    issues: [{ code: "eval-compliance-error", path: ".", message: error instanceof Error ? error.message : String(error) }],
   };
 }

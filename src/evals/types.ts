@@ -109,6 +109,12 @@ export interface WaysRevision {
   contentDigest: string;
 }
 
+export interface ComplianceIssue {
+  code: string;
+  path: string;
+  message: string;
+}
+
 export type HarnessCompliance =
   | { applicable: false; reason: string }
   | {
@@ -121,7 +127,7 @@ export type HarnessCompliance =
     remediationAttempts: number;
     validationFailures: number;
     activeWork: string | null;
-    issues: { code: string; path: string; message: string }[];
+    issues: ComplianceIssue[];
   };
 
 export interface EvalCriterionResult {
@@ -174,7 +180,7 @@ export type EvidenceKind = "fixture" | "real";
 export interface EvalRunResult {
   schemaVersion: 2;
   runId: string;
-  corpus: { id: string; revision: string; taskCount: number };
+  corpus: { id: string; revision: string; digest: string; taskCount: number };
   configuration: EvalConfiguration;
   waysRevision: WaysRevision;
   harnessPrompt: HarnessPrompt | null;

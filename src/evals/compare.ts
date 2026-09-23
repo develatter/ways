@@ -4,7 +4,7 @@ import { ADAPTER_METRICS, HARNESS_LABELS, type EvalRunResult, type EvidenceKind,
 
 export interface ArtifactLink {
   path: string;
-  sha256: string;
+  sha256: string | null;
   runId: string | null;
 }
 
@@ -17,7 +17,9 @@ export interface ComparedRun {
 }
 
 export interface MetricSummary {
+  /** Null unless every task observed the metric; partial sums are never presented as totals. */
   total: number | null;
+  observedTotal: number | null;
   available: number;
   unavailable: number;
   reasons: string[];
@@ -56,7 +58,9 @@ export interface ComparisonReport {
   tasks: ComparedTask[];
 }
 
-type ComparabilityKey = Pick<EvalRunResult["configuration"], "model" | "seed" | "budgets" | "adapter"> & { corpus: string; revision: string; runnerDigest: string };
+type ComparabilityKey = Pick<EvalRunResult["configuration"], "model" | "seed" | "budgets" | "adapter"> & { corpus: string; revision: string; corpusDigest: string; runnerDigest: string };
+
+const METRIC_NAMES = [...ADAPTER_METRICS, "timeouts", "remediationAttempts", "resumeSuccess"] as const;
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -66,19 +70,30 @@ function resultProblem(value: unknown): string | undefined {
   if (!isObject(value)) return "result is not a JSON object";
   if (value.schemaVersion !== 2) return `result schemaVersion ${String(value.schemaVersion)} is not 2; re-run with the current runner`;
   const { corpus, configuration, evidence, waysRevision, tasks } = value;
-  if (typeof value.runId !== "string" || !isObject(corpus) || typeof corpus.id !== "string" || typeof corpus.revision !== "string") return "result lacks runId or corpus identity";
+  if (typeof value.runId !== "string" || !isObject(corpus) || typeof corpus.id !== "string" || typeof corpus.revision !== "string" || typeof corpus.digest !== "string") return "result lacks runId or corpus identity";
   if (!isObject(configuration) || !HARNESS_LABELS.includes(configuration.harness as HarnessLabel) || typeof configuration.model !== "string"
     || typeof configuration.seed !== "number" || !isObject(configuration.budgets) || !isObject(configuration.adapter)) return "result configuration is malformed";
   if (!isObject(evidence) || (evidence.kind !== "fixture" && evidence.kind !== "real")) return "result evidence kind is missing";
   if (!isObject(waysRevision) || typeof waysRevision.contentDigest !== "string") return "result lacks the Ways revision";
   if (!Array.isArray(tasks) || tasks.some((task) => !isObject(task) || typeof task.taskId !== "string" || typeof task.success !== "boolean"
-    || !isObject(task.metrics) || !isObject(task.compliance) || !isObject(task.usage))) return "result tasks are malformed";
+    || typeof task.regressions !== "boolean" || typeof task.incorrectDoneClaim !== "boolean"
+    || !isObject(task.compliance) || typeof task.compliance.applicable !== "boolean"
+    || (task.compliance.applicable && (typeof task.compliance.compliant !== "boolean" || typeof task.compliance.fullSddCompleted !== "boolean")))) return "result tasks are malformed";
+  for (const task of tasks as Record<string, unknown>[]) {
+    const { metrics, usage } = task;
+    if (!isObject(metrics) || METRIC_NAMES.some((name) => !isObject(metrics[name]) || !metricValue(metrics[name].value, name === "resumeSuccess"))) return `task ${String(task.taskId)} has malformed metrics`;
+    if (!isObject(usage) || (["totalTokens", "costUsd"] as const).some((field) => !metricValue(usage[field], false))) return `task ${String(task.taskId)} has malformed usage`;
+  }
   return undefined;
+}
+
+function metricValue(value: unknown, boolean: boolean): boolean {
+  return value === null || (boolean ? typeof value === "boolean" : typeof value === "number" && Number.isFinite(value) && value >= 0);
 }
 
 function keyOf(result: EvalRunResult): ComparabilityKey {
   const { model, seed, budgets, adapter } = result.configuration;
-  return { corpus: result.corpus.id, revision: result.corpus.revision, model, seed, budgets, adapter, runnerDigest: result.waysRevision.contentDigest };
+  return { corpus: result.corpus.id, revision: result.corpus.revision, corpusDigest: result.corpus.digest, model, seed, budgets, adapter, runnerDigest: result.waysRevision.contentDigest };
 }
 
 function differences(reference: ComparabilityKey, key: ComparabilityKey): string[] {
@@ -90,8 +105,10 @@ function differences(reference: ComparabilityKey, key: ComparabilityKey): string
 function metricSummary(values: readonly { value: number | boolean | null; reason?: string }[]): MetricSummary {
   const available = values.filter((metric) => metric.value !== null);
   const reasons = [...new Set(values.flatMap((metric) => metric.value === null && metric.reason ? [metric.reason] : []))].sort();
+  const observedTotal = available.length === 0 ? null : available.reduce((sum, metric) => sum + Number(metric.value), 0);
   return {
-    total: available.length === 0 ? null : available.reduce((sum, metric) => sum + Number(metric.value), 0),
+    total: available.length === values.length ? observedTotal : null,
+    observedTotal,
     available: available.length,
     unavailable: values.length - available.length,
     reasons,
@@ -100,8 +117,7 @@ function metricSummary(values: readonly { value: number | boolean | null; reason
 
 function score(harness: HarnessLabel, runs: readonly { result: EvalRunResult; artifact: ArtifactLink }[]): HarnessScore {
   const tasks = runs.flatMap(({ result }) => result.tasks);
-  const metricNames = [...ADAPTER_METRICS, "timeouts", "remediationAttempts", "resumeSuccess"] as const;
-  const metrics = Object.fromEntries(metricNames.map((name) => [name, metricSummary(tasks.map((task) => task.metrics[name]))])) as HarnessScore["metrics"];
+  const metrics = Object.fromEntries(METRIC_NAMES.map((name) => [name, metricSummary(tasks.map((task) => task.metrics[name]))])) as HarnessScore["metrics"];
   for (const field of ["totalTokens", "costUsd"] as const) {
     metrics[field] = metricSummary(tasks.map((task) => ({ value: task.usage[field], ...(task.usage.reason ? { reason: task.usage.reason } : {}) })));
   }
@@ -128,8 +144,9 @@ function score(harness: HarnessLabel, runs: readonly { result: EvalRunResult; ar
 }
 
 /** Compares raw run results; only runs that hold every controlled variable constant are scored. */
-export function compareResults(inputs: readonly { path: string; content: string }[]): ComparisonReport {
+export function compareResults(inputs: readonly { path: string; content: string | null }[]): ComparisonReport {
   const parsed = inputs.map(({ path, content }) => {
+    if (content === null) return { artifact: { path, sha256: null, runId: null }, problem: "input could not be read" };
     const artifact: ArtifactLink = { path, sha256: sha256(content), runId: null };
     let value: unknown;
     try {
@@ -186,11 +203,13 @@ export function compareResults(inputs: readonly { path: string; content: string 
 }
 
 export async function compareResultFiles(paths: readonly string[], display: (path: string) => string = (path) => path): Promise<ComparisonReport> {
-  return compareResults(await Promise.all(paths.map(async (path) => ({ path: display(path), content: await readFile(path, "utf8") }))));
+  return compareResults(await Promise.all(paths.map(async (path) => ({ path: display(path), content: await readFile(path, "utf8").catch(() => null) }))));
 }
 
 function cell(summary: MetricSummary): string {
-  return summary.total === null ? `n/a (${summary.unavailable} unavailable)` : `${summary.total} (${summary.available}/${summary.available + summary.unavailable})`;
+  if (summary.total !== null) return `${summary.total}`;
+  if (summary.observedTotal === null) return `n/a (0/${summary.unavailable} observed)`;
+  return `partial: ${summary.observedTotal} over ${summary.available}/${summary.available + summary.unavailable} observed`;
 }
 
 function percent(rate: number | null): string {
@@ -200,7 +219,7 @@ function percent(rate: number | null): string {
 export function renderComparisonMarkdown(report: ComparisonReport): string {
   const lines = ["# Harness comparison", "", `> ${report.warning}`, "", "## Runs", "", "| Artifact | sha256 | Harness | Evidence | Status | Reasons |", "| --- | --- | --- | --- | --- | --- |"];
   for (const run of report.runs) {
-    lines.push(`| \`${run.artifact.path}\` | \`${run.artifact.sha256.slice(0, 12)}\` | ${run.harness ?? "-"} | ${run.evidenceKind ?? "-"} | ${run.status} | ${run.reasons.join("; ") || "-"} |`);
+    lines.push(`| \`${run.artifact.path}\` | \`${run.artifact.sha256?.slice(0, 12) ?? "unreadable"}\` | ${run.harness ?? "-"} | ${run.evidenceKind ?? "-"} | ${run.status} | ${run.reasons.join("; ") || "-"} |`);
   }
   lines.push("", "## Task success (independent functional grading)", "", "| Harness | Runs | Succeeded | Rate | Regressions | Incorrect done claims |", "| --- | --- | --- | --- | --- | --- |");
   for (const harness of report.harnesses) {
@@ -214,7 +233,7 @@ export function renderComparisonMarkdown(report: ComparisonReport): string {
       : `| ${harness.harness} | n/a | n/a | ${compliance.reason} |`);
   }
   const metricNames = Object.keys(report.harnesses[0]?.metrics ?? {}) as (keyof HarnessScore["metrics"])[];
-  lines.push("", "## Observable metrics (total, available/tasks)", "", `| Harness | ${metricNames.join(" | ")} |`, `| --- |${metricNames.map(() => " --- |").join("")}`);
+  lines.push("", "## Observable metrics (totals only when every task observed the metric)", "", `| Harness | ${metricNames.join(" | ")} |`, `| --- |${metricNames.map(() => " --- |").join("")}`);
   for (const harness of report.harnesses) lines.push(`| ${harness.harness} | ${metricNames.map((name) => cell(harness.metrics[name])).join(" | ")} |`);
   lines.push("", "## Sources", "");
   for (const harness of report.harnesses) {
