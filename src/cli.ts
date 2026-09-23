@@ -41,6 +41,7 @@ import { cancelQuick, finishQuick, startQuick } from "./work/quick.js";
 import { approveInteractively } from "./work/approve.js";
 import { reviewDigest, submitReview } from "./work/review.js";
 import { advanceSdd, downgradeSdd, startSdd } from "./work/sdd.js";
+import { effectiveExecutionPolicy, parseExecutionPolicy } from "./work/outcome-policy.js";
 import { cancelOutcome, closeOutcome, evaluateOutcome, openOutcome, outcomeMemoryReviewDigest, parseCriterion, remediateOutcome, submitOutcomeMemoryReview } from "./work/outcome.js";
 import { remediateSdd } from "./work/remediation.js";
 import { recordValidationFailure } from "./work/validation-failure.js";
@@ -195,13 +196,15 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
 
   if (command === "outcome") {
     const [action, id] = args;
-    const usage = "Usage: ways outcome open <id> --goal=<text> --criterion=<ID>:<text>... [--memory=none|normal|high] | evaluate | remediate --reason=<text> | memory-review digest | memory-review submit <review.json> | close | cancel";
+    const usage = "Usage: ways outcome open <id> --goal=<text> --criterion=<ID>:<text>... [--memory=none|normal|high] [--isolation=required|optional] [--parallel=allowed|disabled] | evaluate | remediate --reason=<text> | memory-review digest | memory-review submit <review.json> | close | cancel";
     if (action === "open" && id) {
       const criteria = options(args, "--criterion").map(parseCriterion);
       const memory = args.find((arg) => arg.startsWith("--memory="))?.slice(9) ?? "normal";
       if (!(MEMORY_TIERS as readonly string[]).includes(memory)) throw new Error("--memory must be none, normal or high");
-      await openOutcome(cwd, id, requiredOption(args, "--goal"), criteria, memory as MemoryTier);
-      console.log(`Outcome ${id} opened with ${criteria.length} acceptance criteria and ${memory} memory assurance; execute through tasks, then run ways outcome evaluate.`);
+      const execution = parseExecutionPolicy(args);
+      await openOutcome(cwd, id, requiredOption(args, "--goal"), criteria, memory as MemoryTier, execution);
+      const { isolation, parallel } = effectiveExecutionPolicy(execution);
+      console.log(`Outcome ${id} opened with ${criteria.length} acceptance criteria, ${memory} memory assurance, ${isolation} isolation and parallelism ${parallel}; execute${isolation === "required" ? " through tasks" : ""}, then run ways outcome evaluate.`);
       return 0;
     }
     if (action === "memory-review" && id === "digest") {

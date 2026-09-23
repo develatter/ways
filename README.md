@@ -123,7 +123,14 @@ npx ways review submit review.json
 npx ways outcome close
 ```
 
-The goal and stable criterion identifiers are committed at open and cannot change afterwards. The first slice uses a fixed conservative policy: production changes arrive only through integrated task worktrees, `evaluate` refuses missing criterion evidence or failing checks, and `close` refuses without a passing, fresh, digest-bound review. The commit hook, `ways check --history`, `ways status` and `ways repair diagnose` all understand the workflow and reject skipped transitions, direct commits and forged or tampered evidence.
+The goal and stable criterion identifiers are committed at open and cannot change afterwards. By default, production changes arrive only through integrated task worktrees; `evaluate` refuses missing criterion evidence or failing checks, and `close` refuses without a passing, fresh, digest-bound review. The commit hook, `ways check --history`, `ways status` and `ways repair diagnose` all understand the workflow and reject skipped transitions, direct commits and forged or tampered evidence.
+
+Execution policies are chosen at open and stored in the immutable spec, so the opening commit binds them to Git and later disk or commit edits cannot weaken them. Specs without these fields read as the defaults:
+
+- `--isolation=required` (default): production changes arrive only through integrated task worktrees; whoever implements, the main agent included, works there. `--isolation=optional` also accepts traced direct commits (`Harness-Work`, no task) during execute; a task trailer still has to be backed by an integrated task.
+- `--parallel=allowed` (default): several tasks may be prepared at once. `--parallel=disabled`: `ways task prepare` refuses while another task of the work is prepared but not integrated, and `ways repair diagnose` flags a state holding two.
+
+Tasks are scheduled as their dependencies complete; there is no decomposition phase or orchestrator-only role. The commit hook, `evaluate`, `close`, `ways check --history` and the provider guard (which blocks main-worktree writes during execute only when isolation is required) apply the same policy.
 
 Remediation is additive. A failing `evaluate` commits a replayable check-failure record for the attempt; a blocking review stays pending. `ways outcome remediate --reason=<text>` then opens attempt n+1 from that evidence, and the attempt needs new tasks, its own evaluation and a fresh review. Artifacts of earlier attempts are immutable, and the hook and the history audit reject forged failures, remediations and rewrites.
 
