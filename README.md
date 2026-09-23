@@ -127,6 +127,14 @@ The goal and stable criterion identifiers are committed at open and cannot chang
 
 Remediation is additive. A failing `evaluate` commits a replayable check-failure record for the attempt; a blocking review stays pending. `ways outcome remediate --reason=<text>` then opens attempt n+1 from that evidence, and the attempt needs new tasks, its own evaluation and a fresh review. Artifacts of earlier attempts are immutable, and the hook and the history audit reject forged failures, remediations and rewrites.
 
+Memory assurance is chosen at open with `--memory=none|normal|high` (default `normal`) and stored in the immutable spec; there is no blanket reconciliation phase:
+
+- `none`: the increment must not change `.ways/knowledge/`; evaluate and close refuse it.
+- `normal`: relevant sourced knowledge updates travel in task commits like any other change. The evaluation's integrity checks enforce OKF validity, sources and indexes; no separate memory review or commit is needed.
+- `high`: close also requires a passing memory review bound to `ways outcome memory-review digest` (the evaluated input plus its exact knowledge diff), recorded with `ways outcome memory-review submit review.json`. A missing, blocking or stale memory review blocks close, the hook and the history audit.
+
+Progress belongs in the outcome's evidence, never in knowledge. Legacy SDD reconcile-memory, `ways memory commit` and release reconciliation keep their original semantics.
+
 ## Knowledge
 
 The current repository memory is an OKF v0.2 bundle under `.ways/knowledge/`. Supported core types are `system`, `component`, `convention`, `decision`, and `faq`; custom OKF types remain valid.

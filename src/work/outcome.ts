@@ -1,10 +1,11 @@
+import { createHash } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { HARNESS_VERSION } from "../index.js";
 import { failedCheckDetails, runChecks } from "../check/check.js";
-import { OUTCOME_DIR, STATE_PATH, STATUS_PATH } from "../domain/constants.js";
+import { KNOWLEDGE_DIR, OUTCOME_DIR, STATE_PATH, STATUS_PATH } from "../domain/constants.js";
 import { loadConfig } from "../config/config.js";
-import { CHECK_NAMES, type OutcomeCriterion, type OutcomeEvaluation, type OutcomeEvidence, type OutcomeSpec, type RemediationRecord, type ReviewResult, type ValidationFailureRecord, type WorkState } from "../domain/types.js";
+import { CHECK_NAMES, MEMORY_TIERS, type MemoryTier, type OutcomeCriterion, type OutcomeEvaluation, type OutcomeEvidence, type OutcomeSpec, type RemediationRecord, type ReviewResult, type ValidationFailureRecord, type WorkState } from "../domain/types.js";
 import { validateRemediation, validateReview, validateState, validateValidationFailure } from "../domain/validation.js";
 import { stableJson, writeAtomic } from "../fs/files.js";
 import { GitRepository, type CommitInfo } from "../git/git.js";
@@ -54,6 +55,11 @@ export function outcomeReviewPath(workId: string, attempt = 0): string {
   return `${attemptDirectory(workId, attempt)}/reviews/latest.json`;
 }
 
+/** High-assurance memory review; under reviews/ so it stays outside the increment digest and tool writes. */
+export function outcomeMemoryReviewPath(workId: string, attempt = 0): string {
+  return `${attemptDirectory(workId, attempt)}/reviews/memory.json`;
+}
+
 /** Failed checks recorded against the immutable executed input. */
 export function outcomeCheckFailurePath(workId: string, attempt = 0): string {
   return `${attemptDirectory(workId, attempt)}/check-failure.json`;
@@ -92,7 +98,8 @@ function specFailure(value: unknown, workId: string): string | undefined {
     ids.add(criterion.id);
   }
   const policy = value.policy;
-  if (!isRecord(policy) || policy.isolation !== "required" || policy.independentEvaluation !== "required" || policy.checks !== "configured") {
+  if (!isRecord(policy) || policy.isolation !== "required" || policy.independentEvaluation !== "required" || policy.checks !== "configured"
+    || (policy.memory !== undefined && !(MEMORY_TIERS as readonly unknown[]).includes(policy.memory))) {
     return "outcome spec has an unsupported policy";
   }
   return undefined;
@@ -113,6 +120,47 @@ function evidenceFailure(value: unknown, spec: OutcomeSpec, attempt: number): st
       return `criterion ${id} references unknown checks`;
     }
   }
+  return undefined;
+}
+
+export function memoryTier(spec: OutcomeSpec): MemoryTier {
+  return spec.policy.memory ?? "normal";
+}
+
+/** Durable knowledge files the increment changed between two commits. */
+async function knowledgeChanges(git: GitRepository, from: string, to: string): Promise<string[]> {
+  return (await git.run(["diff", "--name-only", from, to, "--", KNOWLEDGE_DIR])).split("\n").filter(Boolean);
+}
+
+/**
+ * Digest a high-assurance memory review binds to: the evaluated input commit
+ * (and so its code) plus the exact knowledge diff of the increment.
+ */
+export async function outcomeMemoryDigest(git: GitRepository, workId: string, attempt: number, openCommit: string, executeCommit: string): Promise<string> {
+  const base = await git.parent(openCommit);
+  const input = await git.parent(executeCommit);
+  // Pinned diff options so the digest replays identically under any git config.
+  const diff = await git.runBuffer(["diff", "--binary", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", "--diff-algorithm=histogram", base, input, "--", KNOWLEDGE_DIR]);
+  const hash = createHash("sha256");
+  for (const part of ["ways-outcome-memory-v1", workId, String(attempt), base, input]) hash.update(`${Buffer.byteLength(part)}\0${part}`);
+  hash.update(`${diff.length}\0`);
+  hash.update(diff);
+  return hash.digest("hex");
+}
+
+/** Memory policy of the increment, from committed content only. */
+async function memoryPolicyFailure(git: GitRepository, spec: OutcomeSpec, open: string, executeCommit: string, memoryReview: unknown, attempt: number): Promise<string | undefined> {
+  const tier = memoryTier(spec);
+  if (tier === "none") {
+    const changed = await knowledgeChanges(git, await git.parent(open), executeCommit);
+    return changed.length > 0 ? `memory policy none forbids knowledge changes: ${changed.join(", ")}` : undefined;
+  }
+  if (tier === "normal") return undefined;
+  if (!validateReview(memoryReview)) return "high-assurance memory requires a memory review (ways outcome memory-review submit)";
+  if (memoryReview.workId !== spec.workId || (memoryReview.attempt ?? 0) !== attempt || !memoryReview.reviewer.trim()) return "memory review does not belong to this work and attempt";
+  const blockers = reviewBlocks(memoryReview);
+  if (blockers.length > 0) return `memory review blocked by: ${blockers.join(", ")}`;
+  if (memoryReview.digest !== await outcomeMemoryDigest(git, spec.workId, attempt, open, executeCommit)) return "memory review is stale: it does not match the evaluated knowledge";
   return undefined;
 }
 
@@ -157,7 +205,7 @@ function isolationFailure(commits: readonly CommitInfo[], workId: string, state:
  * certified execution, its passing evaluation, complete criterion evidence and
  * a fresh independent review. Used by close, the commit hook and history.
  */
-export async function outcomeCloseFailure(git: GitRepository, workId: string, executeCommit: string, review: unknown, attempt = 0): Promise<string | undefined> {
+export async function outcomeCloseFailure(git: GitRepository, workId: string, executeCommit: string, review: unknown, attempt = 0, memoryReview?: unknown): Promise<string | undefined> {
   const execute = await git.commitInfo(executeCommit);
   if (execute.trailers.work !== workId || execute.trailers.phase !== OUTCOME_PHASES.execute || execute.trailers.state !== "completed" || trailerAttempt(execute) !== attempt) {
     return "close must directly follow the certified execution";
@@ -185,7 +233,7 @@ export async function outcomeCloseFailure(git: GitRepository, workId: string, ex
   const blockers = reviewBlocks(review);
   if (blockers.length > 0) return `review blocked by: ${blockers.join(", ")}`;
   if (review.digest !== await outcomeDigest(git, open.hash, executeCommit)) return "review is stale: it does not match the evaluated increment";
-  return undefined;
+  return memoryPolicyFailure(git, spec as OutcomeSpec, open.hash, executeCommit, memoryReview, attempt);
 }
 
 async function commitsBetween(git: GitRepository, from: string, to: string): Promise<CommitInfo[]> {
@@ -233,7 +281,7 @@ async function dirtyPaths(git: GitRepository): Promise<string[]> {
   return [...paths].sort();
 }
 
-export async function openOutcome(cwd: string, id: string, goal: string, criteria: OutcomeCriterion[]): Promise<WorkState> {
+export async function openOutcome(cwd: string, id: string, goal: string, criteria: OutcomeCriterion[], memory: MemoryTier = "normal"): Promise<WorkState> {
   if (!/^[a-z0-9][a-z0-9-]{1,62}$/.test(id)) throw new Error("Work id must be a lowercase slug");
   if (await loadState(cwd)) throw new Error("Another mutating work is already active");
   const spec: OutcomeSpec = {
@@ -241,7 +289,7 @@ export async function openOutcome(cwd: string, id: string, goal: string, criteri
     workId: id,
     goal: goal.trim(),
     criteria,
-    policy: { isolation: "required", independentEvaluation: "required", checks: "configured" },
+    policy: { isolation: "required", independentEvaluation: "required", checks: "configured", memory },
   };
   const failure = specFailure(spec, id);
   if (failure) throw new Error(failure[0]!.toUpperCase() + failure.slice(1));
@@ -300,6 +348,10 @@ export async function evaluateOutcome(cwd: string): Promise<{ commit: string; ev
   }
   const missing = evidenceFailure(evidence, spec, attempt);
   if (missing) throw new Error(`Map every acceptance criterion to evidence in ${outcomeEvidencePath(state.id, attempt)}: ${missing}`);
+  if (memoryTier(spec) === "none") {
+    const changed = await knowledgeChanges(git, state.baseCommit, "HEAD");
+    if (changed.length > 0) throw new Error(`Memory policy none forbids knowledge changes: ${changed.join(", ")}`);
+  }
 
   const result = await runChecks(cwd, false, undefined, { services: true });
   const failures = [
@@ -469,21 +521,40 @@ export async function outcomeReviewDigest(cwd: string, state: WorkState): Promis
   return outcomeDigest(git, (await outcomeOpenCommit(git, state.id))!.hash, await git.head());
 }
 
+/** Digest a high-assurance memory reviewer must bind to while the work is in evaluate. */
+export async function outcomeMemoryReviewDigest(cwd: string): Promise<string> {
+  const state = requireOutcome(await loadState(cwd), "evaluate");
+  await assertOutcomeConsistency(cwd, state);
+  const spec = JSON.parse(await readFile(join(cwd, outcomeSpecPath(state.id)), "utf8")) as OutcomeSpec;
+  if (memoryTier(spec) !== "high") throw new Error(`Outcome ${state.id} uses memory policy ${memoryTier(spec)}; no memory review is needed`);
+  const git = new GitRepository(cwd);
+  return outcomeMemoryDigest(git, state.id, state.attempt ?? 0, (await outcomeOpenCommit(git, state.id))!.hash, await git.head());
+}
+
+export async function submitOutcomeMemoryReview(cwd: string, inputPath: string): Promise<ReviewResult> {
+  const digest = await outcomeMemoryReviewDigest(cwd);
+  const state = (await loadState(cwd))!;
+  const value: unknown = JSON.parse(await readFile(inputPath, "utf8"));
+  if (!validateReview(value)) throw new Error("Invalid memory review");
+  if (value.workId !== state.id || (value.attempt ?? 0) !== (state.attempt ?? 0)) throw new Error("Memory review does not belong to this work and attempt");
+  if (!value.reviewer.trim()) throw new Error("Independent reviewer identity is required");
+  if (value.digest !== digest) throw new Error(`Memory review digest ${value.digest.slice(0, 12)} does not match ${digest.slice(0, 12)}; obtain it with \`ways outcome memory-review digest\``);
+  await writeAtomic(join(cwd, outcomeMemoryReviewPath(state.id, state.attempt)), stableJson(value));
+  return value;
+}
+
+
 export async function closeOutcome(cwd: string): Promise<string> {
   const state = requireOutcome(await loadState(cwd), "evaluate");
   await assertOutcomeConsistency(cwd, state);
   const git = new GitRepository(cwd);
   const attempt = state.attempt ?? 0;
-  const allowed = new Set([STATE_PATH, STATUS_PATH, outcomeReviewPath(state.id, attempt)]);
+  const allowed = new Set([STATE_PATH, STATUS_PATH, outcomeReviewPath(state.id, attempt), outcomeMemoryReviewPath(state.id, attempt)]);
   const unrelated = (await dirtyPaths(git)).filter((path) => !allowed.has(path));
   if (unrelated.length > 0) throw new Error(`Changes after evaluation block close; they need a new evaluation: ${unrelated.join(", ")}`);
-  let review: ReviewResult | undefined;
-  try {
-    review = JSON.parse(await readFile(join(cwd, outcomeReviewPath(state.id, attempt)), "utf8")) as ReviewResult;
-  } catch {
-    review = undefined;
-  }
-  const failure = await outcomeCloseFailure(git, state.id, await git.head(), review, attempt);
+  const review = await readJsonFile(cwd, outcomeReviewPath(state.id, attempt));
+  const memoryReview = await readJsonFile(cwd, outcomeMemoryReviewPath(state.id, attempt));
+  const failure = await outcomeCloseFailure(git, state.id, await git.head(), review, attempt, memoryReview);
   if (failure) throw new Error(`Close refused: ${failure}`);
   // The evaluated tree is still HEAD's; re-running the checks means a hand-written evaluation cannot close failing work.
   const checks = await runChecks(cwd, false, undefined, { services: true });
@@ -509,9 +580,9 @@ export async function cancelOutcome(cwd: string): Promise<string> {
   return closeWork(cwd, `outcome(cancel): ${state.id}`, { work: state.id, state: "cancelled", ...attemptTrailer(state.attempt ?? 0) });
 }
 
-/** A close commit records the review and removes the state; anything else was never evaluated. */
+/** A close commit records the reviews and removes the state; anything else was never evaluated. */
 export function closeCommitExtraPaths(changed: readonly string[], workId: string, attempt = 0): string[] {
-  const allowed = new Set([STATE_PATH, STATUS_PATH, outcomeReviewPath(workId, attempt)]);
+  const allowed = new Set([STATE_PATH, STATUS_PATH, outcomeReviewPath(workId, attempt), outcomeMemoryReviewPath(workId, attempt)]);
   return changed.filter((path) => !allowed.has(path));
 }
 
@@ -618,7 +689,8 @@ export async function outcomeHistoryIssues(git: GitRepository, commits: readonly
       invalid(commit, `Outcome ${work} close changed more than its review: ${extra.join(", ")}`);
       continue;
     }
-    const failure = await outcomeCloseFailure(git, work, await git.parent(commit.hash), await showJson(git, commit.hash, outcomeReviewPath(work, attempt)), attempt)
+    const failure = await outcomeCloseFailure(git, work, await git.parent(commit.hash), await showJson(git, commit.hash, outcomeReviewPath(work, attempt)), attempt,
+      await showJson(git, commit.hash, outcomeMemoryReviewPath(work, attempt)))
       .catch((error: unknown) => error instanceof Error ? error.message : String(error));
     if (failure) invalid(commit, `Outcome ${work} closed without valid evidence: ${failure}`);
   }
