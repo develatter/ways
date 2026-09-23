@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "workId": "issue-5-full-sdd-evals",
+  "source": "review",
+  "target": "implement",
+  "reason": "Re-review failed: git replace objects or grafts substitute the bootstrap commit under the grader",
+  "evidence": {
+    "kind": "review",
+    "review": {
+      "schemaVersion": 1,
+      "workId": "issue-5-full-sdd-evals",
+      "reviewer": "ways-reviewer",
+      "digest": "883766be84afecb5434c3f1b76ec7ea52ac31d5d260abd180bec1ac32dbb4739",
+      "attempt": 4,
+      "verdict": "fail",
+      "findings": [
+        {
+          "id": "R6-amended-bootstrap-anchor-hides-product-change",
+          "severity": "high",
+          "summary": "Verified fixed: amended bootstrap, orphan root and rewritten fixture variants raise eval-history-rewritten; reset-to-bootstrap plus genuine SDD stays legitimate; no regressions.",
+          "disposition": "fixed"
+        },
+        {
+          "id": "R7-git-replace-object-hides-product-change",
+          "severity": "high",
+          "summary": "Amending the bootstrap with the product change, resetting soft to startRevision and running `git replace <startRevision> X` before an empty-implement SDD through close is graded compliant: all grader git commands honour refs/replace (and info/grafts), so the ancestry check passes while the change sits in the replaced parent tree. Disable or reject replace objects and grafts, with a test.",
+          "disposition": "open"
+        },
+        {
+          "id": "L1-forged-full-certification-chain",
+          "severity": "low",
+          "summary": "A fully forged certification chain, including rewriting the agent's own post-bootstrap commits, cannot be proven locally; documented, consistent with the README authorship caveat.",
+          "disposition": "accepted"
+        }
+      ]
+    }
+  },
+  "priorCheckpoint": "ef716fd1130926668d63552734e4b0ccecef324b",
+  "attempt": 5,
+  "timestamp": "2026-09-23T18:19:39.054Z"
+}
