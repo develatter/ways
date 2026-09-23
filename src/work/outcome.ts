@@ -13,6 +13,7 @@ import { loadState, saveState } from "../state/store.js";
 import { closeWork } from "./close.js";
 import { committedWorkDigest } from "./digest.js";
 import { reviewBlocks } from "./review.js";
+import { evaluationPolicy, INDEPENDENT_EVALUATION, outcomeEvaluationFailure, type EvaluationMode } from "./outcome-evaluation-policy.js";
 import { canonicalChecks, validationFailureDigest, validationFailureRecordFailure, validationFailureReplayFailure } from "./validation-failure.js";
 
 /** Trailer phases of the outcome workflow. They never collide with SDD phase names. */
@@ -98,7 +99,7 @@ function specFailure(value: unknown, workId: string): string | undefined {
     ids.add(criterion.id);
   }
   const policy = value.policy;
-  if (!isRecord(policy) || policy.isolation !== "required" || policy.independentEvaluation !== "required" || policy.checks !== "configured"
+  if (!isRecord(policy) || policy.isolation !== "required" || !INDEPENDENT_EVALUATION.includes(policy.independentEvaluation) || policy.checks !== "configured"
     || (policy.memory !== undefined && !(MEMORY_TIERS as readonly unknown[]).includes(policy.memory))) {
     return "outcome spec has an unsupported policy";
   }
@@ -228,11 +229,8 @@ export async function outcomeCloseFailure(git: GitRepository, workId: string, ex
   if (cited) return cited;
   const isolation = isolationFailure(await commitsBetween(git, open.hash, input), workId, await showJson(git, executeCommit, STATE_PATH));
   if (isolation) return isolation;
-  if (!validateReview(review)) return "an independent review is required";
-  if (review.workId !== workId || (review.attempt ?? 0) !== attempt || !review.reviewer.trim()) return "review does not belong to this work and attempt";
-  const blockers = reviewBlocks(review);
-  if (blockers.length > 0) return `review blocked by: ${blockers.join(", ")}`;
-  if (review.digest !== await outcomeDigest(git, open.hash, executeCommit)) return "review is stale: it does not match the evaluated increment";
+  const evaluationFailure = await outcomeEvaluationFailure(git, { spec: spec as OutcomeSpec, workId, attempt, openCommit: open.hash, input, digest: () => outcomeDigest(git, open.hash, executeCommit) }, review);
+  if (evaluationFailure) return evaluationFailure;
   return memoryPolicyFailure(git, spec as OutcomeSpec, open.hash, executeCommit, memoryReview, attempt);
 }
 
@@ -281,7 +279,7 @@ async function dirtyPaths(git: GitRepository): Promise<string[]> {
   return [...paths].sort();
 }
 
-export async function openOutcome(cwd: string, id: string, goal: string, criteria: OutcomeCriterion[], memory: MemoryTier = "normal"): Promise<WorkState> {
+export async function openOutcome(cwd: string, id: string, goal: string, criteria: OutcomeCriterion[], memory: MemoryTier = "normal", evaluation: EvaluationMode = "independent"): Promise<WorkState> {
   if (!/^[a-z0-9][a-z0-9-]{1,62}$/.test(id)) throw new Error("Work id must be a lowercase slug");
   if (await loadState(cwd)) throw new Error("Another mutating work is already active");
   const spec: OutcomeSpec = {
@@ -289,7 +287,7 @@ export async function openOutcome(cwd: string, id: string, goal: string, criteri
     workId: id,
     goal: goal.trim(),
     criteria,
-    policy: { isolation: "required", independentEvaluation: "required", checks: "configured", memory },
+    policy: { isolation: "required", independentEvaluation: evaluationPolicy(evaluation), checks: "configured", memory },
   };
   const failure = specFailure(spec, id);
   if (failure) throw new Error(failure[0]!.toUpperCase() + failure.slice(1));
