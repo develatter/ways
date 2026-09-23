@@ -186,7 +186,7 @@ export async function advanceSdd(cwd: string): Promise<string> {
   if (state.phase === "implement" && state.execution === "delegated") await assertDelegatedImplementation(cwd, state);
   if (state.phase === "review") await assertReviewPassed(cwd, state);
   if (state.phase === "validate" || state.phase === "close") {
-    const checks = await runChecks(cwd);
+    const checks = await runChecks(cwd, false, undefined, { services: true });
     const failures = failedCheckDetails(checks);
     if (checks.issues.length > 0 || failures.length > 0 || (!checks.checks && checks.testExitCode !== 0)) {
       throw new Error(failures.length > 0 ? failures.join("\n") : `Checks failed during ${state.phase}`);

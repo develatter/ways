@@ -59,7 +59,7 @@ export async function finishPlan(cwd: string, subject: string, _legacyMemoryDisp
   const state = await loadState(cwd);
   if (!state || state.mode !== "plan" || !state.planPath) throw new Error("No active plan");
   if (!subject.trim()) throw new Error("A concise commit message is required");
-  const checks = await runChecks(cwd);
+  const checks = await runChecks(cwd, false, undefined, { services: true });
   const namedFailures = failedCheckDetails(checks);
   if (checks.issues.length > 0 || namedFailures.length > 0 || (!checks.checks && checks.testExitCode !== 0)) {
     throw new Error(namedFailures.length > 0 ? namedFailures.join("\n") : "Checks failed; plan cannot close");

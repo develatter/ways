@@ -37,6 +37,15 @@ npx ways bootstrap --test-command='["npm","test"]' \
   --commands='{"test":["npm","test"],"lint":["npm","run","lint"],"required":["test","lint"],"timeoutMs":120000}'
 ```
 
+The same contract can opt in to an environment: a `setup` argument array and `services`, each `{"name", "command", "ready", "timeoutMs"}` where `ready` is exactly one bounded probe (`{"command": [...]}`, `{"tcp": {"port": 5432}}` or `{"http": "http://127.0.0.1:3000/health"}`; readiness defaults to 30000ms):
+
+```json
+"setup": ["npm", "ci"],
+"services": [{ "name": "api", "command": ["npm", "start"], "ready": { "http": "http://127.0.0.1:3000/health" }, "timeoutMs": 20000 }]
+```
+
+Setup and services run only at execution boundaries: `quick finish`, `plan finish`, `sdd advance` out of validate and close, `sdd validate` (and its replay), and `ways check --with-services`. Plain `ways check`, `ways status` and `ways repair diagnose` never run setup or start services. Services start in their own process groups after setup, before the checks; their output goes to `.ways/runtime/services/<name>.log` (ignored by Git). A failed or timed-out setup, a service that never becomes ready, or one that exits before readiness or while checks run skips the remaining checks and fails the evaluation, with the result under `environment` in the check output and validation records. Afterwards, and on timeout, failure, SIGINT or SIGTERM, the harness terminates only the process groups it started.
+
 ## Using the harness day to day
 
 You never need the CLI: you talk to your coding agent and it drives `ways` for you. The commands below are the same in every agent, only the invocation prefix changes (see the provider table).

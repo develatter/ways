@@ -1,124 +1,28 @@
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { loadConfig } from "../config/config.js";
-import { CHECK_NAMES, type CheckName, type NamedCheckResult, type NamedChecksConfig } from "../domain/types.js";
+import { CHECK_NAMES, type CheckName, type EnvironmentResult, type NamedCheckResult, type NamedChecksConfig } from "../domain/types.js";
 import { checkIntegrity, type IntegrityIssue } from "../integrity/integrity.js";
+import { startEnvironment, type Environment } from "./environment.js";
+import { execute } from "./process.js";
+
+export { treeKillArgs } from "./process.js";
 
 export interface CheckResult {
   issues: IntegrityIssue[];
   testExitCode?: number;
   checks?: NamedCheckResult[];
+  /** Setup and service results, present only when an execution boundary started them. */
+  environment?: EnvironmentResult[];
 }
 
-interface ExecutionResult {
-  status: "passed" | "failed" | "timed-out" | "unavailable";
-  exitCode?: number;
-  detail?: string;
+export interface RunChecksOptions {
+  /** Execution boundary: run configured setup and services around the checks. */
+  services?: boolean;
 }
+
+const unhealthy = (status: string): boolean => status === "failed" || status === "timed-out" || status === "unavailable";
+const invalidArgv = (command: unknown): boolean => !Array.isArray(command) || command.length === 0 || command.some((part) => typeof part !== "string" || part.trim() === "");
 
 const DEFAULT_TIMEOUT_MS = 120_000;
-
-export function treeKillArgs(pid: number | undefined, signal: NodeJS.Signals, platform = process.platform): string[] | undefined {
-  if (pid === undefined || platform !== "win32") return undefined;
-  return ["/PID", String(pid), "/T", ...(signal === "SIGKILL" ? ["/F"] : [])];
-}
-
-function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
-  const args = treeKillArgs(child.pid, signal);
-  if (args) {
-    try {
-      const taskkill = spawnSync("taskkill", args, { stdio: "ignore", windowsHide: true });
-      if (!taskkill.error && taskkill.status === 0) return;
-    } catch {
-      // Fall through to direct child termination.
-    }
-    try { child.kill(signal); } catch { /* Already exited. */ }
-    return;
-  }
-  try {
-    if (child.pid !== undefined) process.kill(-child.pid, signal);
-    else child.kill(signal);
-  } catch {
-    try { child.kill(signal); } catch { /* Already exited. */ }
-  }
-}
-function execute(command: string[], cwd: string, timeoutMs?: number, strict = false): Promise<ExecutionResult> {
-  const [program, ...args] = command;
-  if (!program || (strict && command.some((part) => part.trim() === "" || part.includes("\0")))) {
-    return Promise.resolve({ status: "unavailable", detail: "Configured command must contain non-empty arguments without NUL bytes" });
-  }
-  return new Promise((resolve) => {
-    let child: ChildProcess;
-    try {
-      child = spawn(program, args, {
-        cwd,
-        stdio: "inherit",
-        shell: false,
-        detached: process.platform !== "win32",
-      });
-    } catch (error) {
-      resolve({ status: "unavailable", detail: `Unable to spawn command: ${error instanceof Error ? error.message : String(error)}` });
-      return;
-    }
-    let settled = false;
-    let timedOut = false;
-    let timer: NodeJS.Timeout | undefined;
-    let killTimer: NodeJS.Timeout | undefined;
-    const onSignal = (signal: NodeJS.Signals): void => {
-      // Abort this harness immediately: TERM then KILL the entire detached group
-      // before restoring the process's conventional signal termination.
-      killTree(child, signal);
-      killTree(child, "SIGKILL");
-      cleanup();
-      process.kill(process.pid, signal);
-    };
-    const onExit = (): void => killTree(child, "SIGTERM");
-    const onSigint = (): void => onSignal("SIGINT");
-    const onSigterm = (): void => onSignal("SIGTERM");
-    const cleanup = (): void => {
-      clearTimeout(timer);
-      clearTimeout(killTimer);
-      process.removeListener("SIGINT", onSigint);
-      process.removeListener("SIGTERM", onSigterm);
-      process.removeListener("exit", onExit);
-    };
-    const finish = (result: ExecutionResult): void => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve(result);
-    };
-    process.once("SIGINT", onSigint);
-    process.once("SIGTERM", onSigterm);
-    process.once("exit", onExit);
-    child.once("error", (error) => {
-      finish({ status: "unavailable", detail: `Unable to spawn command: ${error.message}` });
-    });
-    child.once("close", (code, signal) => {
-      // Keep listeners and the escalation timer alive until SIGKILL has had time
-      // to reach descendants of a detached process group.
-      if (timedOut) return;
-      if (code === 0) {
-        finish({ status: "passed", exitCode: 0 });
-      } else {
-        finish({
-          status: "failed",
-          exitCode: code ?? 1,
-          ...(signal ? { detail: `Command terminated by ${signal}` } : {}),
-        });
-      }
-    });
-    if (timeoutMs !== undefined) {
-      timer = setTimeout(() => {
-        timedOut = true;
-        killTree(child, "SIGTERM");
-        killTimer = setTimeout(() => {
-          killTree(child, "SIGKILL");
-          setTimeout(() => finish({ status: "timed-out", detail: `Command exceeded timeout of ${timeoutMs}ms` }), 250);
-        }, 250);
-      }, timeoutMs);
-    }
-  });
-}
 
 function validContract(contract: NamedChecksConfig): void {
   if (!Array.isArray(contract.required) || contract.required.length === 0) throw new Error("Named checks require at least one required check");
@@ -136,6 +40,16 @@ function validContract(contract: NamedChecksConfig): void {
   if (contract.timeoutMs !== undefined && (!Number.isInteger(contract.timeoutMs) || contract.timeoutMs < 1 || contract.timeoutMs > 3_600_000)) {
     throw new Error("Named check timeoutMs must be between 1 and 3600000");
   }
+  if (contract.setup !== undefined && invalidArgv(contract.setup)) throw new Error("Invalid setup command");
+  const services = new Set<string>();
+  for (const service of contract.services ?? []) {
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(service.name) || services.has(service.name)) throw new Error(`Invalid service name: ${service.name}`);
+    services.add(service.name);
+    if (invalidArgv(service.command)) throw new Error(`Invalid ${service.name} service command`);
+    if (!service.ready || Object.keys(service.ready).length !== 1 || ("command" in service.ready && invalidArgv(service.ready.command))) {
+      throw new Error(`Service ${service.name} requires exactly one readiness probe`);
+    }
+  }
 }
 
 function resultFor(name: CheckName, command: string[] | undefined, result: Pick<NamedCheckResult, "status" | "exitCode" | "detail">): NamedCheckResult {
@@ -148,9 +62,22 @@ function resultFor(name: CheckName, command: string[] | undefined, result: Pick<
   };
 }
 
-async function runNamedChecks(cwd: string, issues: IntegrityIssue[], contract: NamedChecksConfig): Promise<CheckResult> {
+async function runNamedChecks(cwd: string, issues: IntegrityIssue[], contract: NamedChecksConfig, options: RunChecksOptions): Promise<CheckResult> {
   validContract(contract);
   const timeoutMs = contract.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const environment: Environment | undefined = options.services && issues.length === 0 && (contract.setup || contract.services?.length)
+    ? await startEnvironment(cwd, contract, timeoutMs)
+    : undefined;
+  try {
+    const checks = await runRequired(cwd, issues, contract, timeoutMs, environment);
+    if (environment) await environment.stop();
+    return summarize(issues, checks, environment?.results);
+  } finally {
+    await environment?.stop();
+  }
+}
+
+async function runRequired(cwd: string, issues: IntegrityIssue[], contract: NamedChecksConfig, timeoutMs: number, environment?: Environment): Promise<NamedCheckResult[]> {
   const required = new Set(contract.required);
   const checks: NamedCheckResult[] = [];
   for (const name of CHECK_NAMES) {
@@ -167,30 +94,47 @@ async function runNamedChecks(cwd: string, issues: IntegrityIssue[], contract: N
       checks.push(resultFor(name, command, { status: "skipped", detail: "Skipped because integrity checks failed" }));
       continue;
     }
+    if (environment && !environment.healthy) {
+      checks.push(resultFor(name, command, { status: "skipped", detail: "Skipped because the environment is not healthy" }));
+      continue;
+    }
     checks.push(resultFor(name, command, await execute(command, cwd, timeoutMs, true)));
   }
+  return checks;
+}
+
+function summarize(issues: IntegrityIssue[], checks: NamedCheckResult[], environment?: EnvironmentResult[]): CheckResult {
   const test = checks.find((check) => check.name === "test");
-  const failed = checks.some((check) => check.status === "failed" || check.status === "timed-out" || check.status === "unavailable");
+  const failed = checks.some((check) => unhealthy(check.status)) || (environment ?? []).some((result) => unhealthy(result.status));
   return {
     issues,
     checks,
+    ...(environment ? { environment: environment.map((result) => ({ ...result })) } : {}),
     testExitCode: failed ? (test?.exitCode && test.exitCode > 0 ? test.exitCode : 1) : (test?.exitCode ?? 0),
   };
 }
 
-export async function runChecks(cwd: string, integrityOnly = false, contract?: NamedChecksConfig): Promise<CheckResult> {
+/**
+ * Plain calls never run setup or start services; only execution boundaries
+ * (quick/plan finish, SDD validate and close, `ways check --with-services`)
+ * pass `services: true`.
+ */
+export async function runChecks(cwd: string, integrityOnly = false, contract?: NamedChecksConfig, options: RunChecksOptions = {}): Promise<CheckResult> {
   const issues = await checkIntegrity(cwd);
   if (integrityOnly) return { issues };
   const config = await loadConfig(cwd);
   const named = contract ?? config.commands;
-  if (named) return runNamedChecks(cwd, issues, named);
+  if (named) return runNamedChecks(cwd, issues, named, options);
   if (issues.length > 0) return { issues };
   const result = await execute(config.testCommand, cwd);
   return { issues, testExitCode: result.exitCode ?? 1 };
 }
 
 export function failedCheckDetails(result: CheckResult): string[] {
-  return (result.checks ?? [])
-    .filter((check) => check.status === "failed" || check.status === "timed-out" || check.status === "unavailable")
-    .map((check) => `${check.name}: ${check.status}${check.detail ? ` (${check.detail})` : ""}`);
+  const environment = (result.environment ?? [])
+    .filter((entry) => unhealthy(entry.status))
+    .map((entry) => `${entry.kind === "setup" ? "setup" : `service ${entry.name}`}: ${entry.status}${entry.detail ? ` (${entry.detail})` : ""}${entry.log ? ` [log: ${entry.log}]` : ""}`);
+  return [...environment, ...(result.checks ?? [])
+    .filter((check) => unhealthy(check.status))
+    .map((check) => `${check.name}: ${check.status}${check.detail ? ` (${check.detail})` : ""}`)];
 }
