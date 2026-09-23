@@ -2,7 +2,7 @@
 
 import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { installAdapter, PROVIDERS } from "./adapters/install.js";
 import { bootstrap } from "./bootstrap/bootstrap.js";
@@ -46,6 +46,8 @@ import { addTask, integrateTask, prepareTask } from "./work/tasks.js";
 import { applyUpgrade, planUpgrade } from "./upgrade/upgrade.js";
 import { runEvals } from "./evals/runner.js";
 import { commandAdapter, fakeAdapter } from "./evals/adapters.js";
+import { compareResultFiles, renderComparisonMarkdown } from "./evals/compare.js";
+import { HARNESS_LABELS, type HarnessLabel } from "./evals/types.js";
 
 function option(args: readonly string[], name: string): string | undefined {
   return args.find((arg) => arg.startsWith(`${name}=`))?.slice(name.length + 1);
@@ -240,7 +242,19 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
 
   if (command === "evals") {
     const [action] = args;
-    if (action !== "run") throw new Error("Usage: ways evals run [--adapter=fake|command] [--command=<executable>]");
+    if (action === "compare") {
+      const inputs = options(args, "--input");
+      if (inputs.length === 0) throw new Error("Usage: ways evals compare --input=<result.json>... [--output=<report.json>] [--markdown=<report.md>]");
+      const report = await compareResultFiles(inputs.map((input) => userPath(cwd, input)), (path) => relative(cwd, path) || path);
+      const output = stableJson(report);
+      const outputPath = option(args, "--output");
+      const markdownPath = option(args, "--markdown");
+      if (outputPath) await writeAtomic(userPath(cwd, outputPath), output);
+      if (markdownPath) await writeAtomic(userPath(cwd, markdownPath), renderComparisonMarkdown(report));
+      process.stdout.write(output);
+      return report.runs.some((entry) => entry.status === "comparable") ? 0 : 1;
+    }
+    if (action !== "run") throw new Error("Usage: ways evals run [--adapter=fake|command] [--command=<executable>] | compare --input=<result.json>...");
     const adapterName = option(args, "--adapter") ?? "fake";
     const adapter = adapterName === "fake"
       ? fakeAdapter
@@ -252,7 +266,7 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
     const seed = Number(option(args, "--seed") ?? "0");
     const corpusPath = option(args, "--corpus");
     const harness = option(args, "--harness") ?? "checks-only";
-    if (harness !== "no-ways" && harness !== "checks-only") throw new Error("--harness must be no-ways or checks-only");
+    if (!HARNESS_LABELS.includes(harness as HarnessLabel)) throw new Error(`--harness must be one of ${HARNESS_LABELS.join(", ")}`);
     if (!Number.isSafeInteger(maxMilliseconds) || maxMilliseconds <= 0) throw new Error("--timeout-ms must be a positive integer");
     if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes <= 0) throw new Error("--max-output-bytes must be a positive integer");
     if (!Number.isSafeInteger(seed) || seed < 0) throw new Error("--seed must be a non-negative integer");
@@ -261,7 +275,7 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
       adapter,
       configuration: {
         adapter: { id: adapter.id, argv: adapter.argv },
-        harness,
+        harness: harness as HarnessLabel,
         model: option(args, "--model") ?? "unspecified",
         startingRevision: option(args, "--revision") ?? "corpus-v2",
         budgets: { maxMilliseconds, maxOutputBytes },

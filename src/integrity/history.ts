@@ -269,7 +269,22 @@ async function priorArtifactMutationIssues(git: GitRepository, commits: readonly
   return issues;
 }
 
-export async function auditHistory(git: GitRepository, commits: readonly CommitInfo[], activeId?: string): Promise<{ issues: IntegrityIssue[]; checkpoints: HistoryCheckpoint[] }> {
+/**
+ * An untraced merge commit (for example GitHub's "Merge pull request") that
+ * adds nothing beyond its parents is an integration event, not authored work:
+ * its parents are audited on their own. A merge with its own changes (an evil
+ * merge or a conflict resolution) still needs a trailer.
+ */
+async function isCleanUntracedMerge(git: GitRepository, commit: CommitInfo): Promise<boolean> {
+  if (commit.trailers.work) return false;
+  const parents = (await git.run(["show", "-s", "--format=%P", commit.hash])).split(" ").filter(Boolean);
+  if (parents.length < 2) return false;
+  return (await git.run(["show", "--cc", "--format=", commit.hash])) === "";
+}
+
+export async function auditHistory(git: GitRepository, allCommits: readonly CommitInfo[], activeId?: string): Promise<{ issues: IntegrityIssue[]; checkpoints: HistoryCheckpoint[] }> {
+  const clean = await Promise.all(allCommits.map((commit) => isCleanUntracedMerge(git, commit)));
+  const commits = allCommits.filter((_, index) => !clean[index]);
   const replayCommitsInput = await hydrateLegacyRemediations(git, commits);
   const replayed = replayCommits(replayCommitsInput, activeId);
   return { ...replayed, issues: [

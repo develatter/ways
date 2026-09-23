@@ -154,6 +154,10 @@ Provider notes: Codex and Cursor only load project hooks in trusted projects, an
 
 Upgrades compare managed-file hashes and never overwrite modified files without checklist approval.
 
+## Harness evals
+
+`ways evals run` grades a fixed task corpus in disposable repositories under the no-ways (A), checks-only (B) or full-sdd (D) harness, and `ways evals compare` builds a report that links every score to its raw result files and keeps task success apart from harness compliance. See [docs/EVALS.md](docs/EVALS.md).
+
 ## Development
 
 ```bash
