@@ -4,67 +4,55 @@
   "mode": "sdd",
   "id": "issue-5-full-sdd-evals",
   "status": "active",
-  "gateCommit": "29deac88e86199f493a4867d08c231d69bfddade",
-  "updatedAt": "2026-09-23T18:14:19.866Z",
-  "phase": "review",
+  "gateCommit": "8fe6e35380aa91cd9a95121affe31f47d076b402",
+  "updatedAt": "2026-09-23T18:16:13.671Z",
+  "phase": "implement",
   "humanGate": false,
   "profile": "autonomous",
-  "attempt": 3,
+  "attempt": 4,
   "remediation": {
     "source": "review",
     "target": "implement",
-    "reason": "Re-review failed: merge commits hide product changes from the implement-window check",
+    "reason": "Re-review failed: rewriting the bootstrap commit moves the audit anchor past the product change",
     "evidence": {
       "kind": "review",
       "review": {
         "schemaVersion": 1,
         "workId": "issue-5-full-sdd-evals",
         "reviewer": "ways-reviewer",
-        "digest": "c7395c357e7855c450ff39e4d993ddfd603eb15c4719960a274702538cd5a59f",
-        "attempt": 2,
+        "digest": "b202ed13ddeafcdc8171cf64cd92961f202ce0d49b708d511591597f68a55406",
+        "attempt": 3,
         "verdict": "fail",
         "findings": [
           {
-            "id": "R1-unreviewed-change-after-review",
-            "severity": "high",
-            "summary": "Verified fixed for ordinary commits: a hooks-off task commit changing product code after validate yields eval-change-outside-implement. Merge variant tracked as R4.",
-            "disposition": "fixed"
-          },
-          {
-            "id": "R2-forged-state-file-after-close",
-            "severity": "high",
-            "summary": "Verified fixed: hooks-off task commits after close raise eval-commit-after-close; STATE_PATH protected; committed state no longer trusted.",
-            "disposition": "fixed"
-          },
-          {
-            "id": "R3-fullsdd-decoupled-from-compliant",
-            "severity": "low",
-            "summary": "Verified fixed: fullSddCompleted = compliant && closed.has(taskId), matching spec decision 3 and docs.",
-            "disposition": "fixed"
-          },
-          {
             "id": "R4-evil-merge-bypasses-implement-window",
             "severity": "high",
-            "summary": "After validate, a --no-ff merge of a bookkeeping-only side branch that also stages the product change, committed hooks-off with the task trailer, is graded compliant and fullSddCompleted: windowIssues uses git diff-tree -r <hash>, which prints nothing for merge commits. Diff against the first parent or reject merge commits, with a test.",
-            "disposition": "open"
+            "summary": "Verified fixed: the evil merge, an octopus merge and a side-branch --no-ff merge fast-forwarded into main all raise eval-merge-commit and eval-change-outside-implement with the functional grade kept.",
+            "disposition": "fixed"
           },
           {
             "id": "R5-legitimate-flows-no-false-positive",
             "severity": "low",
-            "summary": "Plain lifecycle, inline hook-verified implement commits and remediation back to implement grade compliant with no issues; smuggling into remediation/validate/reconcile-memory transitions is caught. A remediation false-positive test would lock this in.",
-            "disposition": "accepted"
+            "summary": "Verified: plain lifecycle and remediation back to implement with attempt-1 re-review grade compliant with no issues; remediation flow now tested.",
+            "disposition": "fixed"
+          },
+          {
+            "id": "R6-amended-bootstrap-anchor-hides-product-change",
+            "severity": "high",
+            "summary": "Amending the bootstrap commit hooks-off to include the product change, then running SDD with an empty implement through close, is graded compliant and fullSddCompleted: the grader anchors on manifestIntroduction (the rewritten commit) and never checks that the recorded bootstrap revision is still an ancestor of HEAD. Audit startRevision..HEAD and require ancestry, with a test.",
+            "disposition": "open"
           },
           {
             "id": "L1-forged-full-certification-chain",
             "severity": "low",
-            "summary": "A fully forged certification chain with hooks disabled cannot be proven locally; documented in docs/EVALS.md consistent with the README authorship caveat.",
+            "summary": "A fully forged certification chain with hooks disabled cannot be proven locally; documented, consistent with the README authorship caveat.",
             "disposition": "accepted"
           }
         ]
       }
     },
-    "priorCheckpoint": "65754bddf8b3d3ac9841d3a5139f203a35b09dc4",
-    "attempt": 3,
-    "timestamp": "2026-09-23T18:11:39.425Z"
+    "priorCheckpoint": "8fe6e35380aa91cd9a95121affe31f47d076b402",
+    "attempt": 4,
+    "timestamp": "2026-09-23T18:16:13.671Z"
   }
 }
