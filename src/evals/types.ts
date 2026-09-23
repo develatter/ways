@@ -11,8 +11,10 @@ export interface OutcomeEvalPolicy {
   parallel: "allowed" | "disabled";
   evaluation: "independent" | "self";
   memory: "none" | "normal" | "high";
+  /** Human approval checkpoints; anything but none needs a human at a TTY during the run. */
+  approvals: "none" | "close" | "close,remediate";
 }
-export const DEFAULT_OUTCOME_POLICY: OutcomeEvalPolicy = { isolation: "required", parallel: "allowed", evaluation: "independent", memory: "normal" };
+export const DEFAULT_OUTCOME_POLICY: OutcomeEvalPolicy = { isolation: "required", parallel: "allowed", evaluation: "independent", memory: "normal", approvals: "none" };
 
 export const TASK_KINDS = ["feature", "resume", "failed-evaluation-remediation", "false-done-claim", "concurrent-conflict"] as const;
 export type TaskKind = typeof TASK_KINDS[number];
@@ -155,7 +157,7 @@ export type HarnessCompliance =
     remediationAttempts: number;
     /** Recorded check failures: SDD validation failures or failed outcome evaluations. */
     validationFailures: number;
-    /** Human approval commits (Harness-State: approved) in the graded history. */
+    /** Human approval artifacts (SDD gates and outcome checkpoints) added in the graded history. */
     humanApprovals: number;
     /** Policy the repository recorded for the task's work; null when none was recorded. */
     effectivePolicy: Record<string, string> | null;

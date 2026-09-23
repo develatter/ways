@@ -14,6 +14,8 @@ import { stableJson } from "../src/fs/files.js";
 import { GitRepository } from "../src/git/git.js";
 import { closeOutcome, evaluateOutcome, openOutcome, outcomeEvidencePath, remediateOutcome } from "../src/work/outcome.js";
 import { finishQuick, startQuick } from "../src/work/quick.js";
+import type { Terminal } from "../src/work/approve.js";
+import { approveOutcomeInteractively, parseApprovalPolicy } from "../src/work/outcome-approvals.js";
 import { reviewDigest, submitReview } from "../src/work/review.js";
 import { addTask, integrateTask, prepareTask } from "../src/work/tasks.js";
 
@@ -79,8 +81,11 @@ async function independentReview(input: AdapterInput, attempt = 0): Promise<void
 
 async function open(input: AdapterInput, evaluation: "independent" | "self" = input.outcomePolicy?.evaluation ?? "independent"): Promise<void> {
   await openOutcome(input.repo, input.task.id, input.task.description, [{ id: "AC1", text: input.task.prompt }], input.outcomePolicy?.memory ?? "normal", evaluation,
-    { isolation: input.outcomePolicy?.isolation ?? "required", parallel: input.outcomePolicy?.parallel ?? "allowed" });
+    { isolation: input.outcomePolicy?.isolation ?? "required", parallel: input.outcomePolicy?.parallel ?? "allowed" }, parseApprovalPolicy(input.outcomePolicy?.approvals ?? "none"));
 }
+
+/** Stands in for the human at the terminal; the eval counts the approval record it leaves in Git. */
+const human: Terminal = { interactive: true, ask: async () => "close", say: () => undefined };
 
 describe("lightweight state (C)", { timeout: 120_000 }, () => {
   it("installs Ways and grades a finished quick work with committed evidence", async () => {
@@ -140,8 +145,8 @@ describe("outcome loop (E)", { timeout: 180_000 }, () => {
     const adapter = commandAdapter(process.execPath, ["-e", script]);
     const result = await runEvals({ corpus: await corpusOf("add-export"), adapter, configuration: configured(adapter, "outcome", { isolation: "optional", evaluation: "self" }) });
     expect(result.tasks[0]?.sessions[0]?.adapter).toMatchObject({ exitCode: 0, error: null });
-    expect(result.configuration.outcomePolicy).toEqual({ isolation: "optional", parallel: "allowed", evaluation: "self", memory: "normal" });
-    expect(result.harnessPrompt?.initial).toContain("--isolation=optional --parallel=allowed --evaluation=self --memory=normal");
+    expect(result.configuration.outcomePolicy).toEqual({ isolation: "optional", parallel: "allowed", evaluation: "self", memory: "normal", approvals: "none" });
+    expect(result.harnessPrompt?.initial).toContain("--isolation=optional --parallel=allowed --evaluation=self --memory=normal --approvals=none");
     expect(result.tasks[0]).toMatchObject({ success: true, compliance: { workflow: "outcome", compliant: true, completed: true, remediationAttempts: 0, validationFailures: 0, issues: [],
       effectivePolicy: { isolation: "optional", parallel: "allowed", evaluation: "self", memory: "normal" } } });
     expect(result.evidence.kind).toBe("real");
@@ -178,6 +183,21 @@ describe("outcome loop (E)", { timeout: 180_000 }, () => {
     const result = await runEvals({ corpus: await corpusOf("add-export"), adapter, configuration: configured(adapter, "outcome", { evaluation: "independent" }) });
     expect(result.tasks[0]).toMatchObject({ success: true, compliance: { compliant: false, completed: true, effectivePolicy: { evaluation: "self" } } });
     expect(codes(result)).toEqual(["eval-policy-mismatch"]);
+  });
+
+  it("counts human approvals from the approval records in history", async () => {
+    const adapter = scripted("approved", async (input) => {
+      await open(input);
+      await executeTask(input, "impl", patch(input));
+      await evidence(input);
+      await evaluateOutcome(input.repo);
+      await approveOutcomeInteractively(input.repo, "close", human);
+      await closeOutcome(input.repo);
+      return { metrics: { humanInterventions: 1 } };
+    });
+    const result = await runEvals({ corpus: await corpusOf("add-export"), adapter, configuration: configured(adapter, "outcome", { evaluation: "self", approvals: "close" }) });
+    expect(result.tasks[0]).toMatchObject({ success: true, compliance: { compliant: true, humanApprovals: 1, effectivePolicy: { approvals: "close" }, issues: [] } });
+    expect(result.tasks[0]?.metrics).toMatchObject({ humanApprovals: { value: 1, source: "repository" }, humanInterventions: { value: 1, source: "adapter" } });
   });
 
   it("keeps a closed outcome with a false done claim visible as an assurance violation", async () => {
@@ -297,7 +317,7 @@ describe("matched A–E comparison", { timeout: 300_000 }, () => {
       await writeFile(join(cwd, "corpus.json"), JSON.stringify(await corpusOf("add-export")));
       expect(await run(["evals", "run", "--adapter=fake", "--harness=outcome", "--evaluation=self", "--parallel=disabled", `--corpus=${join(cwd, "corpus.json")}`, "--output=e.json"], cwd)).toBe(0);
       const result = JSON.parse(await readFile(join(cwd, "e.json"), "utf8")) as EvalRunResult;
-      expect(result.configuration.outcomePolicy).toEqual({ isolation: "required", parallel: "disabled", evaluation: "self", memory: "normal" });
+      expect(result.configuration.outcomePolicy).toEqual({ isolation: "required", parallel: "disabled", evaluation: "self", memory: "normal", approvals: "none" });
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }

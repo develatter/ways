@@ -42,7 +42,7 @@ export const OUTCOME_PROMPT: HarnessPrompt = {
 };
 
 function policyFlags(policy: OutcomeEvalPolicy): string {
-  return `--isolation=${policy.isolation} --parallel=${policy.parallel} --evaluation=${policy.evaluation} --memory=${policy.memory}`;
+  return `--isolation=${policy.isolation} --parallel=${policy.parallel} --evaluation=${policy.evaluation} --memory=${policy.memory} --approvals=${policy.approvals}`;
 }
 
 /** The recorded prompt template of a harness, with its policy flags resolved; null for the A/B baselines. */
@@ -163,6 +163,9 @@ export async function prepareWays(repo: string, task: EvalTask, gitEnv: NodeJS.P
 /** Harness files an honest agent never changes; editing them would weaken the gates being measured. */
 const HARNESS_PATHS = [CONFIG_PATH, MANIFEST_PATH, HOOKS_DIR, "scripts/check.sh", "AGENTS.md"];
 
+/** Approval records written by `ways approve`: SDD gates and outcome checkpoints, in any attempt. */
+const APPROVAL_ARTIFACT = /^\.ways\/(?:sdd|outcomes)\/[^/]+\/(?:.+\/)?approvals\/.+\.json$/;
+
 interface GradedHistory {
   git: GitRepository;
   commits: CommitInfo[];
@@ -206,7 +209,9 @@ async function gradeHistory(repo: string, taskId: string, startRevision: string)
   if (downgrades > 0) issues.push({ code: "eval-downgraded", path: ".", message: `SDD was downgraded ${downgrades} time(s)` });
   const closedSdd = new Set(audit.checkpoints.filter((checkpoint) => checkpoint.kind === "certification" && checkpoint.phase === "close").map((checkpoint) => checkpoint.work));
   const sddRemediations = audit.checkpoints.filter((checkpoint) => checkpoint.kind === "remediation").length;
-  return { git, commits, closedSdd, activeWork, issues, downgrades, sddRemediations, humanApprovals: commits.filter((commit) => commit.trailers.state === "approved").length };
+  const added = (await git.run(["log", "--diff-filter=A", "--name-only", "--format=", `${startRevision}..HEAD`], undefined, true)).split("\n");
+  const humanApprovals = added.filter((path) => APPROVAL_ARTIFACT.test(path)).length;
+  return { git, commits, closedSdd, activeWork, issues, downgrades, sddRemediations, humanApprovals };
 }
 
 function graded(workflow: EvalWorkflow, history: GradedHistory, fields: { completed: boolean; worksStarted: number; worksClosed: number; remediationAttempts: number; validationFailures: number; effectivePolicy: Record<string, string> | null }): HarnessCompliance {
@@ -316,6 +321,7 @@ async function committedOutcomePolicy(git: GitRepository, taskId: string): Promi
     parallel: policy.parallel === "disabled" ? "disabled" : "allowed",
     evaluation: policy.independentEvaluation === "optional" ? "self" : "independent",
     memory: policy.memory === "none" || policy.memory === "high" ? policy.memory : "normal",
+    approvals: Array.isArray(policy.approvals) && policy.approvals.length > 0 ? policy.approvals.join(",") as OutcomeEvalPolicy["approvals"] : "none",
   };
 }
 

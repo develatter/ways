@@ -28,7 +28,7 @@ Every configuration uses the shipped public CLI; none is a mock of a workflow:
 
 ### Outcome policies (E)
 
-`--isolation=required|optional`, `--parallel=allowed|disabled`, `--evaluation=independent|self` and `--memory=none|normal|high` (defaults are Ways' own: `required`, `allowed`, `independent`, `normal`) apply only to `--harness=outcome`; the runner rejects them elsewhere. The effective policy is recorded as `configuration.outcomePolicy`, substituted into the prompt's `ways outcome open` flags, and exported to command adapters as `WAYS_EVAL_OUTCOME_POLICY` (JSON). The grader reads the policy the opening commit bound to Git and reports `eval-policy-mismatch` when the agent opened with anything else.
+`--isolation=required|optional`, `--parallel=allowed|disabled`, `--evaluation=independent|self`, `--memory=none|normal|high` and `--approvals=none|close|close,remediate` (defaults are Ways' own: `required`, `allowed`, `independent`, `normal`, `none`) apply only to `--harness=outcome`; approvals other than `none` need a human running `ways approve` at a terminal during the run. The runner rejects them elsewhere. The effective policy is recorded as `configuration.outcomePolicy`, substituted into the prompt's `ways outcome open` flags, and exported to command adapters as `WAYS_EVAL_OUTCOME_POLICY` (JSON). The grader reads the policy the opening commit bound to Git and reports `eval-policy-mismatch` when the agent opened with anything else.
 
 ## Compliance
 
@@ -43,7 +43,7 @@ Every Ways configuration fails compliance on: history-audit issues (the audit of
 - `sdd` (D): an SDD work named after the task was certified through close (`eval-sdd-not-closed`). Ways' own memory and discovery commits are ordinary SDD evidence.
 - `outcome` (E): the task's outcome was closed (`eval-outcome-not-closed`) with the configured policies. SDD transitions or a quick finish for the task are `eval-workflow-mismatch`.
 
-`compliant` requires `completed` and no issue. The record also counts works started and closed, `remediationAttempts` (SDD remediation checkpoints or outcome remediations), `validationFailures` (SDD validation failures or failed outcome evaluations), `humanApprovals` (commits with `Harness-State: approved`) and `effectivePolicy`: the SDD profile and execution mode, the outcome's committed policy, or `null` for C, which has no policy record. If grading fails, or the task fails before grading, the functional grade is kept and compliance reports `eval-compliance-error`. The threat model is an honest agent that may skip or misuse the process; an agent that deliberately subverts Git (forged trailers with hooks disabled, rewritten history, replace refs) is beyond what local history proves, the same limit `ways check --history` documents.
+`compliant` requires `completed` and no issue. The record also counts works started and closed, `remediationAttempts` (SDD remediation checkpoints or outcome remediations), `validationFailures` (SDD validation failures or failed outcome evaluations), `humanApprovals` (approval records of SDD gates and outcome checkpoints added in history) and `effectivePolicy`: the SDD profile and execution mode, the outcome's committed policy, or `null` for C, which has no policy record. If grading fails, or the task fails before grading, the functional grade is kept and compliance reports `eval-compliance-error`. The threat model is an honest agent that may skip or misuse the process; an agent that deliberately subverts Git (forged trailers with hooks disabled, rewritten history, replace refs) is beyond what local history proves, the same limit `ways check --history` documents.
 
 A task can therefore succeed while bypassing its workflow, or comply while failing functionally; reports never merge the two.
 
@@ -72,7 +72,7 @@ Each task carries `metrics`, where every entry is `{ value, source, reason? }` a
 | `resumeSuccess` | runner, only for fresh-session resume tasks |
 | `remediationAttempts`, `humanApprovals` | repository history, only for C, D and E |
 
-Human intervention is quantified twice: `humanInterventions` as the adapter observed it (prompts answered, permissions granted, manual fixes) and `humanApprovals` as recorded approval commits in Git. Resource usage is `usage` (tokens and cost, below), `toolCalls`, per-task `elapsedMs` and the budgets in the configuration.
+Human intervention is quantified twice: `humanInterventions` as the adapter observed it (prompts answered, permissions granted, manual fixes) and `humanApprovals` as the approval records `ways approve` left in Git. Resource usage is `usage` (tokens and cost, below), `toolCalls`, per-task `elapsedMs` and the budgets in the configuration.
 
 ## Comparing configurations
 

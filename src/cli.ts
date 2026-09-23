@@ -325,7 +325,7 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
       process.stdout.write(output);
       return report.runs.some((entry) => entry.status === "comparable") ? 0 : 1;
     }
-    if (action !== "run") throw new Error("Usage: ways evals run [--adapter=fake|command] [--command=<executable>] [--harness=<label>] [--isolation= --parallel= --evaluation= --memory= with --harness=outcome] | compare --input=<result.json>...");
+    if (action !== "run") throw new Error("Usage: ways evals run [--adapter=fake|command] [--command=<executable>] [--harness=<label>] [--isolation= --parallel= --evaluation= --memory= --approvals= with --harness=outcome] | compare --input=<result.json>...");
     const adapterName = option(args, "--adapter") ?? "fake";
     const adapter = adapterName === "fake"
       ? fakeAdapter
@@ -341,9 +341,9 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
     if (!Number.isSafeInteger(maxMilliseconds) || maxMilliseconds <= 0) throw new Error("--timeout-ms must be a positive integer");
     if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes <= 0) throw new Error("--max-output-bytes must be a positive integer");
     if (!Number.isSafeInteger(seed) || seed < 0) throw new Error("--seed must be a non-negative integer");
-    const policyFlags = { isolation: option(args, "--isolation"), parallel: option(args, "--parallel"), evaluation: option(args, "--evaluation"), memory: option(args, "--memory") };
+    const policyFlags = { isolation: option(args, "--isolation"), parallel: option(args, "--parallel"), evaluation: option(args, "--evaluation"), memory: option(args, "--memory"), approvals: option(args, "--approvals") };
     const policy = Object.fromEntries(Object.entries(policyFlags).filter(([, value]) => value !== undefined)) as Partial<OutcomeEvalPolicy>;
-    if (harness !== "outcome" && Object.keys(policy).length > 0) throw new Error("--isolation, --parallel, --evaluation and --memory apply only to --harness=outcome");
+    if (harness !== "outcome" && Object.keys(policy).length > 0) throw new Error("--isolation, --parallel, --evaluation, --memory and --approvals apply only to --harness=outcome");
     const result = await runEvals({
       ...(corpusPath ? { corpusPath } : {}),
       adapter,
