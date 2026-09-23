@@ -47,6 +47,8 @@ export interface ActiveContext {
   profile: WorkState["profile"] | null;
   execution: WorkState["execution"] | null;
   planPath: string | null;
+  /** Why a remediation attempt reopened the work; null at attempt zero. */
+  remediation: WorkState["remediation"] | null;
   baseCommit: string;
   gateCommit: string;
   uncommitted: string[];
@@ -136,10 +138,6 @@ async function taskContexts(git: GitRepository, state: WorkState): Promise<{ tas
   return { tasks, ready };
 }
 
-function isBookkeeping(path: string, workId: string): boolean {
-  return path === STATE_PATH || path === STATUS_PATH || path.startsWith(`${OUTCOME_DIR}/${workId}/`);
-}
-
 async function outcomeContext(cwd: string, git: GitRepository, state: WorkState, head: string, uncommitted: string[], tasks: TaskContext[]): Promise<OutcomeContext> {
   const attempt = state.attempt ?? 0;
   const specPath = outcomeSpecPath(state.id);
@@ -159,7 +157,15 @@ async function outcomeContext(cwd: string, git: GitRepository, state: WorkState,
     if (evaluation.workId !== state.id || evaluation.attempt !== attempt || !tree || tree !== evaluation.inputTree || diff === undefined) {
       evaluationStatus = "stale";
     } else {
-      changedSinceInput = [...new Set([...diff.split("\n").filter(Boolean), ...uncommitted])].filter((path) => !isBookkeeping(path, state.id)).sort();
+      // Mirror close: the certified execution commit may add only its evidence, evaluation and state;
+      // afterwards only state, status and the review may be dirty. Anything else needs a new evaluation.
+      const certification = head !== input && await tryRun(git, ["rev-parse", `${head}^`]).then((parent) => parent?.trim() === input);
+      const committedAllowed = new Set(certification ? [STATE_PATH, STATUS_PATH, evidencePath, evaluationPath] : []);
+      const dirtyAllowed = new Set([STATE_PATH, STATUS_PATH, reviewPath]);
+      changedSinceInput = [...new Set([
+        ...diff.split("\n").filter((path) => path && !committedAllowed.has(path)),
+        ...uncommitted.filter((path) => !dirtyAllowed.has(path)),
+      ])].sort();
       evaluationStatus = changedSinceInput.length > 0 ? "stale" : evaluation.passed === true ? "passed" : "failed";
     }
   }
@@ -203,7 +209,7 @@ async function outcomeContext(cwd: string, git: GitRepository, state: WorkState,
   }
   const missing = criteria.filter((criterion) => criterion.evidence === "missing").map((criterion) => criterion.id);
   if (missing.length > 0) blockers.push(`criteria without evidence: ${missing.join(", ")}`);
-  if (evaluationStatus !== "passed") blockers.push(`evaluation ${evaluationStatus}`);
+  if (evaluationStatus !== "passed") blockers.push(`evaluation ${evaluationStatus}${changedSinceInput.length > 0 ? ` (changed since input: ${changedSinceInput.join(", ")})` : ""}`);
   if (review.status !== "pass") blockers.push(`review ${review.status}`);
 
   return {
@@ -279,6 +285,7 @@ export async function buildContext(cwd: string): Promise<ContextPacket> {
       profile: state.profile ?? null,
       execution: state.execution ?? null,
       planPath: state.planPath ?? null,
+      remediation: state.remediation ?? null,
       baseCommit: state.baseCommit,
       gateCommit: state.gateCommit,
       uncommitted,

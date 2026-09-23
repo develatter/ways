@@ -161,6 +161,16 @@ describe("ways context", () => {
       criteria: [{ id: "AC1", evidence: "filled", evaluation: "passed" }], evaluation: { status: "passed" }, review: { status: "stale" },
     });
 
+    // Evidence edited after evaluation is exactly what close refuses.
+    const evidencePath = ".ways/outcomes/greeting/attempts/0/evidence.json";
+    const evaluated = await readFile(join(cwd, evidencePath), "utf8");
+    await writeFile(join(cwd, evidencePath), JSON.stringify({ schemaVersion: 1, workId: "greeting", attempt: 0, criteria: { AC1: { summary: "rewritten" } } }));
+    const edited = (await readOnlyContext(cwd, git)).active?.outcome;
+    expect(edited?.evaluation).toMatchObject({ status: "stale", changedSinceInput: [evidencePath] });
+    expect(edited?.criteria[0]?.evaluation).toBe("stale");
+    expect(edited?.blockers).toContain(`evaluation stale (changed since input: ${evidencePath})`);
+    await writeFile(join(cwd, evidencePath), evaluated);
+
     await writeFile(join(cwd, "feature.txt"), "changed\n");
     const stale = await readOnlyContext(cwd, git);
     expect(stale.active?.outcome?.evaluation).toMatchObject({ status: "stale", changedSinceInput: ["feature.txt"] });
