@@ -41,7 +41,7 @@ import { cancelQuick, finishQuick, startQuick } from "./work/quick.js";
 import { approveInteractively } from "./work/approve.js";
 import { approveOutcomeInteractively, outcomeApprovalStatus, parseApprovalPolicy } from "./work/outcome-approvals.js";
 import { reviewDigest, submitReview } from "./work/review.js";
-import { advanceSdd, downgradeSdd, startSdd } from "./work/sdd.js";
+import { advanceSdd, downgradeSdd, SDD_DEPRECATION, startSdd } from "./work/sdd.js";
 import { formatCheckResults } from "./work/outcome-evaluation.js";
 import { effectiveExecutionPolicy, parseExecutionPolicy } from "./work/outcome-policy.js";
 import { cancelOutcome, closeOutcome, evaluateOutcome, openOutcome, outcomeMemoryReviewDigest, parseCriterion, remediateOutcome, submitOutcomeMemoryReview } from "./work/outcome.js";
@@ -100,10 +100,13 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
     if (!args.includes("--apply")) {
       console.log(`Upgrade ${plan.from} -> ${plan.to}`);
       for (const path of plan.modifiedManagedFiles) console.log(`- [ ] overwrite ${path}`);
-      return 0;
+      for (const note of plan.activeWork) console.log(`- ${note}`);
+      for (const issue of plan.incompatible) console.error(`incompatible: ${issue}`);
+      return plan.incompatible.length === 0 ? 0 : 1;
     }
     const approved = args.includes("--overwrite-all") ? new Set(["*"]) : new Set(args.filter((arg) => arg.startsWith("--overwrite=")).map((arg) => arg.slice(12)));
     await applyUpgrade(cwd, approved);
+    for (const note of plan.activeWork) console.log(`- ${note}`);
     console.log(`Harness upgraded to ${plan.to}.`);
     return 0;
   }
@@ -261,6 +264,7 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
     if (action === "start" && id) {
       const profile = args.includes("--supervised") ? "supervised" : "autonomous";
       const execution = args.includes("--delegated") ? "delegated" : "inline";
+      console.error(SDD_DEPRECATION);
       const state = await startSdd(cwd, id, profile, execution);
       console.log(`SDD started at ${state.phase} (${profile}, ${execution}).`);
       return 0;
@@ -393,6 +397,7 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
       return 0;
     }
     if (action === "promote") {
+      console.error(SDD_DEPRECATION);
       const state = await promotePlan(cwd, args.includes("--supervised") ? "supervised" : "autonomous", args.includes("--delegated") ? "delegated" : "inline");
       console.log(`Plan promoted to SDD at ${state.phase}.`);
       return 0;

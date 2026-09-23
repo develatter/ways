@@ -75,8 +75,9 @@ export async function installAdapter(cwd: string, providerId: string, force = fa
     if (!(orphan in hashes)) await rm(join(cwd, orphan), { force: true });
   }
   const merged = adapter.merge ? await adapter.merge(cwd) : { files: [], notes: [] };
+  // A re-render that changes nothing keeps the manifest byte-identical, so upgrades stay idempotent.
+  if (stableJson(manifest.adapters?.[adapter.id] ?? null) !== stableJson(hashes)) manifest.generatedAt = new Date().toISOString();
   manifest.adapters = { ...(manifest.adapters ?? {}), [adapter.id]: hashes };
-  manifest.generatedAt = new Date().toISOString();
   await writeAtomic(join(cwd, MANIFEST_PATH), stableJson(manifest));
   return { provider: adapter.id, files: Object.keys(hashes), merged: merged.files, notes: merged.notes };
 }

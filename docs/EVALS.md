@@ -19,6 +19,8 @@ After the last session every task is graded twice, independently:
 
 A task can therefore succeed while bypassing SDD, or comply while failing functionally; reports never merge the two.
 
+SDD is deprecated for new work ([decision 0001](decisions/0001-outcome-default.md)), but D keeps asking for SDD explicitly so its results stay comparable with earlier runs; `ways sdd start` only adds a deprecation notice on stderr.
+
 ## Observable metrics
 
 Each task carries `metrics`, where every entry is `{ value, source, reason? }` and an unobservable value is `null` with a reason, never zero:
