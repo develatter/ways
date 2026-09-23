@@ -23,6 +23,7 @@ function canonicalChecks(result: CheckResult): ValidationFailureRecord["checks"]
         ...(check.detail ? { detail: check.detail } : {}),
       })),
     } : {}),
+    ...(result.environment ? { environment: result.environment.map((entry) => ({ ...entry })) } : {}),
   };
 }
 
@@ -44,7 +45,8 @@ export function validationFailureDigest(record: Omit<ValidationFailureRecord, "d
 export function validationFailureRecordFailure(record: ValidationFailureRecord): string | undefined {
   if (!validateValidationFailure(record)) return "validation failure record is invalid";
   if (record.commands && record.checks.integrity.length === 0
-    && (!record.checks.named || !record.checks.named.some((check) => check.status === "failed" || check.status === "timed-out" || check.status === "unavailable"))) {
+    && (!record.checks.named || !record.checks.named.some((check) => check.status === "failed" || check.status === "timed-out" || check.status === "unavailable"))
+    && !record.checks.environment?.some((entry) => entry.status !== "passed")) {
     return "named validation failure record has no failed, timed-out, or unavailable check";
   }
   if (record.digest !== validationFailureDigest({ ...record, digest: undefined } as Omit<ValidationFailureRecord, "digest">)) {
@@ -98,10 +100,10 @@ export async function validationFailureReplayFailure(git: GitRepository, record:
       if (!testCommandMatches || !namedCommandsMatch) {
         replayFailure = "validation failure replay command contract does not match its recorded input";
       } else if (record.commands) {
-        const replayed = canonicalChecks(await runChecks(replayCwd, false, record.commands));
+        const replayed = canonicalChecks(await runChecks(replayCwd, false, record.commands, { services: true }));
         replayFailure = sameChecks(replayed, record.checks) ? undefined : "validation failure record check results cannot be reproduced from its recorded input";
       } else {
-        const replayed = canonicalChecks(await runChecks(replayCwd));
+        const replayed = canonicalChecks(await runChecks(replayCwd, false, undefined, { services: true }));
         replayFailure = sameChecks(replayed, record.checks) ? undefined : "validation failure record check results cannot be reproduced from its recorded input";
       }
     }
@@ -244,7 +246,7 @@ export async function recordValidationFailure(cwd: string): Promise<ValidationFa
   }
   const inputTree = await git.run(["rev-parse", `${inputCommit}^{tree}`]);
   const config = await loadConfig(cwd);
-  const result = await runChecks(cwd);
+  const result = await runChecks(cwd, false, undefined, { services: true });
   if (result.issues.length === 0 && result.testExitCode === 0) return undefined;
   await git.assertClean();
   const record: ValidationFailureRecord = {

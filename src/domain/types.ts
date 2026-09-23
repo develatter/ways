@@ -85,6 +85,33 @@ export interface NamedChecksConfig {
   e2e?: CommandArgv;
   required: CheckName[];
   timeoutMs?: number;
+  /** Opt-in environment preparation, run only at execution boundaries before services start. */
+  setup?: CommandArgv;
+  /** Opt-in services started, probed for readiness and stopped around execution-boundary checks. */
+  services?: ServiceConfig[];
+}
+
+/** Exactly one bounded readiness probe. */
+export type ServiceReadiness = { command: CommandArgv } | { tcp: { port: number; host?: string } } | { http: string };
+
+export interface ServiceConfig {
+  name: string;
+  command: CommandArgv;
+  ready: ServiceReadiness;
+  /** Readiness deadline in milliseconds; defaults to 30000. */
+  timeoutMs?: number;
+}
+
+/** Setup and service outcome; any non-passed status makes the evaluation unhealthy. */
+export interface EnvironmentResult {
+  kind: "setup" | "service";
+  name: string;
+  status: "passed" | "failed" | "timed-out" | "unavailable";
+  command?: CommandArgv;
+  exitCode?: number;
+  detail?: string;
+  /** Repository-relative service log under the ignored runtime directory. */
+  log?: string;
 }
 
 export interface NamedCheckResult {
@@ -217,6 +244,7 @@ export interface ValidationFailureRecord {
     integrity: Array<{ code: string; path: string; message: string }>;
     testExitCode?: number;
     named?: NamedCheckEvidence[];
+    environment?: EnvironmentResult[];
   };
   digest: string;
 }
