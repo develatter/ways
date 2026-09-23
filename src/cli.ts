@@ -39,6 +39,7 @@ import { loadState } from "./state/store.js";
 import { abandonPlan, finishPlan, promotePlan, proposePlan, startPlan } from "./work/plan.js";
 import { cancelQuick, finishQuick, startQuick } from "./work/quick.js";
 import { approveInteractively } from "./work/approve.js";
+import { approveOutcomeInteractively, outcomeApprovalStatus, parseApprovalPolicy } from "./work/outcome-approvals.js";
 import { reviewDigest, submitReview } from "./work/review.js";
 import { advanceSdd, downgradeSdd, startSdd } from "./work/sdd.js";
 import { effectiveExecutionPolicy, parseExecutionPolicy } from "./work/outcome-policy.js";
@@ -140,10 +141,18 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
     const state = await loadState(cwd);
     if (args.includes("--json")) {
       const artifact = await readStatus(cwd);
-      console.log(JSON.stringify(statusMatches(artifact, state) ? artifact : projectStatus(state), null, 2));
+      const summary = statusMatches(artifact, state) ? artifact : projectStatus(state);
+      console.log(JSON.stringify(state?.mode === "outcome" ? { ...summary, approvals: await outcomeApprovalStatus(cwd, state) } : summary, null, 2));
       return 0;
     }
     console.log(state ? JSON.stringify(state, null, 2) : "No active mutating work.");
+    if (state?.mode === "outcome") {
+      const approvals = await outcomeApprovalStatus(cwd, state);
+      console.log(`Approval policy: ${approvals.policy === "none" ? "none" : approvals.policy.join(", ")}`);
+      for (const entry of approvals.checkpoints) {
+        console.log(entry.status === "approved" ? `Approved: ${entry.checkpoint}` : `Human action required: ${entry.reason}`);
+      }
+    }
     return 0;
   }
 
@@ -170,6 +179,11 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
   }
 
   if (command === "approve") {
+    if ((await loadState(cwd))?.mode === "outcome") {
+      const record = await approveOutcomeInteractively(cwd, args[0]);
+      console.log(`Approved ${record.checkpoint} of ${record.workId} attempt ${record.attempt} as ${record.approvedBy}.`);
+      return 0;
+    }
     const record = await approveInteractively(cwd);
     console.log(`Approved ${record.phase} of ${record.workId} as ${record.approvedBy}.`);
     return 0;
@@ -197,7 +211,7 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
 
   if (command === "outcome") {
     const [action, id] = args;
-    const usage = "Usage: ways outcome open <id> --goal=<text> --criterion=<ID>:<text>... [--memory=none|normal|high] [--evaluation=independent|self] [--isolation=required|optional] [--parallel=allowed|disabled] | evaluate | remediate --reason=<text> | memory-review digest | memory-review submit <review.json> | close | cancel";
+    const usage = "Usage: ways outcome open <id> --goal=<text> --criterion=<ID>:<text>... [--memory=none|normal|high] [--evaluation=independent|self] [--isolation=required|optional] [--parallel=allowed|disabled] [--approvals=none|close|close,remediate] | evaluate | remediate --reason=<text> | memory-review digest | memory-review submit <review.json> | close | cancel";
     if (action === "open" && id) {
       const criteria = options(args, "--criterion").map(parseCriterion);
       const memory = args.find((arg) => arg.startsWith("--memory="))?.slice(9) ?? "normal";
@@ -205,9 +219,10 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
       const evaluation = args.find((arg) => arg.startsWith("--evaluation="))?.slice(13) ?? "independent";
       if (!(EVALUATION_MODES as readonly string[]).includes(evaluation)) throw new Error("--evaluation must be independent or self");
       const execution = parseExecutionPolicy(args);
-      await openOutcome(cwd, id, requiredOption(args, "--goal"), criteria, memory as MemoryTier, evaluation as EvaluationMode, execution);
+      const approvals = parseApprovalPolicy(args.find((arg) => arg.startsWith("--approvals="))?.slice(12) ?? "none");
+      await openOutcome(cwd, id, requiredOption(args, "--goal"), criteria, memory as MemoryTier, evaluation as EvaluationMode, execution, approvals);
       const { isolation, parallel } = effectiveExecutionPolicy(execution);
-      console.log(`Outcome ${id} opened with ${criteria.length} acceptance criteria, ${memory} memory assurance, ${evaluation} evaluation, ${isolation} isolation and parallelism ${parallel}; execute${isolation === "required" ? " through tasks" : ""}, then run ways outcome evaluate.`);
+      console.log(`Outcome ${id} opened with ${criteria.length} acceptance criteria, ${memory} memory assurance, ${evaluation} evaluation, ${isolation} isolation, parallelism ${parallel} and ${approvals.length > 0 ? `human approval of ${approvals.join(", ")}` : "no human approvals"}; execute${isolation === "required" ? " through tasks" : ""}, then run ways outcome evaluate.`);
       return 0;
     }
     if (action === "memory-review" && id === "digest") {

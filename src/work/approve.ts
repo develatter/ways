@@ -70,7 +70,7 @@ export function processTerminal(): Terminal {
   };
 }
 
-async function approverIdentity(cwd: string): Promise<string> {
+export async function approverIdentity(cwd: string): Promise<string> {
   const git = new GitRepository(cwd);
   try {
     const name = await git.run(["config", "user.name"]);

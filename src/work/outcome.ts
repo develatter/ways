@@ -5,13 +5,14 @@ import { HARNESS_VERSION } from "../index.js";
 import { failedCheckDetails, runChecks } from "../check/check.js";
 import { KNOWLEDGE_DIR, OUTCOME_DIR, STATE_PATH, STATUS_PATH } from "../domain/constants.js";
 import { loadConfig } from "../config/config.js";
-import { CHECK_NAMES, MEMORY_TIERS, type MemoryTier, type OutcomeCriterion, type OutcomeEvaluation, type OutcomeEvidence, type OutcomeSpec, type RemediationRecord, type ReviewResult, type ValidationFailureRecord, type WorkState } from "../domain/types.js";
+import { CHECK_NAMES, MEMORY_TIERS, type MemoryTier, type OutcomeCheckpoint, type OutcomeCriterion, type OutcomeEvaluation, type OutcomeEvidence, type OutcomeSpec, type RemediationRecord, type ReviewResult, type ValidationFailureRecord, type WorkState } from "../domain/types.js";
 import { validateRemediation, validateReview, validateState, validateValidationFailure } from "../domain/validation.js";
 import { stableJson, writeAtomic } from "../fs/files.js";
 import { GitRepository, type CommitInfo } from "../git/git.js";
 import { loadState, saveState } from "../state/store.js";
 import { closeWork } from "./close.js";
 import { committedWorkDigest } from "./digest.js";
+import { approvalPolicyFailure, assertOutcomeApproval, commitReader, outcomeApprovalFailure, outcomeApprovalPath } from "./outcome-approvals.js";
 import { reviewBlocks } from "./review.js";
 import { committedExecutionPolicy, effectiveExecutionPolicy, executionPolicyInvalid, isolationFailure, optionalIsolationOpenings, parallelStateFailure, type ExecutionPolicy } from "./outcome-policy.js";
 import { evaluationPolicy, INDEPENDENT_EVALUATION, outcomeEvaluationFailure, type EvaluationMode } from "./outcome-evaluation-policy.js";
@@ -104,6 +105,8 @@ function specFailure(value: unknown, workId: string): string | undefined {
     || (policy.memory !== undefined && !(MEMORY_TIERS as readonly unknown[]).includes(policy.memory))) {
     return "outcome spec has an unsupported policy";
   }
+  const approvals = approvalPolicyFailure(policy.approvals);
+  if (approvals) return `outcome spec has an unsupported policy: ${approvals}`;
   return undefined;
 }
 
@@ -274,7 +277,7 @@ async function dirtyPaths(git: GitRepository): Promise<string[]> {
   return [...paths].sort();
 }
 
-export async function openOutcome(cwd: string, id: string, goal: string, criteria: OutcomeCriterion[], memory: MemoryTier = "normal", evaluation: EvaluationMode = "independent", execution: ExecutionPolicy = {}): Promise<WorkState> {
+export async function openOutcome(cwd: string, id: string, goal: string, criteria: OutcomeCriterion[], memory: MemoryTier = "normal", evaluation: EvaluationMode = "independent", execution: ExecutionPolicy = {}, approvals: readonly OutcomeCheckpoint[] = []): Promise<WorkState> {
   if (!/^[a-z0-9][a-z0-9-]{1,62}$/.test(id)) throw new Error("Work id must be a lowercase slug");
   if (await loadState(cwd)) throw new Error("Another mutating work is already active");
   const spec: OutcomeSpec = {
@@ -282,7 +285,7 @@ export async function openOutcome(cwd: string, id: string, goal: string, criteri
     workId: id,
     goal: goal.trim(),
     criteria,
-    policy: { ...effectiveExecutionPolicy(execution), independentEvaluation: evaluationPolicy(evaluation), checks: "configured", memory },
+    policy: { ...effectiveExecutionPolicy(execution), independentEvaluation: evaluationPolicy(evaluation), checks: "configured", memory, ...(approvals.length > 0 ? { approvals: [...approvals] } : {}) },
   };
   const failure = specFailure(spec, id);
   if (failure) throw new Error(failure[0]!.toUpperCase() + failure.slice(1));
@@ -428,13 +431,14 @@ export async function remediateOutcome(cwd: string, reason: string): Promise<str
     // Interrupted after writing the new attempt: commit it; the hook re-verifies it.
     const paths = [STATE_PATH, STATUS_PATH, outcomeRemediationPath(state.id, state.attempt), outcomeEvidencePath(state.id, state.attempt)];
     if (state.remediation.source === "review") paths.push(outcomeReviewPath(state.id, state.attempt - 1));
+    if (await readJsonFile(cwd, outcomeApprovalPath(state.id, state.attempt - 1, "remediate")) !== undefined) paths.push(outcomeApprovalPath(state.id, state.attempt - 1, "remediate"));
     return commitRemediation(git, state, paths);
   }
   const attempt = state.attempt ?? 0;
   const head = await git.head();
   const open = (await outcomeOpenCommit(git, state.id))!;
   let evidence: RemediationRecord["evidence"];
-  const allowed = new Set([STATE_PATH, STATUS_PATH]);
+  const allowed = new Set([STATE_PATH, STATUS_PATH, outcomeApprovalPath(state.id, attempt, "remediate")]);
   if (state.stage === "execute") {
     const failed = await recordedFailure(git, open.hash, state.id, attempt);
     if (!failed || failed.hash !== head) throw new Error("Remediation requires a recorded evaluation failure at HEAD, or a blocking review during evaluate");
@@ -451,6 +455,7 @@ export async function remediateOutcome(cwd: string, reason: string): Promise<str
   }
   const unrelated = (await dirtyPaths(git)).filter((path) => !allowed.has(path));
   if (unrelated.length > 0) throw new Error(`Uncommitted changes block remediation: ${unrelated.join(", ")}`);
+  await assertOutcomeApproval(cwd, state, "remediate");
 
   const next = attempt + 1;
   const previous = await readJsonFile(cwd, outcomeEvidencePath(state.id, attempt)) as OutcomeEvidence | undefined;
@@ -543,13 +548,14 @@ export async function closeOutcome(cwd: string): Promise<string> {
   await assertOutcomeConsistency(cwd, state);
   const git = new GitRepository(cwd);
   const attempt = state.attempt ?? 0;
-  const allowed = new Set([STATE_PATH, STATUS_PATH, outcomeReviewPath(state.id, attempt), outcomeMemoryReviewPath(state.id, attempt)]);
+  const allowed = new Set([STATE_PATH, STATUS_PATH, outcomeReviewPath(state.id, attempt), outcomeMemoryReviewPath(state.id, attempt), outcomeApprovalPath(state.id, attempt, "close")]);
   const unrelated = (await dirtyPaths(git)).filter((path) => !allowed.has(path));
   if (unrelated.length > 0) throw new Error(`Changes after evaluation block close; they need a new evaluation: ${unrelated.join(", ")}`);
   const review = await readJsonFile(cwd, outcomeReviewPath(state.id, attempt));
   const memoryReview = await readJsonFile(cwd, outcomeMemoryReviewPath(state.id, attempt));
   const failure = await outcomeCloseFailure(git, state.id, await git.head(), review, attempt, memoryReview);
   if (failure) throw new Error(`Close refused: ${failure}`);
+  await assertOutcomeApproval(cwd, state, "close");
   // The evaluated tree is still HEAD's; re-running the checks means a hand-written evaluation cannot close failing work.
   const checks = await runChecks(cwd, false, undefined, { services: true });
   const failing = [...checks.issues.map((issue) => `${issue.code}: ${issue.path}`), ...failedCheckDetails(checks), ...(!checks.checks && checks.testExitCode !== 0 ? [`test: exit code ${checks.testExitCode}`] : [])];
@@ -576,7 +582,7 @@ export async function cancelOutcome(cwd: string): Promise<string> {
 
 /** A close commit records the reviews and removes the state; anything else was never evaluated. */
 export function closeCommitExtraPaths(changed: readonly string[], workId: string, attempt = 0): string[] {
-  const allowed = new Set([STATE_PATH, STATUS_PATH, outcomeReviewPath(workId, attempt), outcomeMemoryReviewPath(workId, attempt)]);
+  const allowed = new Set([STATE_PATH, STATUS_PATH, outcomeReviewPath(workId, attempt), outcomeMemoryReviewPath(workId, attempt), outcomeApprovalPath(workId, attempt, "close")]);
   return changed.filter((path) => !allowed.has(path));
 }
 
@@ -678,6 +684,8 @@ export async function outcomeHistoryIssues(git: GitRepository, commits: readonly
   for (const { work, commit } of replay.remediations) {
     const failure = await outcomeRemediationFailure(git, work, commit.hash).catch((error: unknown) => error instanceof Error ? error.message : String(error));
     if (failure) invalid(commit, `Outcome ${work}: ${failure}`);
+    const approval = await outcomeApprovalFailure(git, work, "remediate", trailerAttempt(commit) - 1, await git.parent(commit.hash), commitReader(git, commit.hash));
+    if (approval) invalid(commit, `Outcome ${work} remediated without valid human approval: ${approval}`);
   }
   for (const { work, commit, attempt } of replay.closes) {
     const extra = closeCommitExtraPaths(await changedBy(commit), work, attempt);
@@ -689,6 +697,8 @@ export async function outcomeHistoryIssues(git: GitRepository, commits: readonly
       await showJson(git, commit.hash, outcomeMemoryReviewPath(work, attempt)))
       .catch((error: unknown) => error instanceof Error ? error.message : String(error));
     if (failure) invalid(commit, `Outcome ${work} closed without valid evidence: ${failure}`);
+    const approval = await outcomeApprovalFailure(git, work, "close", attempt, await git.parent(commit.hash), commitReader(git, commit.hash));
+    if (approval) invalid(commit, `Outcome ${work} closed without valid human approval: ${approval}`);
   }
   return issues;
 }
