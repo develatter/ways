@@ -41,6 +41,7 @@ import { cancelQuick, finishQuick, startQuick } from "./work/quick.js";
 import { approveInteractively } from "./work/approve.js";
 import { reviewDigest, submitReview } from "./work/review.js";
 import { advanceSdd, downgradeSdd, startSdd } from "./work/sdd.js";
+import { formatCheckResults } from "./work/outcome-evaluation.js";
 import { cancelOutcome, closeOutcome, evaluateOutcome, openOutcome, outcomeMemoryReviewDigest, parseCriterion, remediateOutcome, submitOutcomeMemoryReview } from "./work/outcome.js";
 import { remediateSdd } from "./work/remediation.js";
 import { recordValidationFailure } from "./work/validation-failure.js";
@@ -216,6 +217,7 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
     if (action === "evaluate") {
       const { commit, evaluation } = await evaluateOutcome(cwd);
       console.log(`Evaluation passed on ${evaluation.inputCommit.slice(0, 12)}; execution certified: ${commit}. Obtain an independent review of \`ways review digest\`.`);
+      console.log(["Check results:", ...formatCheckResults(evaluation.checks)].join("\n"));
       return 0;
     }
     if (action === "remediate") {
