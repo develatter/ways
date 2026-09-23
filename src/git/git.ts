@@ -144,9 +144,11 @@ export class GitRepository {
     return output ? output.split("\n") : [];
   }
 
+  /** Unstaged, untracked and already staged (for example a resolved merge) paths; staged deletions commit as they are. */
   async changedPaths(): Promise<string[]> {
-    const output = await this.run(["ls-files", "--modified", "--deleted", "--others", "--exclude-standard"]);
-    return output ? [...new Set(output.split("\n").filter(Boolean))].sort() : [];
+    const unstaged = await this.run(["ls-files", "--modified", "--deleted", "--others", "--exclude-standard"]);
+    const staged = await this.run(["diff", "--cached", "--name-only", "--diff-filter=d"]);
+    return [...new Set(`${unstaged}\n${staged}`.split("\n").filter(Boolean))].sort();
   }
 
   async assertClean(): Promise<void> {
