@@ -118,14 +118,21 @@ npx ways task integrate write --commits=<sha>
 # map every criterion in .ways/outcomes/greeting/attempts/0/evidence.json
 npx ways outcome evaluate        # runs the configured checks against the executed input
 npx ways outcome remediate --reason=<text>  # new attempt after a recorded failure or blocking review
-npx ways review digest           # an independent reviewer binds a review to this digest
+npx ways review digest           # an independent reviewer binds a review to this digest (skipped with --evaluation=self)
 npx ways review submit review.json
 npx ways outcome close
 ```
 
-The goal and stable criterion identifiers are committed at open and cannot change afterwards. The first slice uses a fixed conservative policy: production changes arrive only through integrated task worktrees, `evaluate` refuses missing criterion evidence or failing checks, and `close` refuses without a passing, fresh, digest-bound review. The commit hook, `ways check --history`, `ways status` and `ways repair diagnose` all understand the workflow and reject skipped transitions, direct commits and forged or tampered evidence.
+The goal and stable criterion identifiers are committed at open and cannot change afterwards. The policy is conservative: production changes arrive only through integrated task worktrees, `evaluate` refuses missing criterion evidence or failing checks, and `close` enforces the evaluation policy described below. The commit hook, `ways check --history`, `ways status` and `ways repair diagnose` all understand the workflow and reject skipped transitions, direct commits and forged or tampered evidence.
 
 Remediation is additive. A failing `evaluate` commits a replayable check-failure record for the attempt; a blocking review stays pending. `ways outcome remediate --reason=<text>` then opens attempt n+1 from that evidence, and the attempt needs new tasks, its own evaluation and a fresh review. Artifacts of earlier attempts are immutable, and the hook and the history audit reject forged failures, remediations and rewrites.
+
+Evaluation assurance is chosen at open with `--evaluation=independent|self` (default `independent`) and stored in the immutable spec as `policy.independentEvaluation` (`required` or `optional`; specs without it read as `required`). Close, the commit hook and `ways check --history` read it from the committed spec, so editing the state or the spec after open cannot weaken it; a spec that changed after opening blocks close.
+
+- `independent`: close requires a review of this work and attempt whose digest binds the evaluated increment (its code, evidence, evaluation and the committed goal and criteria), with no blocking findings, by a reviewer who is not a known implementer. A review replayed from another attempt or input is stale.
+- `self`: close needs no review, but still requires the passing evaluation, complete criterion evidence and checks that pass again at close. A review that is recorded anyway must still bind and pass.
+
+Provenance is honest, not cryptographic. The known implementers are the Git author and committer names and emails of the increment's task commits; `review submit`, close, the hook and the history audit reject a reviewer string equal to one of them (case-insensitive, also written as `Name <email>`). Git identities and the reviewer field are self-asserted: the check catches an agent reviewing its own work under its configured identity, not an impostor who picks another name, and it never proves who wrote a review. Stronger identity channels are future work.
 
 Memory assurance is chosen at open with `--memory=none|normal|high` (default `normal`) and stored in the immutable spec; there is no blanket reconciliation phase:
 

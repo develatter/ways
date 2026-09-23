@@ -33,7 +33,8 @@ export const MEMORY_TIERS: readonly MemoryTier[] = ["none", "normal", "high"];
 /** The conservative policy of an outcome work, fixed when it opens. */
 export interface OutcomePolicy {
   isolation: "required";
-  independentEvaluation: "required";
+  /** required (`--evaluation=independent`, the default) or optional (`--evaluation=self`); absent reads as required. */
+  independentEvaluation?: "required" | "optional";
   checks: "configured";
   /** Absent in specs opened before memory tiers existed; read as normal. */
   memory?: MemoryTier;
