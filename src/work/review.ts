@@ -7,6 +7,7 @@ import { loadState } from "../state/store.js";
 import { attemptNumber, attemptReviewPath } from "./attempt.js";
 import { implementationDigest } from "./digest.js";
 import { outcomeReviewDigest, outcomeReviewPath } from "./outcome.js";
+import { submittedReviewerFailure } from "./outcome-evaluation-policy.js";
 
 export function reviewBlocks(result: ReviewResult): string[] {
   const blockers: string[] = [];
@@ -35,6 +36,8 @@ export async function submitReview(cwd: string, inputPath: string): Promise<Revi
   if (attemptFailure) throw new Error(attemptFailure);
   const digest = outcome ? await outcomeReviewDigest(cwd, state) : await implementationDigest(cwd, state);
   if (value.digest !== digest) throw new Error(`Review digest ${value.digest.slice(0, 12)} does not match the current diff ${digest.slice(0, 12)}; review the current content and obtain it with \`ways review digest\``);
+  const provenance = outcome ? await submittedReviewerFailure(cwd, state.id, value.reviewer) : undefined;
+  if (provenance) throw new Error(provenance[0]!.toUpperCase() + provenance.slice(1));
   await writeAtomic(join(cwd, outcome ? outcomeReviewPath(state.id, state.attempt) : attemptReviewPath(state.id, state.attempt)), stableJson(value));
   return value;
 }

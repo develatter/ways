@@ -38,7 +38,8 @@ export type ParallelPolicy = "allowed" | "disabled";
 /** The policy of an outcome work, fixed when it opens. */
 export interface OutcomePolicy {
   isolation: IsolationPolicy;
-  independentEvaluation: "required";
+  /** required (`--evaluation=independent`, the default) or optional (`--evaluation=self`); absent reads as required. */
+  independentEvaluation?: "required" | "optional";
   checks: "configured";
   /** Absent in specs opened before memory tiers existed; read as normal. */
   memory?: MemoryTier;

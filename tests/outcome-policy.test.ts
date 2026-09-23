@@ -42,10 +42,10 @@ async function writeEvidence(cwd: string): Promise<void> {
   await writeFile(join(cwd, outcomeEvidencePath("hello")), JSON.stringify({ schemaVersion: 1, workId: "hello", attempt: 0, criteria: { AC1: { summary: "feature.txt contains hello" } } }));
 }
 
-async function review(cwd: string): Promise<void> {
+async function review(cwd: string, reviewer = "independent"): Promise<void> {
   const path = join(cwd, ".ways", "runtime", "review.json");
   await mkdir(join(cwd, ".ways", "runtime"), { recursive: true });
-  await writeFile(path, JSON.stringify({ schemaVersion: 1, workId: "hello", reviewer: "independent", digest: await reviewDigest(cwd), verdict: "pass", findings: [] }));
+  await writeFile(path, JSON.stringify({ schemaVersion: 1, workId: "hello", reviewer, digest: await reviewDigest(cwd), verdict: "pass", findings: [] }));
   await submitReview(cwd, path);
 }
 
@@ -114,13 +114,15 @@ describe("outcome execution policies", () => {
 
   it("optional isolation accepts traced direct implementation through evaluate, close and history", async () => {
     const { cwd, git } = await repository();
-    await openOutcome(cwd, "hello", "Say hello", CRITERIA, "normal", { isolation: "optional" });
+    await openOutcome(cwd, "hello", "Say hello", CRITERIA, "normal", "independent", { isolation: "optional" });
     await writeFile(join(cwd, "feature.txt"), "hello\n");
     await git.commit(["feature.txt"], "feat: direct", { work: "hello" });
     await writeEvidence(cwd);
     const { evaluation } = await evaluateOutcome(cwd);
     expect(evaluation.passed).toBe(true);
     expect(await checkIntegrity(cwd)).toEqual([]);
+    // The direct implementer counts as an implementer for independent evaluation.
+    await expect(review(cwd, "Ways Test")).rejects.toThrow(/matches an implementer/);
     await review(cwd);
     await closeOutcome(cwd);
     expect(await checkHistory(cwd)).toEqual([]);
@@ -128,7 +130,7 @@ describe("outcome execution policies", () => {
 
   it("optional isolation still rejects a forged task trailer and untraced commits", async () => {
     const { cwd, git } = await repository();
-    await openOutcome(cwd, "hello", "Say hello", CRITERIA, "normal", { isolation: "optional" });
+    await openOutcome(cwd, "hello", "Say hello", CRITERIA, "normal", "independent", { isolation: "optional" });
     await writeFile(join(cwd, "feature.txt"), "hello\n");
     await git.run(["add", "feature.txt"]);
     await expect(git.run(["commit", "-q", "-m", "untraced"])).rejects.toThrow(/Harness-Work: hello/);
@@ -154,7 +156,7 @@ describe("outcome execution policies", () => {
 
   it("disabled parallelism rejects preparing a second task until the first is integrated", async () => {
     const { cwd } = await repository();
-    await openOutcome(cwd, "hello", "Say hello", CRITERIA, "normal", { parallel: "disabled" });
+    await openOutcome(cwd, "hello", "Say hello", CRITERIA, "normal", "independent", { parallel: "disabled" });
     await addTask(cwd, "a", "A");
     await addTask(cwd, "b", "B");
     const a = await prepareTask(cwd, "a");
@@ -186,7 +188,7 @@ describe("outcome execution policies", () => {
     expect(guard(task.worktree!, { tool_name: "Write", tool_input: { file_path: join(task.worktree!, "src.ts") } })).toBe(0);
 
     const optional = await repository();
-    await openOutcome(optional.cwd, "hello", "Say hello", CRITERIA, "normal", { isolation: "optional" });
+    await openOutcome(optional.cwd, "hello", "Say hello", CRITERIA, "normal", "independent", { isolation: "optional" });
     expect(guard(optional.cwd, { tool_name: "Write", tool_input: { file_path: join(optional.cwd, "src.ts") } })).toBe(0);
     expect(guard(optional.cwd, { tool_name: "Bash", tool_input: { command: "printf ok > src.ts" } })).toBe(0);
   });

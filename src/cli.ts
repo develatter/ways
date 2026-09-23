@@ -43,6 +43,7 @@ import { reviewDigest, submitReview } from "./work/review.js";
 import { advanceSdd, downgradeSdd, startSdd } from "./work/sdd.js";
 import { effectiveExecutionPolicy, parseExecutionPolicy } from "./work/outcome-policy.js";
 import { cancelOutcome, closeOutcome, evaluateOutcome, openOutcome, outcomeMemoryReviewDigest, parseCriterion, remediateOutcome, submitOutcomeMemoryReview } from "./work/outcome.js";
+import { EVALUATION_MODES, type EvaluationMode } from "./work/outcome-evaluation-policy.js";
 import { remediateSdd } from "./work/remediation.js";
 import { recordValidationFailure } from "./work/validation-failure.js";
 import { addTask, integrateTask, prepareTask } from "./work/tasks.js";
@@ -196,15 +197,17 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
 
   if (command === "outcome") {
     const [action, id] = args;
-    const usage = "Usage: ways outcome open <id> --goal=<text> --criterion=<ID>:<text>... [--memory=none|normal|high] [--isolation=required|optional] [--parallel=allowed|disabled] | evaluate | remediate --reason=<text> | memory-review digest | memory-review submit <review.json> | close | cancel";
+    const usage = "Usage: ways outcome open <id> --goal=<text> --criterion=<ID>:<text>... [--memory=none|normal|high] [--evaluation=independent|self] [--isolation=required|optional] [--parallel=allowed|disabled] | evaluate | remediate --reason=<text> | memory-review digest | memory-review submit <review.json> | close | cancel";
     if (action === "open" && id) {
       const criteria = options(args, "--criterion").map(parseCriterion);
       const memory = args.find((arg) => arg.startsWith("--memory="))?.slice(9) ?? "normal";
       if (!(MEMORY_TIERS as readonly string[]).includes(memory)) throw new Error("--memory must be none, normal or high");
+      const evaluation = args.find((arg) => arg.startsWith("--evaluation="))?.slice(13) ?? "independent";
+      if (!(EVALUATION_MODES as readonly string[]).includes(evaluation)) throw new Error("--evaluation must be independent or self");
       const execution = parseExecutionPolicy(args);
-      await openOutcome(cwd, id, requiredOption(args, "--goal"), criteria, memory as MemoryTier, execution);
+      await openOutcome(cwd, id, requiredOption(args, "--goal"), criteria, memory as MemoryTier, evaluation as EvaluationMode, execution);
       const { isolation, parallel } = effectiveExecutionPolicy(execution);
-      console.log(`Outcome ${id} opened with ${criteria.length} acceptance criteria, ${memory} memory assurance, ${isolation} isolation and parallelism ${parallel}; execute${isolation === "required" ? " through tasks" : ""}, then run ways outcome evaluate.`);
+      console.log(`Outcome ${id} opened with ${criteria.length} acceptance criteria, ${memory} memory assurance, ${evaluation} evaluation, ${isolation} isolation and parallelism ${parallel}; execute${isolation === "required" ? " through tasks" : ""}, then run ways outcome evaluate.`);
       return 0;
     }
     if (action === "memory-review" && id === "digest") {
@@ -218,7 +221,7 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
     }
     if (action === "evaluate") {
       const { commit, evaluation } = await evaluateOutcome(cwd);
-      console.log(`Evaluation passed on ${evaluation.inputCommit.slice(0, 12)}; execution certified: ${commit}. Obtain an independent review of \`ways review digest\`.`);
+      console.log(`Evaluation passed on ${evaluation.inputCommit.slice(0, 12)}; execution certified: ${commit}. Obtain an independent review of \`ways review digest\` unless the work was opened with --evaluation=self.`);
       return 0;
     }
     if (action === "remediate") {
