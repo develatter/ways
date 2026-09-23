@@ -158,6 +158,8 @@ describe("baseline end-to-end coverage", () => {
     await git.run(["config", "user.name", "Ways Test"]);
     await git.run(["config", "user.email", "ways@example.test"]);
     await git.run(["commit", "--allow-empty", "-q", "-m", "initial"]);
+    // CI points WAYS_HISTORY_TO at the PR head of this repository; the consumer repository has its own history.
+    const consumerEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("WAYS_HISTORY_")));
     await execFileSync("npm", ["init", "-y"], { cwd, stdio: "ignore" });
     await execFileSync("npm", ["install", "--save-dev", tarball], { cwd, stdio: "ignore" });
     const installed = JSON.parse(await readFile(join(cwd, "node_modules", "@develatter", "ways", "package.json"), "utf8"));
@@ -167,7 +169,7 @@ describe("baseline end-to-end coverage", () => {
     const bin = execFileSync("npx", ["--no-install", "ways", "--version"], { cwd, encoding: "utf8" }).trim();
     expect(bin).toBeTruthy();
     await execFileSync("npx", ["--no-install", "ways", "bootstrap", `--test-command=${JSON.stringify([process.execPath, "-e", "process.exit(0)"])}`, "--no-adapters"], { cwd, stdio: "ignore" });
-    await execFileSync("sh", [join(cwd, "scripts/check.sh")], { cwd, stdio: "ignore" });
+    await execFileSync("sh", [join(cwd, "scripts/check.sh")], { cwd, stdio: "ignore", env: consumerEnv });
 
     // One complete outcome increment through the packed CLI, including a refused premature done claim.
     const ways = (...args: string[]): string => execFileSync("npx", ["--no-install", "ways", ...args], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -190,6 +192,6 @@ describe("baseline end-to-end coverage", () => {
     ways("review", "submit", join(packDir, "review.json"));
     ways("outcome", "close");
     expect(ways("status")).toContain("No active mutating work.");
-    await execFileSync("sh", [join(cwd, "scripts/check.sh")], { cwd, stdio: "ignore" });
+    await execFileSync("sh", [join(cwd, "scripts/check.sh")], { cwd, stdio: "ignore", env: consumerEnv });
   });
 });

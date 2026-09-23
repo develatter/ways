@@ -1,7 +1,7 @@
 import { STATE_PATH } from "../domain/constants.js";
 import { GitRepository, type CommitTrailers } from "../git/git.js";
 import { writeStatus } from "../state/status.js";
-import { removeState } from "../state/store.js";
+import { loadState, removeState, saveState } from "../state/store.js";
 
 async function stateIsTracked(git: GitRepository): Promise<boolean> {
   try {
@@ -21,13 +21,23 @@ async function stateIsTracked(git: GitRepository): Promise<boolean> {
  */
 export async function closeWork(cwd: string, subject: string, trailers: CommitTrailers): Promise<string> {
   const git = new GitRepository(cwd);
-  await writeStatus(cwd, undefined);
-  if (await stateIsTracked(git)) {
+  const state = await loadState(cwd);
+  try {
+    await writeStatus(cwd, undefined);
+    if (await stateIsTracked(git)) {
+      await removeState(cwd);
+      return await git.commit(await git.changedPaths(), subject, trailers);
+    }
+    const paths = (await git.changedPaths()).filter((path) => path !== STATE_PATH);
+    const hash = await git.commit(paths, subject, trailers);
     await removeState(cwd);
-    return git.commit(await git.changedPaths(), subject, trailers);
+    return hash;
+  } catch (error) {
+    // A refused close leaves the work active: restore its state and status mirror.
+    if (state) {
+      await git.run(["reset", "-q", "--", STATE_PATH]).catch(() => undefined);
+      await saveState(cwd, state);
+    }
+    throw error;
   }
-  const paths = (await git.changedPaths()).filter((path) => path !== STATE_PATH);
-  const hash = await git.commit(paths, subject, trailers);
-  await removeState(cwd);
-  return hash;
 }

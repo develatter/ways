@@ -7,6 +7,7 @@ import { stableJson, writeAtomic } from "../fs/files.js";
 import { GitRepository } from "../git/git.js";
 import { commitsAfter } from "../integrity/history.js";
 import { loadState, saveState } from "../state/store.js";
+import { attemptFailureCommit } from "./outcome.js";
 import { attemptNumber, attemptPhasePath, isPriorAttemptArtifact, remediationTransitionCommit } from "./attempt.js";
 
 function requireTaskWork(state: WorkState | undefined): WorkState {
@@ -45,6 +46,9 @@ function canAddTask(state: WorkState): boolean {
 export async function addTask(cwd: string, id: string, title: string, dependsOn: string[] = []): Promise<TaskState> {
   const state = requireTaskWork(await loadState(cwd));
   if (!canAddTask(state)) throw new Error("Tasks can only be defined during decompose, remediated implement or outcome execution");
+  if (state.mode === "outcome" && await attemptFailureCommit(new GitRepository(cwd), state.id, attemptNumber(state.attempt))) {
+    throw new Error(`Attempt ${attemptNumber(state.attempt)} has a recorded evaluation failure; run ways outcome remediate --reason=<text> first`);
+  }
   if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(id)) throw new Error("Task id must be a lowercase slug");
   if (!title.trim()) throw new Error("Task title is required");
   if (state.tasks.some((task) => task.id === id)) throw new Error(`Task already exists: ${id}`);

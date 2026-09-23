@@ -3,17 +3,29 @@ import { join } from "node:path";
 import { HARNESS_VERSION } from "../index.js";
 import { failedCheckDetails, runChecks } from "../check/check.js";
 import { OUTCOME_DIR, STATE_PATH, STATUS_PATH } from "../domain/constants.js";
-import { CHECK_NAMES, type OutcomeCriterion, type OutcomeEvaluation, type OutcomeEvidence, type OutcomeSpec, type ReviewResult, type WorkState } from "../domain/types.js";
-import { validateReview, validateState } from "../domain/validation.js";
+import { loadConfig } from "../config/config.js";
+import { CHECK_NAMES, type OutcomeCriterion, type OutcomeEvaluation, type OutcomeEvidence, type OutcomeSpec, type RemediationRecord, type ReviewResult, type ValidationFailureRecord, type WorkState } from "../domain/types.js";
+import { validateRemediation, validateReview, validateState, validateValidationFailure } from "../domain/validation.js";
 import { stableJson, writeAtomic } from "../fs/files.js";
 import { GitRepository, type CommitInfo } from "../git/git.js";
 import { loadState, saveState } from "../state/store.js";
 import { closeWork } from "./close.js";
 import { committedWorkDigest } from "./digest.js";
 import { reviewBlocks } from "./review.js";
+import { canonicalChecks, validationFailureDigest, validationFailureRecordFailure, validationFailureReplayFailure } from "./validation-failure.js";
 
 /** Trailer phases of the outcome workflow. They never collide with SDD phase names. */
-export const OUTCOME_PHASES = { open: "outcome-open", execute: "outcome-execute", close: "outcome-close" } as const;
+export const OUTCOME_PHASES = { open: "outcome-open", execute: "outcome-execute", evaluate: "outcome-evaluate", close: "outcome-close" } as const;
+/** Harness-State values of evaluate transitions; distinct from SDD's so neither replay misreads the other. */
+export const OUTCOME_STATES = { failed: "outcome-evaluation-failed", remediated: "outcome-remediated" } as const;
+
+function attemptTrailer(attempt: number): { attempt?: string } {
+  return attempt > 0 ? { attempt: String(attempt) } : {};
+}
+
+export function trailerAttempt(commit: CommitInfo): number {
+  return commit.trailers.attempt === undefined ? 0 : Number(commit.trailers.attempt);
+}
 
 const CRITERION_ID = /^[A-Z][A-Z0-9-]{0,31}$/;
 
@@ -40,6 +52,21 @@ export function outcomeEvaluationPath(workId: string, attempt = 0): string {
 
 export function outcomeReviewPath(workId: string, attempt = 0): string {
   return `${attemptDirectory(workId, attempt)}/reviews/latest.json`;
+}
+
+/** Failed checks recorded against the immutable executed input. */
+export function outcomeCheckFailurePath(workId: string, attempt = 0): string {
+  return `${attemptDirectory(workId, attempt)}/check-failure.json`;
+}
+
+export function outcomeRemediationPath(workId: string, attempt: number): string {
+  return `${attemptDirectory(workId, attempt)}/remediation.json`;
+}
+
+/** Artifacts of attempts before `attempt` are immutable. */
+export function isPriorOutcomeArtifact(path: string, workId: string, attempt: number): boolean {
+  const match = new RegExp(`^${outcomeDirectory(workId)}/attempts/([0-9]+)/`).exec(path);
+  return match !== null && Number(match[1]) < attempt;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -120,7 +147,8 @@ export async function outcomeOpenCommit(git: GitRepository, workId: string, ref 
 /** Only commits the harness integrated from task worktrees may carry production changes when isolation is required. */
 function isolationFailure(commits: readonly CommitInfo[], workId: string, state: unknown): string | undefined {
   const integrated = new Set(validateState(state) ? state.tasks.flatMap((task) => task.commits) : []);
-  const direct = commits.find((commit) => commit.trailers.work !== workId || !commit.trailers.task || !integrated.has(commit.hash));
+  const transition = (commit: CommitInfo): boolean => commit.trailers.work === workId && (commit.trailers.phase?.startsWith("outcome-") ?? false) && !commit.trailers.task;
+  const direct = commits.find((commit) => !transition(commit) && (commit.trailers.work !== workId || !commit.trailers.task || !integrated.has(commit.hash)));
   return direct ? `commit ${direct.hash.slice(0, 12)} "${direct.subject}" was not integrated from an isolated task` : undefined;
 }
 
@@ -131,7 +159,7 @@ function isolationFailure(commits: readonly CommitInfo[], workId: string, state:
  */
 export async function outcomeCloseFailure(git: GitRepository, workId: string, executeCommit: string, review: unknown, attempt = 0): Promise<string | undefined> {
   const execute = await git.commitInfo(executeCommit);
-  if (execute.trailers.work !== workId || execute.trailers.phase !== OUTCOME_PHASES.execute || execute.trailers.state !== "completed") {
+  if (execute.trailers.work !== workId || execute.trailers.phase !== OUTCOME_PHASES.execute || execute.trailers.state !== "completed" || trailerAttempt(execute) !== attempt) {
     return "close must directly follow the certified execution";
   }
   const open = await outcomeOpenCommit(git, workId, executeCommit);
@@ -253,9 +281,13 @@ export async function evaluateOutcome(cwd: string): Promise<{ commit: string; ev
   const pending = state.tasks.filter((task) => task.status !== "completed").map((task) => task.id);
   if (pending.length > 0) throw new Error(`Every task must be integrated before evaluation: ${pending.join(", ")}`);
   const open = (await outcomeOpenCommit(git, state.id))!;
+  if (await recordedFailure(git, open.hash, state.id, attempt)) {
+    throw new Error(`Attempt ${attempt} has a recorded evaluation failure; open a new attempt with ways outcome remediate --reason=<text>`);
+  }
   const isolation = isolationFailure(await commitsBetween(git, open.hash, "HEAD"), state.id, state);
   if (isolation) throw new Error(`Isolation is required: ${isolation}`);
-  const allowed = new Set([STATE_PATH, STATUS_PATH, outcomeEvidencePath(state.id, attempt)]);
+  // A failure record left by an interrupted evaluation is rewritten below.
+  const allowed = new Set([STATE_PATH, STATUS_PATH, outcomeEvidencePath(state.id, attempt), outcomeCheckFailurePath(state.id, attempt)]);
   const unrelated = (await dirtyPaths(git)).filter((path) => !allowed.has(path));
   if (unrelated.length > 0) throw new Error(`Uncommitted changes outside the evidence file block evaluation: ${unrelated.join(", ")}`);
 
@@ -290,8 +322,19 @@ export async function evaluateOutcome(cwd: string): Promise<{ commit: string; ev
     passed: failures.length === 0,
   };
   const cited = citedCheckFailure(evidence as OutcomeEvidence, evaluation);
-  if (cited) failures.push(cited);
-  if (failures.length > 0) throw new Error(`Evaluation failed:\n${failures.join("\n")}`);
+  if (failures.length > 0) {
+    const config = await loadConfig(cwd);
+    const unsigned: Omit<ValidationFailureRecord, "digest"> = {
+      schemaVersion: 1, workId: state.id, attempt, phase: "validate", inputCommit: input, inputTree: evaluation.inputTree,
+      testCommand: config.testCommand, ...(config.commands ? { commands: config.commands } : {}), checks: canonicalChecks(result),
+    };
+    await writeAtomic(join(cwd, outcomeCheckFailurePath(state.id, attempt)), stableJson({ ...unsigned, digest: validationFailureDigest(unsigned) }));
+    await git.commit([outcomeCheckFailurePath(state.id, attempt), outcomeEvidencePath(state.id, attempt)], `outcome(evaluate): record failed checks of ${state.id}`, {
+      work: state.id, phase: OUTCOME_PHASES.evaluate, state: OUTCOME_STATES.failed, ...attemptTrailer(attempt),
+    });
+    throw new Error(`Evaluation failed and was recorded; fix it in a new attempt with ways outcome remediate --reason=<text>:\n${failures.join("\n")}`);
+  }
+  if (cited) throw new Error(`Evaluation failed: ${cited}`);
 
   await writeAtomic(join(cwd, outcomeEvaluationPath(state.id, attempt)), stableJson(evaluation));
   state.stage = "evaluate";
@@ -299,9 +342,123 @@ export async function evaluateOutcome(cwd: string): Promise<{ commit: string; ev
   state.updatedAt = new Date().toISOString();
   await saveState(cwd, state);
   const commit = await git.commit(await git.changedPaths(), `outcome(execute): complete ${state.id}`, {
-    work: state.id, phase: OUTCOME_PHASES.execute, state: "completed",
+    work: state.id, phase: OUTCOME_PHASES.execute, state: "completed", ...attemptTrailer(attempt),
   });
   return { commit, evaluation };
+}
+
+/** The commit recording a failed evaluation of the active attempt, if any; that attempt accepts no more changes. */
+export async function attemptFailureCommit(git: GitRepository, workId: string, attempt: number): Promise<CommitInfo | undefined> {
+  const open = await outcomeOpenCommit(git, workId);
+  return open ? recordedFailure(git, open.hash, workId, attempt) : undefined;
+}
+
+/** The commit recording a failed evaluation in `attempt`, if any. */
+async function recordedFailure(git: GitRepository, openCommit: string, workId: string, attempt: number): Promise<CommitInfo | undefined> {
+  return (await commitsBetween(git, openCommit, "HEAD")).find((commit) => commit.trailers.work === workId
+    && commit.trailers.state === OUTCOME_STATES.failed && trailerAttempt(commit) === attempt);
+}
+
+async function readJsonFile(cwd: string, path: string): Promise<unknown> {
+  try {
+    return JSON.parse(await readFile(join(cwd, path), "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Opens attempt n+1 from committed failure evidence: a recorded check failure
+ * at HEAD, or a fresh blocking review of the evaluated increment. Prior
+ * attempts stay untouched; the new attempt needs its own evaluation and review.
+ */
+export async function remediateOutcome(cwd: string, reason: string): Promise<string> {
+  const state = requireOutcome(await loadState(cwd));
+  if (!reason.trim()) throw new Error("A remediation reason is required");
+  await assertOutcomeConsistency(cwd, state);
+  const git = new GitRepository(cwd);
+  const committed = await showJson(git, "HEAD", STATE_PATH) as WorkState | undefined;
+  if (state.remediation && state.attempt !== undefined && state.attempt === (committed?.attempt ?? 0) + 1) {
+    // Interrupted after writing the new attempt: commit it; the hook re-verifies it.
+    const paths = [STATE_PATH, STATUS_PATH, outcomeRemediationPath(state.id, state.attempt), outcomeEvidencePath(state.id, state.attempt)];
+    if (state.remediation.source === "review") paths.push(outcomeReviewPath(state.id, state.attempt - 1));
+    return commitRemediation(git, state, paths);
+  }
+  const attempt = state.attempt ?? 0;
+  const head = await git.head();
+  const open = (await outcomeOpenCommit(git, state.id))!;
+  let evidence: RemediationRecord["evidence"];
+  const allowed = new Set([STATE_PATH, STATUS_PATH]);
+  if (state.stage === "execute") {
+    const failed = await recordedFailure(git, open.hash, state.id, attempt);
+    if (!failed || failed.hash !== head) throw new Error("Remediation requires a recorded evaluation failure at HEAD, or a blocking review during evaluate");
+    const record = await showJson(git, head, outcomeCheckFailurePath(state.id, attempt));
+    if (!validateValidationFailure(record) || validationFailureRecordFailure(record)) throw new Error("The recorded evaluation failure is invalid");
+    evidence = { kind: "validate", failureRecord: { commit: head, tree: await git.run(["rev-parse", `${head}^{tree}`]), digest: record.digest } };
+  } else {
+    const review = await readJsonFile(cwd, outcomeReviewPath(state.id, attempt));
+    if (!validateReview(review) || review.workId !== state.id || (review.attempt ?? 0) !== attempt) throw new Error("Remediation from evaluate requires a submitted review of this attempt");
+    if (review.digest !== await outcomeDigest(git, open.hash, head)) throw new Error("The submitted review is stale");
+    if (reviewBlocks(review).length === 0) throw new Error("The review passes; close the work instead of remediating");
+    evidence = { kind: "review", review: review as ReviewResult & { verdict: "fail" } };
+    allowed.add(outcomeReviewPath(state.id, attempt));
+  }
+  const unrelated = (await dirtyPaths(git)).filter((path) => !allowed.has(path));
+  if (unrelated.length > 0) throw new Error(`Uncommitted changes block remediation: ${unrelated.join(", ")}`);
+
+  const next = attempt + 1;
+  const previous = await readJsonFile(cwd, outcomeEvidencePath(state.id, attempt)) as OutcomeEvidence | undefined;
+  const spec = JSON.parse(await readFile(join(cwd, outcomeSpecPath(state.id)), "utf8")) as OutcomeSpec;
+  const template: OutcomeEvidence = {
+    schemaVersion: 1, workId: state.id, attempt: next,
+    criteria: Object.fromEntries(spec.criteria.map((criterion) => [criterion.id, previous?.criteria?.[criterion.id] ?? { summary: "" }])),
+  };
+  const metadata = { source: state.stage === "execute" ? "validate" as const : "review" as const, target: "implement" as const, reason: reason.trim(), evidence, priorCheckpoint: head, attempt: next, timestamp: new Date().toISOString() };
+  const record: RemediationRecord = { schemaVersion: 1, workId: state.id, ...metadata };
+  await writeAtomic(join(cwd, outcomeRemediationPath(state.id, next)), stableJson(record));
+  await writeAtomic(join(cwd, outcomeEvidencePath(state.id, next)), stableJson(template));
+  state.attempt = next;
+  state.stage = "execute";
+  state.gateCommit = head;
+  state.remediation = metadata;
+  state.updatedAt = metadata.timestamp;
+  await saveState(cwd, state);
+  return commitRemediation(git, state, await git.changedPaths());
+}
+
+async function commitRemediation(git: GitRepository, state: WorkState, paths: string[]): Promise<string> {
+  return git.commit(paths, `outcome(evaluate): remediate ${state.id} in attempt ${state.attempt}`, {
+    work: state.id, phase: OUTCOME_PHASES.evaluate, state: OUTCOME_STATES.remediated, attempt: String(state.attempt),
+  });
+}
+
+/** Verifies a committed remediation transition against the failure it claims, from Git content only. */
+export async function outcomeRemediationFailure(git: GitRepository, workId: string, transition: string): Promise<string | undefined> {
+  return remediationContentFailure(git, workId, trailerAttempt(await git.commitInfo(transition)), await git.parent(transition), transition);
+}
+
+/** Verifies a remediation to `attempt` whose content is at `ref` ("" is the index) on top of `parent`. */
+export async function remediationContentFailure(git: GitRepository, workId: string, attempt: number, parent: string, ref: string): Promise<string | undefined> {
+  const record = await showJson(git, ref, outcomeRemediationPath(workId, attempt));
+  if (!validateRemediation(record) || record.workId !== workId || record.attempt !== attempt || record.priorCheckpoint !== parent || !record.reason.trim()) {
+    return `remediation to attempt ${attempt} lacks a matching record`;
+  }
+  const prior = await git.commitInfo(parent);
+  if (record.evidence.kind === "validate") {
+    if (!("failureRecord" in record.evidence) || record.evidence.failureRecord.commit !== parent || prior.trailers.state !== OUTCOME_STATES.failed
+      || trailerAttempt(prior) !== attempt - 1) return "check remediation must follow its recorded failure";
+    const failure = await showJson(git, parent, outcomeCheckFailurePath(workId, attempt - 1));
+    if (!validateValidationFailure(failure) || failure.digest !== record.evidence.failureRecord.digest || validationFailureRecordFailure(failure)) return "recorded check failure is invalid";
+    return undefined;
+  }
+  if (record.evidence.kind !== "review" || prior.trailers.phase !== OUTCOME_PHASES.execute || trailerAttempt(prior) !== attempt - 1) {
+    return "review remediation must follow the certified execution it reviewed";
+  }
+  const review = await showJson(git, ref, outcomeReviewPath(workId, attempt - 1));
+  const open = await outcomeOpenCommit(git, workId, parent);
+  if (!open || stableJson(review) !== stableJson(record.evidence.review) || reviewBlocks(record.evidence.review).length === 0
+    || record.evidence.review.digest !== await outcomeDigest(git, open.hash, parent)) return "remediating review is not a fresh blocking review of the evaluated increment";
+  return undefined;
 }
 
 /** Digest a reviewer must bind to while the work is in evaluate. */
@@ -337,7 +494,7 @@ export async function closeOutcome(cwd: string): Promise<string> {
     if (task.branch) await git.run(["branch", "-D", task.branch]).catch(() => undefined);
   }
   await rm(join(cwd, ".ways", "worktrees", state.id), { recursive: true, force: true });
-  return closeWork(cwd, `outcome(close): complete ${state.id}`, { work: state.id, phase: OUTCOME_PHASES.close, state: "completed" });
+  return closeWork(cwd, `outcome(close): complete ${state.id}`, { work: state.id, phase: OUTCOME_PHASES.close, state: "completed", ...attemptTrailer(attempt) });
 }
 
 export async function cancelOutcome(cwd: string): Promise<string> {
@@ -349,7 +506,7 @@ export async function cancelOutcome(cwd: string): Promise<string> {
   }
   const unrelated = (await dirtyPaths(git)).filter((path) => path !== STATE_PATH && path !== STATUS_PATH);
   if (unrelated.length > 0) throw new Error(`Commit, move or discard these changes before cancelling: ${unrelated.join(", ")}`);
-  return closeWork(cwd, `outcome(cancel): ${state.id}`, { work: state.id, state: "cancelled" });
+  return closeWork(cwd, `outcome(cancel): ${state.id}`, { work: state.id, state: "cancelled", ...attemptTrailer(state.attempt ?? 0) });
 }
 
 /** A close commit records the review and removes the state; anything else was never evaluated. */
@@ -360,57 +517,110 @@ export function closeCommitExtraPaths(changed: readonly string[], workId: string
 
 export interface OutcomeReplay {
   issues: Array<{ code: string; path: string; message: string }>;
-  closes: Array<{ work: string; commit: CommitInfo }>;
+  closes: Array<{ work: string; commit: CommitInfo; attempt: number }>;
+  failures: Array<{ work: string; commit: CommitInfo; attempt: number }>;
+  remediations: Array<{ work: string; commit: CommitInfo }>;
+  /** Every commit of an outcome work with the attempt it belongs to. */
+  attempts: Array<{ work: string; commit: CommitInfo; attempt: number }>;
 }
 
-/** Ordered replay of outcome transitions: open, execute certification, then close or cancel. */
+interface OutcomeCursor {
+  next: "execute" | "close";
+  attempt: number;
+  failed: boolean;
+}
+
+/** Ordered replay: open, then per attempt execute or a recorded failure, remediation, and finally close or cancel. */
 export function replayOutcomes(commits: readonly CommitInfo[]): OutcomeReplay {
-  const issues: OutcomeReplay["issues"] = [];
-  const closes: OutcomeReplay["closes"] = [];
-  const next = new Map<string, "execute" | "close">();
+  const replay: OutcomeReplay = { issues: [], closes: [], failures: [], remediations: [], attempts: [] };
+  const cursors = new Map<string, OutcomeCursor>();
   const phases = new Set<string>(Object.values(OUTCOME_PHASES));
   for (const commit of commits) {
     const { work, phase, state, task } = commit.trailers;
     if (!work) continue;
-    const expected = next.get(work);
+    const cursor = cursors.get(work);
     const fail = (message: string): void => {
-      issues.push({ code: "history-outcome-broken-chain", path: commit.hash.slice(0, 12), message });
+      replay.issues.push({ code: "history-outcome-broken-chain", path: commit.hash.slice(0, 12), message });
     };
+    const attempt = trailerAttempt(commit);
     if (phase && phases.has(phase)) {
-      if (phase === OUTCOME_PHASES.open && state === "opened" && expected === undefined) next.set(work, "execute");
-      else if (phase === OUTCOME_PHASES.execute && state === "completed" && expected === "execute") next.set(work, "close");
-      else if (phase === OUTCOME_PHASES.close && state === "completed" && expected === "close") {
-        next.delete(work);
-        closes.push({ work, commit });
-      } else fail(`Outcome transition ${phase} for ${work} is out of order`);
+      if (phase === OUTCOME_PHASES.open && state === "opened" && cursor === undefined) {
+        cursors.set(work, { next: "execute", attempt: 0, failed: false });
+      } else if (!cursor) {
+        fail(`Outcome transition ${phase} for ${work} precedes its opening`);
+      } else if (phase === OUTCOME_PHASES.evaluate && state === OUTCOME_STATES.remediated
+        && attempt === cursor.attempt + 1 && (cursor.next === "close" || cursor.failed)) {
+        cursors.set(work, { next: "execute", attempt, failed: false });
+        replay.remediations.push({ work, commit });
+      } else if (attempt !== cursor.attempt) {
+        fail(`Outcome transition ${phase} for ${work} does not belong to attempt ${cursor.attempt}`);
+      } else if (phase === OUTCOME_PHASES.evaluate && state === OUTCOME_STATES.failed && cursor.next === "execute" && !cursor.failed) {
+        cursor.failed = true;
+        replay.failures.push({ work, commit, attempt });
+      } else if (phase === OUTCOME_PHASES.execute && state === "completed" && cursor.next === "execute" && !cursor.failed) {
+        cursor.next = "close";
+      } else if (phase === OUTCOME_PHASES.close && state === "completed" && cursor.next === "close") {
+        cursors.delete(work);
+        replay.closes.push({ work, commit, attempt });
+      } else {
+        fail(`Outcome transition ${phase} for ${work} is out of order`);
+      }
+      const current = cursors.get(work) ?? cursor;
+      if (current) replay.attempts.push({ work, commit, attempt: current.attempt });
       continue;
     }
-    if (expected === undefined) continue;
-    if (state === "cancelled") {
-      next.delete(work);
-    } else if (expected === "execute" && !task) {
-      fail(`Outcome ${work} requires isolation; "${commit.subject}" was not integrated from a task`);
-    } else if (expected === "close") {
-      fail(`Outcome ${work} changed after its evaluation: "${commit.subject}"`);
-    }
+    if (cursor === undefined) continue;
+    replay.attempts.push({ work, commit, attempt: cursor.attempt });
+    if (state === "cancelled") cursors.delete(work);
+    else if (cursor.next === "close") fail(`Outcome ${work} changed after its evaluation: "${commit.subject}"`);
+    else if (cursor.failed) fail(`Outcome ${work} changed after a recorded evaluation failure: "${commit.subject}"`);
+    else if (!task) fail(`Outcome ${work} requires isolation; "${commit.subject}" was not integrated from a task`);
+    else if (attempt !== cursor.attempt) fail(`Task commit for ${work} does not belong to attempt ${cursor.attempt}`);
   }
-  return { issues, closes };
+  return replay;
 }
 
-/** Recheck every close from committed content so a forged or no-verify close fails the audit. */
+/**
+ * Rechecks every close, failure and remediation from committed content, and
+ * replays recorded check failures in a detached worktree, so forged or
+ * no-verify transitions fail the audit.
+ */
 export async function outcomeHistoryIssues(git: GitRepository, commits: readonly CommitInfo[]): Promise<OutcomeReplay["issues"]> {
   const replay = replayOutcomes(commits);
   const issues = [...replay.issues];
-  for (const { work, commit } of replay.closes) {
-    const changed = (await git.run(["diff-tree", "--no-commit-id", "--name-only", "-r", commit.hash])).split("\n").filter(Boolean);
-    const extra = closeCommitExtraPaths(changed, work);
-    if (extra.length > 0) {
-      issues.push({ code: "history-invalid-outcome-evidence", path: commit.hash.slice(0, 12), message: `Outcome ${work} close changed more than its review: ${extra.join(", ")}` });
+  const invalid = (commit: CommitInfo, message: string): void => {
+    issues.push({ code: "history-invalid-outcome-evidence", path: commit.hash.slice(0, 12), message });
+  };
+  const changedBy = async (commit: CommitInfo): Promise<string[]> => (await git.run(["diff-tree", "--no-commit-id", "--name-only", "-r", commit.hash])).split("\n").filter(Boolean);
+  for (const { work, commit, attempt } of replay.attempts) {
+    const remediation = commit.trailers.state === OUTCOME_STATES.remediated;
+    const exempt = remediation ? outcomeReviewPath(work, attempt - 1) : undefined;
+    const mutated = (await changedBy(commit)).find((path) => path !== exempt && isPriorOutcomeArtifact(path, work, attempt));
+    if (mutated) invalid(commit, `Outcome ${work} attempt ${attempt} modified an artifact of an earlier attempt: ${mutated}`);
+  }
+  for (const { work, commit, attempt } of replay.failures) {
+    const record = await showJson(git, commit.hash, outcomeCheckFailurePath(work, attempt));
+    const parent = await git.parent(commit.hash);
+    if (!validateValidationFailure(record) || validationFailureRecordFailure(record) || record.workId !== work || record.attempt !== attempt || record.inputCommit !== parent) {
+      invalid(commit, `Outcome ${work} failure record of attempt ${attempt} does not bind its input`);
       continue;
     }
-    const failure = await outcomeCloseFailure(git, work, await git.parent(commit.hash), await showJson(git, commit.hash, outcomeReviewPath(work)))
+    const replayed = await validationFailureReplayFailure(git, record);
+    if (replayed) invalid(commit, `Outcome ${work} failure record of attempt ${attempt}: ${replayed}`);
+  }
+  for (const { work, commit } of replay.remediations) {
+    const failure = await outcomeRemediationFailure(git, work, commit.hash).catch((error: unknown) => error instanceof Error ? error.message : String(error));
+    if (failure) invalid(commit, `Outcome ${work}: ${failure}`);
+  }
+  for (const { work, commit, attempt } of replay.closes) {
+    const extra = closeCommitExtraPaths(await changedBy(commit), work, attempt);
+    if (extra.length > 0) {
+      invalid(commit, `Outcome ${work} close changed more than its review: ${extra.join(", ")}`);
+      continue;
+    }
+    const failure = await outcomeCloseFailure(git, work, await git.parent(commit.hash), await showJson(git, commit.hash, outcomeReviewPath(work, attempt)), attempt)
       .catch((error: unknown) => error instanceof Error ? error.message : String(error));
-    if (failure) issues.push({ code: "history-invalid-outcome-evidence", path: commit.hash.slice(0, 12), message: `Outcome ${work} closed without valid evidence: ${failure}` });
+    if (failure) invalid(commit, `Outcome ${work} closed without valid evidence: ${failure}`);
   }
   return issues;
 }
