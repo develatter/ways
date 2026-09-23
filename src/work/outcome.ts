@@ -2,9 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { HARNESS_VERSION } from "../index.js";
-import { failedCheckDetails, runChecks } from "../check/check.js";
 import { KNOWLEDGE_DIR, OUTCOME_DIR, STATE_PATH, STATUS_PATH } from "../domain/constants.js";
-import { loadConfig } from "../config/config.js";
 import { CHECK_NAMES, MEMORY_TIERS, type MemoryTier, type OutcomeCheckpoint, type OutcomeCriterion, type OutcomeEvaluation, type OutcomeEvidence, type OutcomeSpec, type RemediationRecord, type ReviewResult, type ValidationFailureRecord, type WorkState } from "../domain/types.js";
 import { validateRemediation, validateReview, validateState, validateValidationFailure } from "../domain/validation.js";
 import { stableJson, writeAtomic } from "../fs/files.js";
@@ -16,7 +14,8 @@ import { approvalPolicyFailure, assertOutcomeApproval, commitReader, outcomeAppr
 import { reviewBlocks } from "./review.js";
 import { committedExecutionPolicy, effectiveExecutionPolicy, executionPolicyInvalid, isolationFailure, optionalIsolationOpenings, parallelStateFailure, type ExecutionPolicy } from "./outcome-policy.js";
 import { evaluationPolicy, INDEPENDENT_EVALUATION, outcomeEvaluationFailure, type EvaluationMode } from "./outcome-evaluation-policy.js";
-import { canonicalChecks, validationFailureDigest, validationFailureRecordFailure, validationFailureReplayFailure } from "./validation-failure.js";
+import { evaluatedChecksFailure, evaluationBindingFailure, evidenceDigest, formatCheckResults, runContract } from "./outcome-evaluation.js";
+import { validationFailureDigest, validationFailureRecordFailure, validationFailureReplayFailure } from "./validation-failure.js";
 
 /** Trailer phases of the outcome workflow. They never collide with SDD phase names. */
 export const OUTCOME_PHASES = { open: "outcome-open", execute: "outcome-execute", evaluate: "outcome-evaluate", close: "outcome-close" } as const;
@@ -221,6 +220,8 @@ export async function outcomeCloseFailure(git: GitRepository, workId: string, ex
   if (!isRecord(evaluation) || evaluation.workId !== workId || evaluation.attempt !== attempt || evaluation.inputCommit !== input
     || evaluation.inputTree !== await git.run(["rev-parse", `${input}^{tree}`])) return "evaluation does not bind the executed input";
   if (evaluation.passed !== true) return "evaluation did not pass";
+  const binding = await evaluationBindingFailure(git, evaluation, evidence);
+  if (binding) return binding;
   const cited = citedCheckFailure(evidence as OutcomeEvidence, evaluation);
   if (cited) return cited;
   const isolation = isolationFailure(await commitsBetween(git, open.hash, input), workId, await showJson(git, executeCommit, STATE_PATH), (spec as OutcomeSpec).policy.isolation);
@@ -350,12 +351,7 @@ export async function evaluateOutcome(cwd: string): Promise<{ commit: string; ev
     if (changed.length > 0) throw new Error(`Memory policy none forbids knowledge changes: ${changed.join(", ")}`);
   }
 
-  const result = await runChecks(cwd, false, undefined, { services: true });
-  const failures = [
-    ...result.issues.map((issue) => `${issue.code}: ${issue.path}: ${issue.message}`),
-    ...failedCheckDetails(result),
-    ...(!result.checks && result.testExitCode !== 0 ? [`test: exit code ${result.testExitCode}`] : []),
-  ];
+  const { contract, checks, failures } = await runContract(cwd);
   const input = await git.head();
   const evaluation: OutcomeEvaluation = {
     schemaVersion: 1,
@@ -363,25 +359,21 @@ export async function evaluateOutcome(cwd: string): Promise<{ commit: string; ev
     attempt,
     inputCommit: input,
     inputTree: await git.run(["rev-parse", `${input}^{tree}`]),
-    checks: {
-      integrity: result.issues.map(({ code, path, message }) => ({ code, path, message })),
-      ...(result.testExitCode !== undefined ? { testExitCode: result.testExitCode } : {}),
-      ...(result.checks ? { named: result.checks } : {}),
-    },
+    contract,
+    evidenceDigest: evidenceDigest(evidence),
+    checks,
     passed: failures.length === 0,
   };
   const cited = citedCheckFailure(evidence as OutcomeEvidence, evaluation);
   if (failures.length > 0) {
-    const config = await loadConfig(cwd);
     const unsigned: Omit<ValidationFailureRecord, "digest"> = {
-      schemaVersion: 1, workId: state.id, attempt, phase: "validate", inputCommit: input, inputTree: evaluation.inputTree,
-      testCommand: config.testCommand, ...(config.commands ? { commands: config.commands } : {}), checks: canonicalChecks(result),
+      schemaVersion: 1, workId: state.id, attempt, phase: "validate", inputCommit: input, inputTree: evaluation.inputTree, ...contract, checks,
     };
     await writeAtomic(join(cwd, outcomeCheckFailurePath(state.id, attempt)), stableJson({ ...unsigned, digest: validationFailureDigest(unsigned) }));
     await git.commit([outcomeCheckFailurePath(state.id, attempt), outcomeEvidencePath(state.id, attempt)], `outcome(evaluate): record failed checks of ${state.id}`, {
       work: state.id, phase: OUTCOME_PHASES.evaluate, state: OUTCOME_STATES.failed, ...attemptTrailer(attempt),
     });
-    throw new Error(`Evaluation failed and was recorded; fix it in a new attempt with ways outcome remediate --reason=<text>:\n${failures.join("\n")}`);
+    throw new Error(`Evaluation failed and was recorded; fix it in a new attempt with ways outcome remediate --reason=<text>:\n${failures.join("\n")}\nCheck results:\n${formatCheckResults(checks).join("\n")}`);
   }
   if (cited) throw new Error(`Evaluation failed: ${cited}`);
 
@@ -557,9 +549,8 @@ export async function closeOutcome(cwd: string): Promise<string> {
   if (failure) throw new Error(`Close refused: ${failure}`);
   await assertOutcomeApproval(cwd, state, "close");
   // The evaluated tree is still HEAD's; re-running the checks means a hand-written evaluation cannot close failing work.
-  const checks = await runChecks(cwd, false, undefined, { services: true });
-  const failing = [...checks.issues.map((issue) => `${issue.code}: ${issue.path}`), ...failedCheckDetails(checks), ...(!checks.checks && checks.testExitCode !== 0 ? [`test: exit code ${checks.testExitCode}`] : [])];
-  if (failing.length > 0) throw new Error(`Close refused: checks fail on the evaluated input:\n${failing.join("\n")}`);
+  const rerun = await evaluatedChecksFailure(cwd, await showJson(git, "HEAD", outcomeEvaluationPath(state.id, attempt)) as OutcomeEvaluation);
+  if (rerun) throw new Error(`Close refused: ${rerun}`);
   for (const task of state.tasks) {
     if (task.worktree) await git.run(["worktree", "remove", "--force", task.worktree]).catch(() => undefined);
     if (task.branch) await git.run(["branch", "-D", task.branch]).catch(() => undefined);

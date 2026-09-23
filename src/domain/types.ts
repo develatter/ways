@@ -77,12 +77,23 @@ export interface OutcomeEvaluation {
   attempt: number;
   inputCommit: string;
   inputTree: string;
+  /** The effective command contract the checks ran under: the input tree's configuration. */
+  contract: CheckContract;
+  /** Digest of the criterion evidence the evaluation certified; editing the evidence invalidates it. */
+  evidenceDigest: string;
   checks: {
     integrity: Array<{ code: string; path: string; message: string }>;
     testExitCode?: number;
     named?: NamedCheckEvidence[];
+    environment?: EnvironmentResult[];
   };
   passed: boolean;
+}
+
+/** The commands an execution boundary selected: legacy testCommand plus the optional named contract. */
+export interface CheckContract {
+  testCommand: CommandArgv;
+  commands?: NamedChecksConfig;
 }
 
 export type WorkStatus = "active" | "blocked" | "completed" | "cancelled";
