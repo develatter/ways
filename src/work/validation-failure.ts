@@ -8,7 +8,7 @@ import { sha256, stableJson, writeAtomic } from "../fs/files.js";
 import { GitRepository } from "../git/git.js";
 import { attemptNumber, validationFailureRecordPath } from "./attempt.js";
 
-function canonicalChecks(result: CheckResult): ValidationFailureRecord["checks"] {
+export function canonicalChecks(result: CheckResult): ValidationFailureRecord["checks"] {
   return {
     integrity: [...result.issues]
       .sort((left, right) => left.code.localeCompare(right.code) || left.path.localeCompare(right.path) || left.message.localeCompare(right.message))
@@ -83,6 +83,18 @@ async function replayCleanupFailure(git: GitRepository, replayCwd: string): Prom
 }
 
 export async function validationFailureReplayFailure(git: GitRepository, record: ValidationFailureRecord): Promise<string | undefined> {
+  // Inside a commit hook, GIT_INDEX_FILE and friends point at the committing
+  // index; the replay worktree and its checks must use their own.
+  const inherited = Object.entries(process.env).filter(([key]) => key.startsWith("GIT_"));
+  for (const [key] of inherited) delete process.env[key];
+  try {
+    return await replayRecordedChecks(git, record);
+  } finally {
+    for (const [key, value] of inherited) process.env[key] = value;
+  }
+}
+
+async function replayRecordedChecks(git: GitRepository, record: ValidationFailureRecord): Promise<string | undefined> {
   const root = await git.root();
   const runtime = join(root, ".ways", "runtime");
   await mkdir(runtime, { recursive: true });

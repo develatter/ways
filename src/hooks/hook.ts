@@ -9,7 +9,7 @@ import { attemptNumber, attemptPhasePath, attemptReviewPath, isPriorAttemptArtif
 import { remediationEvidenceFailure } from "../work/remediation.js";
 import { validationFailureRecordFailure, validationFailureReplayFailure } from "../work/validation-failure.js";
 import { committedMismatch } from "../work/sdd.js";
-import { closeCommitExtraPaths, OUTCOME_PHASES, outcomeCloseFailure, outcomeEvaluationPath, outcomeReviewPath } from "../work/outcome.js";
+import { attemptFailureCommit, closeCommitExtraPaths, isPriorOutcomeArtifact, OUTCOME_PHASES, OUTCOME_STATES, outcomeCheckFailurePath, outcomeCloseFailure, outcomeEvaluationPath, outcomeEvidencePath, outcomeReviewPath, remediationContentFailure } from "../work/outcome.js";
 
 export interface HookVerdict {
   accepted: boolean;
@@ -132,6 +132,35 @@ async function outcomeCommitFailure(git: GitRepository, active: WorkState, trail
     if (trailers.state !== "opened") return "opening commits carry Harness-State: opened";
     return await headState(git) ? "the work is already open" : undefined;
   }
+  const attempt = active.attempt ?? 0;
+  const staged = (await git.run(["diff", "--cached", "--name-only", "HEAD"])).split("\n").filter(Boolean);
+  const remediating = trailers.phase === OUTCOME_PHASES.evaluate && trailers.state === OUTCOME_STATES.remediated;
+  const exempt = remediating ? outcomeReviewPath(active.id, attempt - 1) : undefined;
+  const mutated = staged.find((path) => path !== exempt && isPriorOutcomeArtifact(path, active.id, attempt));
+  if (mutated) return `artifacts of earlier attempts are immutable: ${mutated}`;
+  if (trailers.phase === OUTCOME_PHASES.evaluate) {
+    if (active.stage !== "execute") return "evaluate transitions come only from ways outcome evaluate or remediate";
+    if (trailers.state === OUTCOME_STATES.failed) {
+      const path = outcomeCheckFailurePath(active.id, attempt);
+      const extra = staged.filter((changed) => changed !== path && changed !== outcomeEvidencePath(active.id, attempt));
+      if (!staged.includes(path) || extra.length > 0) return `a failed evaluation stages only ${path} and its evidence`;
+      try {
+        const value: unknown = JSON.parse(await git.run(["show", `:${path}`]));
+        if (!validateValidationFailure(value) || validationFailureRecordFailure(value) || value.workId !== active.id || value.attempt !== attempt
+          || value.inputCommit !== await git.head() || value.inputTree !== await git.run(["rev-parse", "HEAD^{tree}"])) {
+          return "the failure record does not bind the current committed input";
+        }
+        return await validationFailureReplayFailure(git, value);
+      } catch {
+        return "the failure record is unreadable";
+      }
+    }
+    if (remediating) {
+      if (attempt < 1 || !active.remediation || active.remediation.attempt !== attempt) return "remediation trailers do not match the active attempt";
+      return remediationContentFailure(git, active.id, attempt, await git.head(), "");
+    }
+    return "unknown evaluate transition";
+  }
   if (trailers.phase === OUTCOME_PHASES.execute) {
     if (trailers.state !== "completed" || active.stage !== "evaluate") return "execution is certified only by ways outcome evaluate";
     try {
@@ -143,6 +172,7 @@ async function outcomeCommitFailure(git: GitRepository, active: WorkState, trail
     return undefined;
   }
   if (active.stage !== "execute") return "the evaluated increment is frozen; close it or cancel the work";
+  if (await attemptFailureCommit(git, active.id, attempt)) return `attempt ${attempt} has a recorded evaluation failure; run ways outcome remediate --reason=<text> first`;
   return trailers.task ? undefined : "isolation is required; commit in a task worktree (ways task prepare) and integrate it";
 }
 
