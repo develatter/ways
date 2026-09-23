@@ -52,29 +52,50 @@ function scripted(id: string, run: (input: AdapterInput) => Promise<void>): Eval
 }
 
 /** Drives the real Ways SDD lifecycle in the disposable repository, as a compliant agent would. */
-function sddAdapter(seen: AdapterInput[] = [], workId?: string): EvalAdapter {
+interface SddScript {
+  workId?: string;
+  implement?: boolean;
+  /** Runs after the named phase is certified. */
+  after?: Partial<Record<string, (input: AdapterInput) => Promise<void>>>;
+}
+
+async function sneak(input: AdapterInput, files: Record<string, string>, message = "sneak\n\nHarness-Work: add-export"): Promise<void> {
+  for (const [path, content] of Object.entries(files)) {
+    await mkdir(dirname(join(input.repo, path)), { recursive: true });
+    await writeFile(join(input.repo, path), content);
+  }
+  const git = new GitRepository(input.repo);
+  await git.run(["add", "-A"], undefined, true);
+  await git.run(["-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", message], undefined, true);
+}
+
+function sddAdapter(seen: AdapterInput[] = [], script: SddScript = {}): EvalAdapter {
   return {
     id: "sdd-fixture",
     argv: ["sdd-fixture"],
     synthetic: true,
     async run(input) {
       seen.push(input);
-      const work = workId ?? input.task.id;
+      const work = script.workId ?? input.task.id;
+      const advance = async (phase: string): Promise<void> => {
+        await advanceSdd(input.repo);
+        await script.after?.[phase]?.(input);
+      };
       await startSdd(input.repo, work, "autonomous");
       for (const phase of ["intake", "explore", "assess", "specify", "plan", "decompose", "implement"]) {
         await fill(input.repo, work, phase);
-        if (phase === "implement") await applyPatch(input);
-        await advanceSdd(input.repo);
+        if (phase === "implement" && script.implement !== false) await applyPatch(input);
+        await advance(phase);
       }
       await fill(input.repo, work, "review");
       const reviewPath = join(input.repo, ".ways/runtime/review.json");
       await mkdir(dirname(reviewPath), { recursive: true });
       await writeFile(reviewPath, JSON.stringify({ schemaVersion: 1, workId: work, reviewer: "fixture/reviewer", digest: await reviewDigest(input.repo), verdict: "pass", findings: [] }));
       await submitReview(input.repo, reviewPath);
-      await advanceSdd(input.repo);
+      await advance("review");
       for (const phase of ["validate", "reconcile-memory", "close"]) {
         await fill(input.repo, work, phase);
-        await advanceSdd(input.repo);
+        await advance(phase);
       }
       return { doneClaim: true, exitCode: 0, stdout: "", stderr: "", overflow: false, metrics: { toolCalls: 12, retries: 0 } };
     },
@@ -124,7 +145,7 @@ describe("full SDD harness evals", () => {
     expect(idle.tasks[0]).toMatchObject({ success: false, compliance: { compliant: false, fullSddCompleted: false, sddWorksStarted: 0 } });
     expect(codes(idle.tasks[0]?.compliance)).toEqual(["eval-sdd-not-closed"]);
 
-    const foreign = sddAdapter([], "unrelated-work");
+    const foreign = sddAdapter([], { workId: "unrelated-work" });
     const elsewhere = await runEvals({ corpus, adapter: foreign, configuration: fullSdd(foreign) });
     expect(elsewhere.tasks[0]).toMatchObject({ success: true, compliance: { compliant: false, fullSddCompleted: false, sddWorksClosed: 1 } });
     expect(codes(elsewhere.tasks[0]?.compliance)).toEqual(expect.arrayContaining(["eval-foreign-work", "eval-sdd-not-closed"]));
@@ -145,19 +166,29 @@ describe("full SDD harness evals", () => {
     expect(codes(downgraded.tasks[0]?.compliance)).toEqual(expect.arrayContaining(["eval-downgraded", "eval-sdd-not-closed"]));
   });
 
-  it("rejects forged work trailers and weakened harness files after a closed SDD", async () => {
-    const inner = sddAdapter();
-    const forger = scripted("forger", async (input) => {
-      await inner.run(input);
+  it("rejects product changes outside the implement window and anything after close", async () => {
+    const corpus = await singleTaskCorpus();
+    const patch = Object.fromEntries((corpus.tasks[0]!.fakePatch ?? []).map((file) => [file.path, file.content]));
+    const grade = async (adapter: EvalAdapter) => (await runEvals({ corpus, adapter, configuration: fullSdd(adapter) })).tasks[0];
+
+    const afterReview = await grade(sddAdapter([], { implement: false, after: { review: (input) => sneak(input, patch) } }));
+    expect(afterReview).toMatchObject({ success: true, compliance: { compliant: false, fullSddCompleted: false, sddWorksClosed: 1 } });
+    expect(codes(afterReview?.compliance)).toEqual(["eval-change-outside-implement"]);
+
+    const forgedState = await grade(sddAdapter([], { after: { close: async (input) => {
+      await sneak(input, { ".ways/state/current.json": JSON.stringify({ id: "add-export" }), "src/extra.js": "export const extra = 1;\n" });
+      await rm(join(input.repo, ".ways/state/current.json"));
+      await sneak(input, {});
+    } } }));
+    expect(forgedState).toMatchObject({ success: true, compliance: { compliant: false, fullSddCompleted: false } });
+    expect(codes(forgedState?.compliance)).toEqual(["eval-commit-after-close", "eval-commit-after-close"]);
+
+    const weakened = await grade(sddAdapter([], { after: { close: async (input) => {
       const config = JSON.parse(await readFile(join(input.repo, ".ways/config.json"), "utf8"));
-      await writeFile(join(input.repo, ".ways/config.json"), JSON.stringify({ ...config, testCommand: ["true"] }));
-      const git = new GitRepository(input.repo);
-      await git.run(["add", "."], undefined, true);
-      await git.run(["commit", "-q", "--no-verify", "-m", "weaken\n\nHarness-Work: add-export"], undefined, true);
-    });
-    const result = await runEvals({ corpus: await singleTaskCorpus(), adapter: forger, configuration: fullSdd(forger) });
-    expect(result.tasks[0]).toMatchObject({ success: true, compliance: { compliant: false, fullSddCompleted: true } });
-    expect(codes(result.tasks[0]?.compliance)).toEqual(expect.arrayContaining(["eval-untracked-work-commit", "eval-harness-tampered"]));
+      await sneak(input, { ".ways/config.json": JSON.stringify({ ...config, testCommand: ["true"] }) }, "weaken");
+    } } }));
+    expect(codes(weakened?.compliance)).toEqual(expect.arrayContaining(["history-untraced", "eval-harness-tampered"]));
+    expect(weakened?.compliance).toMatchObject({ compliant: false, fullSddCompleted: false });
   });
 
   it("keeps the functional grade when compliance cannot be graded", async () => {
@@ -187,8 +218,8 @@ describe("full SDD harness evals", () => {
       const result = await runEvals({ corpus: await singleTaskCorpus(), adapter, configuration: fullSdd(adapter) });
       expect(result.tasks[0]?.sessions[0]?.adapter).toMatchObject({ exitCode: 0, error: null });
       expect(result.tasks[0]).toMatchObject({ success: true, compliance: { compliant: false, fullSddCompleted: false } });
-      // Quick work never commits its state, so its commits are outside any committed SDD work.
-      expect(codes(result.tasks[0]?.compliance)).toEqual(["eval-untracked-work-commit", "eval-sdd-not-closed"]);
+      // Quick delivery changes product code outside any SDD implement window.
+      expect(codes(result.tasks[0]?.compliance)).toEqual(["eval-change-outside-implement", "eval-sdd-not-closed"]);
       expect(result.evidence.kind).toBe("real");
     } finally {
       process.env.WAYS_CLI = saved;

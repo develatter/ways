@@ -4,11 +4,13 @@ import { fileURLToPath } from "node:url";
 import { HARNESS_VERSION } from "../index.js";
 import { bootstrap } from "../bootstrap/bootstrap.js";
 import { sha256 } from "../fs/files.js";
-import { GitRepository } from "../git/git.js";
+import { GitRepository, type CommitInfo } from "../git/git.js";
 import { auditHistory, commitsAfter, manifestIntroduction } from "../integrity/history.js";
 import { checkIntegrity } from "../integrity/integrity.js";
 import { loadState } from "../state/store.js";
-import { CONFIG_PATH, HOOKS_DIR, MANIFEST_PATH, STATE_PATH } from "../domain/constants.js";
+import { CONFIG_PATH, HOOKS_DIR, MANIFEST_PATH, STATE_PATH, STATUS_PATH } from "../domain/constants.js";
+import type { SddPhase } from "../domain/types.js";
+import { sddWorkflow } from "../domain/workflow.js";
 import type { ComplianceIssue, EvalCheck, EvalTask, HarnessCompliance, HarnessPrompt, WaysRevision } from "./types.js";
 
 const PACKAGE_LINK = "node_modules/@develatter/ways";
@@ -119,21 +121,49 @@ export async function prepareFullSdd(repo: string, task: EvalTask, gitEnv: NodeJ
 }
 
 /** Harness files an agent must not change: rewriting them weakens the gates being measured. */
-const HARNESS_PATHS = [CONFIG_PATH, MANIFEST_PATH, HOOKS_DIR, "scripts/check.sh", "AGENTS.md"];
+const HARNESS_PATHS = [CONFIG_PATH, MANIFEST_PATH, HOOKS_DIR, "scripts/check.sh", "AGENTS.md", STATE_PATH];
 
-async function activeWorkAt(git: GitRepository, revision: string): Promise<string | undefined> {
-  try {
-    const state = JSON.parse(await git.run(["show", `${revision}:${STATE_PATH}`], undefined, true)) as { id?: unknown };
-    return typeof state.id === "string" ? state.id : undefined;
-  } catch {
-    return undefined;
+/** Only harness bookkeeping may change outside the implement window. */
+function isHarnessBookkeeping(path: string): boolean {
+  return path.startsWith(".ways/sdd/") || path.startsWith(".ways/knowledge/") || path.startsWith(".ways/indexes/")
+    || path === STATE_PATH || path === STATUS_PATH;
+}
+
+/**
+ * Replays the task work's own transitions: product changes are legitimate only in commits made
+ * while implement is the next phase to certify (including the implement certification itself).
+ * Everything else, including anything after close, may only touch harness bookkeeping.
+ */
+async function windowIssues(git: GitRepository, commits: readonly CommitInfo[], taskId: string): Promise<ComplianceIssue[]> {
+  const workflow = sddWorkflow();
+  const issues: ComplianceIssue[] = [];
+  let next: SddPhase | "closed" = workflow.initialPhase;
+  for (const commit of commits) {
+    const { work, phase, state } = commit.trailers;
+    if (work !== taskId) continue;
+    const path = commit.hash.slice(0, 12);
+    if (next === "closed") {
+      issues.push({ code: "eval-commit-after-close", path, message: `Commit "${commit.subject}" follows the close of ${taskId}` });
+      continue;
+    }
+    if (next !== "implement") {
+      const changed = (await git.run(["diff-tree", "--no-commit-id", "--name-only", "-r", commit.hash], undefined, true)).split("\n").filter(Boolean);
+      const product = changed.filter((changedPath) => !isHarnessBookkeeping(changedPath));
+      if (product.length > 0) issues.push({ code: "eval-change-outside-implement", path, message: `Commit changes ${product.join(", ")} while ${next} is the next phase of ${taskId}` });
+    }
+    const remediated = state?.match(/^remediated-(.+)$/)?.[1];
+    if (remediated && workflow.isPhase(remediated)) next = remediated;
+    else if (state === "completed" && workflow.isPhase(phase) && phase === next) next = workflow.nextPhase(phase) ?? "closed";
   }
+  return issues;
 }
 
 /**
  * Grades SDD compliance from committed repository evidence, never from what the agent claims.
  * Compliance means the task was delivered by exactly one SDD work named after the task, closed
- * through every gate, with no foreign, forged or downgraded work and no weakened harness files.
+ * through every gate, with product changes only inside its implement window, no foreign or
+ * downgraded work and no weakened harness files. Forged certification chains remain the
+ * documented local authorship limit of history verification.
  */
 export async function gradeFullSddCompliance(repo: string, taskId: string, startRevision: string): Promise<HarnessCompliance> {
   const git = new GitRepository(repo);
@@ -150,12 +180,9 @@ export async function gradeFullSddCompliance(repo: string, taskId: string, start
   issues.push(...audit.issues, ...await checkIntegrity(repo));
   for (const commit of commits) {
     const work = commit.trailers.work;
-    if (!work) continue;
-    if (work !== taskId) issues.push({ code: "eval-foreign-work", path: commit.hash.slice(0, 12), message: `Commit belongs to work ${work}, not to the task work ${taskId}` });
-    else if (await activeWorkAt(git, `${commit.hash}^`) !== work && await activeWorkAt(git, commit.hash) !== work) {
-      issues.push({ code: "eval-untracked-work-commit", path: commit.hash.slice(0, 12), message: `Commit claims work ${work} outside any committed SDD state for that work` });
-    }
+    if (work && work !== taskId) issues.push({ code: "eval-foreign-work", path: commit.hash.slice(0, 12), message: `Commit belongs to work ${work}, not to the task work ${taskId}` });
   }
+  issues.push(...await windowIssues(git, commits, taskId));
   const tampered = (await git.run(["diff", "--name-only", startRevision, "HEAD", "--", ...HARNESS_PATHS], undefined, true)).split("\n").filter(Boolean);
   for (const path of tampered) issues.push({ code: "eval-harness-tampered", path, message: "Harness file changed after bootstrap" });
   let hooksPath = "";
@@ -173,12 +200,12 @@ export async function gradeFullSddCompliance(repo: string, taskId: string, start
   if (downgrades > 0) issues.push({ code: "eval-downgraded", path: ".", message: `SDD was downgraded ${downgrades} time(s)` });
   const sddWorks = new Set(commits.filter((commit) => commit.trailers.work && commit.trailers.phase).map((commit) => commit.trailers.work));
   const closed = new Set(audit.checkpoints.filter((checkpoint) => checkpoint.kind === "certification" && checkpoint.phase === "close").map((checkpoint) => checkpoint.work));
-  const fullSddCompleted = closed.has(taskId);
-  if (!fullSddCompleted) issues.push({ code: "eval-sdd-not-closed", path: ".", message: `No SDD work ${taskId} was certified through close` });
+  if (!closed.has(taskId)) issues.push({ code: "eval-sdd-not-closed", path: ".", message: `No SDD work ${taskId} was certified through close` });
+  const compliant = issues.length === 0;
   return {
     applicable: true,
-    compliant: issues.length === 0,
-    fullSddCompleted,
+    compliant,
+    fullSddCompleted: compliant && closed.has(taskId),
     sddWorksStarted: sddWorks.size,
     sddWorksClosed: closed.size,
     downgrades,
