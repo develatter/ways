@@ -1,6 +1,6 @@
 # ways
 
-A minimal, agent-agnostic development harness with Git-backed workflows, deterministic SDD gates, and living OKF v0.2 memory.
+A minimal, agent-agnostic development harness with Git-backed workflows, outcome-driven delivery with verifiable evidence, and living OKF v0.2 memory.
 
 > The core workflow, mechanical enforcement, human approvals and digest-bound reviews are implemented and tested. See the [roadmap](docs/ROADMAP.md) for planned milestones.
 
@@ -11,7 +11,7 @@ Long-running coding agents tend to lose state, skip process, perform unnecessary
 - **Git** is the immutable work log.
 - **OKF memory** describes the repository as it exists now.
 - **Explicit modes** let the engineer choose the required ceremony.
-- **Deterministic gates** prevent SDD phases from being skipped.
+- **Outcome evidence** constrains what must be true when work finishes, not how the agent reasons.
 - **Portable agent archetypes** keep the core independent of any provider.
 
 ## Requirements
@@ -55,18 +55,19 @@ You never need the CLI: you talk to your coding agent and it drives `ways` for y
 | Know where things stand | `/ways-status` | The agent reads `.ways/status.json` and reports mode, work, phase, gate |
 | Ask about the code or memory | `/ways-query token rotation` | Read-only search, no state, no commit |
 | A small change | `/ways-quick button-spacing fix the padding` | Opens quick work, implements, runs `scripts/check.sh`, commits once |
-| A change worth a proposal | `/ways-plan auth-refresh` | Writes and commits a plan; you decide execute, promote or abandon |
-| A long delivery | `/ways-sdd auth-refresh --supervised --delegated` | Phased delivery with certified gates; delegated means subagents implement |
+| A change worth a proposal | `/ways-plan auth-refresh` | Writes and commits a plan; you decide execute, escalate or abandon |
+| A delivery (default) | `/ways-outcome auth-refresh refresh tokens before expiry` | Opens outcome work with fixed criteria, executes through tasks, evaluates checks and evidence, independent review, close |
+| Legacy phased delivery (deprecated) | `/ways-sdd auth-refresh --supervised --delegated` | Only to finish active SDD work or when you explicitly want SDD |
 
 Plain language works too: "fix the padding on the button" makes the agent open a quick work, because commits outside a work are rejected by the hook. During a work, ask the agent to advance, finish or cancel; those are agent actions, not commands you run.
 
-Supervised SDD stops at intake, plan and close until you approve in your own terminal:
+Outcome work opened with `--approvals=close` (or `close,remediate`), and legacy supervised SDD, stop at their gates until you approve in your own terminal:
 
 ```bash
 npx ways approve
 ```
 
-It shows the work, phase, gate and content digest, asks you to type the phase name, and writes an approval that dies if anything changes afterwards. Agents cannot run it: it refuses without a TTY.
+It shows the work, checkpoint or phase, gate and content digest, asks you to type its name, and writes an approval that dies if anything changes afterwards. Agents cannot run it: it refuses without a TTY.
 
 If something looks wrong, `npx ways status`, `npx ways check` and `npx ways repair diagnose` explain the state without changing it.
 
@@ -77,17 +78,22 @@ If something looks wrong, `npx ways status`, `npx ways check` and `npx ways repa
 | `query` | Read-only exploration and memory search | None |
 | `quick` | Small direct change | State during work, checks, one final commit |
 | `plan` | Versioned proposal that can execute, promote, or be abandoned | Proposed plan until resolved |
-| `sdd` | Strict phased delivery, inline or multiagent | State, gates, tasks, review, validation |
+| `outcome` (default) | Delivery constrained by criteria, evidence and checks | Immutable spec, tasks, evaluation, review per policy |
+| `sdd` (deprecated) | Strict phased delivery, kept for existing work and audit | State, gates, tasks, review, validation |
 
 ```bash
 npx ways query "token rotation"
 npx ways quick start button-spacing
 npx ways plan start auth-refresh
-npx ways sdd start auth-refresh --supervised
+npx ways outcome open auth-refresh --goal="Refresh tokens" --criterion="AC1:tokens refresh before expiry"
 npx ways status
 ```
 
-## SDD lifecycle
+New work uses the outcome workflow; see [decision 0001](docs/decisions/0001-outcome-default.md) for the trade-offs and the evidence behind it.
+
+## SDD lifecycle (deprecated)
+
+SDD is deprecated for new work: `ways sdd start` and `ways plan promote` still work but print a notice pointing to `ways outcome open`. Active SDD work completes under its original workflow and assurance policies, and every SDD verifier below stays in place for historical audit.
 
 ```text
 intake → explore → assess → specify → plan → decompose
@@ -102,9 +108,9 @@ Parallel tasks run in isolated worktrees. The core creates task packets and inte
 
 Supervised profile (`--supervised`) opens the work with a traced commit that fixes the profile in Git, and adds human gates at intake, plan and close. The way through is `ways approve`, run by the human in a real terminal: it refuses without a TTY, shows the gate and digest, asks for the phase name to be typed, and writes `.ways/sdd/<id>/approvals/<phase>.json` bound to work, phase, gate commit and content digest. The gate, the commit-msg hook and the provider guard all verify that binding; there is no flag an agent can pass, flipping the profile on disk is rejected, and any edit after approval invalidates it. Validation failure records likewise bind an immutable input commit/tree and digest. Every verifier re-runs the recorded checks in a fresh detached worktree at that input and rejects a result that does not reproduce; it never switches the caller's worktree to historical content. What remains unverifiable locally is authorship: an actor with unrestricted shell access can fabricate a record only when it describes a failure that the replay also observes. These checks establish Git linkage and reproducible results, not the identity of a local author.
 
-## Outcome workflow (experimental)
+## Outcome workflow (default)
 
-An opt-in alternative to SDD that constrains results instead of reasoning steps. SDD stays the default.
+The default for new work: it constrains results instead of reasoning steps. Exploration, planning and decomposition are optional capabilities (`ways plan`, task dependencies, the explorer role), never mandatory states.
 
 ```text
 open → execute → evaluate → close
@@ -186,7 +192,7 @@ Compliance does not depend on the agent obeying its prompt:
 
 ## Provider adapters
 
-`assets/adapters/` is the canonical source: five commands, five roles (explorer, implementer, reviewer, qa, sweeper) with prompts of at most six lines, a statusline script, and a commit guard. The orchestrator is not a subagent: it is the main agent the human talks to, instructed by `AGENTS.md`. Bootstrap renders every registered provider from that source; `ways adapter install <provider> [--force]` regenerates one. Rendered files are hashed in the manifest, verified by integrity, and re-rendered by `ways upgrade` after checklist approval.
+`assets/adapters/` is the canonical source: seven commands (status, query, quick, plan, outcome, deprecated sdd, memory), five roles (explorer, implementer, reviewer, qa, sweeper) with prompts of at most six lines, a statusline script, and a commit guard. The orchestrator is not a subagent: it is the main agent the human talks to, instructed by `AGENTS.md`. Bootstrap renders every registered provider from that source; `ways adapter install <provider> [--force]` regenerates one. Rendered files are hashed in the manifest, verified by integrity, and re-rendered by `ways upgrade` after checklist approval.
 
 Each adapter follows the provider's current official documentation. Every one ships the same guard script fed with JSON on stdin: it blocks `git commit` without an active work and blocks main-worktree production writes during delegated implementation, review, and validation.
 
@@ -205,7 +211,7 @@ Provider notes: Codex and Cursor only load project hooks in trusted projects, an
 
 `ways context [--json]` prints a resumable packet for a fresh session (`schemaVersion: 1`): HEAD, the active work (mode, stage or phase, attempt, profile, uncommitted paths, and the recorded remediation on later attempts), its tasks with the ones genuinely ready (every dependency completed and its commits reachable from HEAD), every outcome in the repository with its status (`open`, `closed`, `cancelled`, `incomplete`), and links (path and title) to relevant OKF concepts. For outcome work it adds the committed goal and criteria, per-criterion evidence (`missing`/`filled`) and evaluation (`absent`, `stale` when anything close would refuse changed since the evaluated input, including evidence edited after evaluation, `passed`, `failed`), the review status (`absent`, `invalid`, `stale` on digest mismatch, `pass`, `fail`) and the remaining blockers. An idle repository yields `active: null`. Context never writes anything, contains no wall-clock time, and reports `divergence` from the same checks as `ways repair diagnose` instead of failing.
 
-Upgrades compare managed-file hashes and never overwrite modified files without checklist approval.
+Upgrades compare managed-file hashes and never overwrite modified files without checklist approval. `ways upgrade` also reports the active work: an active SDD work is allowed to continue under its original workflow, while unreadable or Git-divergent state makes the plan exit 1 and `--apply` refuse until `ways repair diagnose` is resolved. Applying only re-renders managed files and adapters, never rewrites certifications, approvals, reviews or remediation history, and re-applying it changes nothing.
 
 ## Harness evals
 

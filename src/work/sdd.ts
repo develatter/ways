@@ -15,6 +15,13 @@ import { assertReviewPassed } from "./review.js";
 import { assertDelegatedCertificationTree, assertDelegatedImplementation } from "./tasks.js";
 import { committedValidationFailureFailure, validationFailureCommit } from "./validation-failure.js";
 
+/**
+ * Outcome work is the default for new work (docs/decisions/0001-outcome-default.md).
+ * Starting SDD still works; existing SDD work and its history keep their original
+ * workflow, assurance policies and verifiers.
+ */
+export const SDD_DEPRECATION = "Deprecated: SDD is kept for existing work and historical audit. Open new work with `ways outcome open <id> --goal=<text> --criterion=<ID>:<text>` (or `ways quick start <id>` for a small change).";
+
 function phasePath(state: WorkState, phase: SddPhase): string {
   return attemptPhasePath(state.id, state.attempt, phase);
 }

@@ -1,5 +1,5 @@
 ---
-description: Versioned plan proposal that can be executed, promoted to SDD, or abandoned
+description: Versioned plan proposal that can be executed, escalated, or abandoned
 usage: <id> [goal]
 ---
-Run `npx ways plan start <id>` with the first word of `$ARGUMENTS` as the slug. Fill `.ways/plans/<id>.md` with goal, numbered steps and acceptance, then run `npx ways plan propose` and ask the human how to proceed. To execute: implement the steps, assess durable semantic impact progressively, use {{command:memory}} for any separately reviewed memory commit, run `scripts/check.sh`, then `npx ways plan finish --message="<subject>"`. To promote: `npx ways plan promote [--supervised]` and continue as {{command:sdd}}. To drop: `npx ways plan abandon`.
+Run `npx ways plan start <id>` with the first word of `$ARGUMENTS` as the slug. Fill `.ways/plans/<id>.md` with goal, numbered steps and acceptance, then run `npx ways plan propose` and ask the human how to proceed. To execute: implement the steps, assess durable semantic impact progressively, use {{command:memory}} for any separately reviewed memory commit, run `scripts/check.sh`, then `npx ways plan finish --message="<subject>"`. To escalate: abandon the plan and open {{command:outcome}}; only when the human asks for deprecated SDD, run `npx ways plan promote [--supervised]` and continue as {{command:sdd}}. To drop: `npx ways plan abandon`.

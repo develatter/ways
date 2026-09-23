@@ -17,7 +17,7 @@ import { startSdd } from "../src/work/sdd.js";
 import { prepareTask } from "../src/work/tasks.js";
 
 const ROLES = ["explorer", "implementer", "reviewer", "qa", "sweeper"];
-const COMMANDS = ["status", "query", "quick", "plan", "sdd", "memory"];
+const COMMANDS = ["status", "query", "quick", "plan", "outcome", "sdd", "memory"];
 
 async function repository(): Promise<{ cwd: string; git: GitRepository }> {
   const cwd = await mkdtemp(join(tmpdir(), "ways-adapter-"));
