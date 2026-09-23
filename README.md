@@ -118,22 +118,38 @@ npx ways task integrate write --commits=<sha>
 # map every criterion in .ways/outcomes/greeting/attempts/0/evidence.json
 npx ways outcome evaluate        # runs the configured checks against the executed input
 npx ways outcome remediate --reason=<text>  # new attempt after a recorded failure or blocking review
-npx ways review digest           # an independent reviewer binds a review to this digest
+npx ways review digest           # an independent reviewer binds a review to this digest (skipped with --evaluation=self)
 npx ways review submit review.json
 npx ways outcome close
 ```
 
-The goal and stable criterion identifiers are committed at open and cannot change afterwards. The first slice uses a fixed conservative policy: production changes arrive only through integrated task worktrees, `evaluate` refuses missing criterion evidence or failing checks, and `close` refuses without a passing, fresh, digest-bound review. The commit hook, `ways check --history`, `ways status` and `ways repair diagnose` all understand the workflow and reject skipped transitions, direct commits and forged or tampered evidence.
+The goal and stable criterion identifiers are committed at open and cannot change afterwards. By default, production changes arrive only through integrated task worktrees; `evaluate` refuses missing criterion evidence or failing checks, and `close` enforces the evaluation policy described below. The commit hook, `ways check --history`, `ways status` and `ways repair diagnose` all understand the workflow and reject skipped transitions, direct commits and forged or tampered evidence.
+
+Execution policies are chosen at open and stored in the immutable spec, so the opening commit binds them to Git and later disk or commit edits cannot weaken them. Specs without these fields read as the defaults:
+
+- `--isolation=required` (default): production changes arrive only through integrated task worktrees; whoever implements, the main agent included, works there. `--isolation=optional` also accepts traced direct commits (`Harness-Work`, no task) during execute; a task trailer still has to be backed by an integrated task.
+- `--parallel=allowed` (default): several tasks may be prepared at once. `--parallel=disabled`: `ways task prepare` refuses while another task of the work is prepared but not integrated, and `ways repair diagnose` flags a state holding two.
+
+Tasks are scheduled as their dependencies complete; there is no decomposition phase or orchestrator-only role. The commit hook, `evaluate`, `close`, `ways check --history` and the provider guard (which blocks main-worktree writes during execute only when isolation is required) apply the same policy.
 
 `evaluate` runs the environment check contract of the executed input (the named `commands` of `.ways/config.json`, or the legacy `testCommand`) through the same runner as `ways check` and SDD validation, prints each named result, and writes to `attempts/<n>/evaluation.json` the contract it ran, every named result and a digest of the criterion evidence. Every required check must pass: a failing, timed-out or unavailable one blocks completion even when the evidence claims every criterion is met. Close, the commit hook and the history audit verify that the recorded contract is still the input tree's configuration, that its results satisfy it and that the evidence is unchanged; changed commands, implementation or evidence need a new evaluation.
 
 Remediation is additive. A failing `evaluate` commits a replayable check-failure record for the attempt; a blocking review stays pending. `ways outcome remediate --reason=<text>` then opens attempt n+1 from that evidence, and the attempt needs new tasks, its own evaluation and a fresh review. Artifacts of earlier attempts are immutable, and the hook and the history audit reject forged failures, remediations and rewrites.
+
+Evaluation assurance is chosen at open with `--evaluation=independent|self` (default `independent`) and stored in the immutable spec as `policy.independentEvaluation` (`required` or `optional`; specs without it read as `required`). Close, the commit hook and `ways check --history` read it from the committed spec, so editing the state or the spec after open cannot weaken it; a spec that changed after opening blocks close.
+
+- `independent`: close requires a review of this work and attempt whose digest binds the evaluated increment (its code, evidence, evaluation and the committed goal and criteria), with no blocking findings, by a reviewer who is not a known implementer. A review replayed from another attempt or input is stale.
+- `self`: close needs no review, but still requires the passing evaluation, complete criterion evidence and checks that pass again at close. A review that is recorded anyway must still bind and pass.
+
+Provenance is honest, not cryptographic. The known implementers are the Git author and committer names and emails of the increment's task commits (and direct commits under optional isolation); `review submit`, close, the hook and the history audit reject a reviewer string equal to one of them (case-insensitive, also written as `Name <email>`). Git identities and the reviewer field are self-asserted: the check catches an agent reviewing its own work under its configured identity, not an impostor who picks another name, and it never proves who wrote a review. Stronger identity channels are future work.
 
 Memory assurance is chosen at open with `--memory=none|normal|high` (default `normal`) and stored in the immutable spec; there is no blanket reconciliation phase:
 
 - `none`: the increment must not change `.ways/knowledge/`; evaluate and close refuse it.
 - `normal`: relevant sourced knowledge updates travel in task commits like any other change. The evaluation's integrity checks enforce OKF validity, sources and indexes; no separate memory review or commit is needed.
 - `high`: close also requires a passing memory review bound to `ways outcome memory-review digest` (the evaluated input plus its exact knowledge diff), recorded with `ways outcome memory-review submit review.json`. A missing, blocking or stale memory review blocks close, the hook and the history audit.
+
+Human approvals are chosen at open with `--approvals=none|close|close,remediate` (default `none`; specs without the field read as none) and stored in the immutable spec. There are no mandatory planning gates; the supported checkpoints are the externally meaningful transitions `close` and `remediate`. At a gated checkpoint the human runs `ways approve [close|remediate]` in their own terminal: like SDD approvals it refuses without a TTY and asks for the checkpoint name to be typed, then writes `.ways/outcomes/<id>/approvals/<attempt>/<checkpoint>.json` bound to work, checkpoint, attempt, the committed input and the reviews the transition records. The transition commits that approval; editing a review afterwards, moving HEAD, reusing an approval from another attempt or checkpoint, or editing the spec to drop the policy (the policy is always read from the opening commit) leaves the gate closed. `ways status` and `ways context` name the exact `ways approve` command still required, and the hook and history audit reject gated transitions without a matching approval. Tool writes under `approvals/` are blocked by the guard.
 
 Progress belongs in the outcome's evidence, never in knowledge. Legacy SDD reconcile-memory, `ways memory commit` and release reconciliation keep their original semantics.
 

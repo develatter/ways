@@ -30,13 +30,27 @@ export interface OutcomeCriterion {
 export type MemoryTier = "none" | "normal" | "high";
 export const MEMORY_TIERS: readonly MemoryTier[] = ["none", "normal", "high"];
 
-/** The conservative policy of an outcome work, fixed when it opens. */
+/** Externally meaningful outcome transitions a human may gate. */
+export type OutcomeCheckpoint = "close" | "remediate";
+export const OUTCOME_CHECKPOINTS: readonly OutcomeCheckpoint[] = ["close", "remediate"];
+
+/** Whether production changes must arrive through integrated task worktrees. */
+export type IsolationPolicy = "required" | "optional";
+/** Whether several tasks of one work may be prepared at the same time. */
+export type ParallelPolicy = "allowed" | "disabled";
+
+/** The policy of an outcome work, fixed when it opens. */
 export interface OutcomePolicy {
-  isolation: "required";
-  independentEvaluation: "required";
+  isolation: IsolationPolicy;
+  /** required (`--evaluation=independent`, the default) or optional (`--evaluation=self`); absent reads as required. */
+  independentEvaluation?: "required" | "optional";
   checks: "configured";
   /** Absent in specs opened before memory tiers existed; read as normal. */
   memory?: MemoryTier;
+  /** Absent in specs opened before parallelism policies existed; read as allowed. */
+  parallel?: ParallelPolicy;
+  /** Transitions that need interactive human approval; absent means none. */
+  approvals?: OutcomeCheckpoint[];
 }
 
 /** Immutable goal and acceptance criteria committed when an outcome work opens. */

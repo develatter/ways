@@ -9,6 +9,8 @@ import { attemptNumber, attemptPhasePath, attemptReviewPath, isPriorAttemptArtif
 import { remediationEvidenceFailure } from "../work/remediation.js";
 import { validationFailureRecordFailure, validationFailureReplayFailure } from "../work/validation-failure.js";
 import { committedMismatch } from "../work/sdd.js";
+import { indexReader, outcomeApprovalFailure } from "../work/outcome-approvals.js";
+import { committedExecutionPolicy } from "../work/outcome-policy.js";
 import { attemptFailureCommit, closeCommitExtraPaths, isPriorOutcomeArtifact, OUTCOME_PHASES, OUTCOME_STATES, outcomeCheckFailurePath, outcomeCloseFailure, outcomeEvaluationPath, outcomeEvidencePath, outcomeMemoryReviewPath, outcomeReviewPath, remediationContentFailure } from "../work/outcome.js";
 
 export interface HookVerdict {
@@ -126,7 +128,7 @@ async function headHasManifest(git: GitRepository): Promise<boolean> {
   }
 }
 
-/** Isolation is required: outside its own transitions, an outcome work only accepts integrated task commits. */
+/** Outside its own transitions, an outcome work accepts task commits, and traced direct commits when isolation is optional. */
 async function outcomeCommitFailure(git: GitRepository, active: WorkState, trailers: ReturnType<typeof parseTrailers>): Promise<string | undefined> {
   if (trailers.phase === OUTCOME_PHASES.open) {
     if (trailers.state !== "opened") return "opening commits carry Harness-State: opened";
@@ -157,7 +159,8 @@ async function outcomeCommitFailure(git: GitRepository, active: WorkState, trail
     }
     if (remediating) {
       if (attempt < 1 || !active.remediation || active.remediation.attempt !== attempt) return "remediation trailers do not match the active attempt";
-      return remediationContentFailure(git, active.id, attempt, await git.head(), "");
+      return await remediationContentFailure(git, active.id, attempt, await git.head(), "")
+        ?? await outcomeApprovalFailure(git, active.id, "remediate", attempt - 1, await git.head(), indexReader(git));
     }
     return "unknown evaluate transition";
   }
@@ -173,7 +176,8 @@ async function outcomeCommitFailure(git: GitRepository, active: WorkState, trail
   }
   if (active.stage !== "execute") return "the evaluated increment is frozen; close it or cancel the work";
   if (await attemptFailureCommit(git, active.id, attempt)) return `attempt ${attempt} has a recorded evaluation failure; run ways outcome remediate --reason=<text> first`;
-  return trailers.task ? undefined : "isolation is required; commit in a task worktree (ways task prepare) and integrate it";
+  if (trailers.task || (await committedExecutionPolicy(git, active.id)).isolation === "optional") return undefined;
+  return "isolation is required; commit in a task worktree (ways task prepare) and integrate it";
 }
 
 export async function judgeCommitMessage(cwd: string, message: string): Promise<HookVerdict> {
@@ -260,6 +264,8 @@ export async function judgeCommitMessage(cwd: string, message: string): Promise<
         const failure = await outcomeCloseFailure(git, closing.id, await git.head(), await staged(outcomeReviewPath(closing.id, closing.attempt)),
           closing.attempt ?? 0, await staged(outcomeMemoryReviewPath(closing.id, closing.attempt)));
         if (failure) return { accepted: false, reason: `Close of outcome ${closing.id} refused: ${failure}` };
+        const approval = await outcomeApprovalFailure(git, closing.id, "close", closing.attempt ?? 0, await git.head(), indexReader(git));
+        if (approval) return { accepted: false, reason: `Close of outcome ${closing.id} refused: ${approval}` };
       }
       if (trailers.phase === "close" && requiresApproval({ ...closing, phase: "close" })) {
         const failure = await deletedApprovalFailure(git, closing);

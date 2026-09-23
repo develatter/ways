@@ -178,6 +178,25 @@ describe("outcome evaluation against the environment check contract", () => {
     expect(issues.find((issue) => issue.code === "history-invalid-outcome-evidence")?.message).toMatch(/criterion evidence changed after evaluation/);
   });
 
+  it("refuses close when the configured commands change after evaluation", async () => {
+    const { cwd, git } = await repository();
+    await openOutcome(cwd, "hello", "Say hello", CRITERIA);
+    await executeTask(cwd, "hello\n");
+    await writeEvidence(cwd);
+    await evaluateOutcome(cwd);
+    await review(cwd);
+    const configPath = join(cwd, ".ways", "config.json");
+    const config = JSON.parse(await readFile(configPath, "utf8")) as { commands: NamedChecksConfig };
+    config.commands.required = ["test"];
+    await writeFile(configPath, JSON.stringify(config, null, 2));
+    await expect(closeOutcome(cwd)).rejects.toThrow(/need a new evaluation: \.ways\/config\.json/);
+    // Committing the change behind the harness does not help: the evaluation no longer certifies HEAD.
+    await git.run(["add", ".ways/config.json"]);
+    await git.run(["commit", "-q", "--no-verify", "-m", "relax checks", "-m", "Harness-Work: hello"]);
+    await expect(closeOutcome(cwd)).rejects.toThrow();
+    expect((await loadState(cwd))?.stage).toBe("evaluate");
+  });
+
   it("requires every required check of the contract to pass with the contract's command", () => {
     const contract = { testCommand: node("process.exit(0)"), commands: COMMANDS };
     const passed = (name: "test" | "lint" | "typecheck") => ({ name, status: "passed" as const, command: COMMANDS[name]!, exitCode: 0 });

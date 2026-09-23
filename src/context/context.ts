@@ -10,6 +10,7 @@ import { diagnose } from "../repair/repair.js";
 import { loadState } from "../state/store.js";
 import { OUTCOME_PHASES, outcomeDigest, outcomeEvaluationPath, outcomeEvidencePath, outcomeOpenCommit, outcomeReviewPath, outcomeSpecPath } from "../work/outcome.js";
 import { reviewBlocks } from "../work/review.js";
+import { outcomeApprovalPath, outcomeApprovalStatus } from "../work/outcome-approvals.js";
 
 /**
  * A resumable, read-only packet of operational facts. Every field is derived
@@ -161,7 +162,7 @@ async function outcomeContext(cwd: string, git: GitRepository, state: WorkState,
       // afterwards only state, status and the review may be dirty. Anything else needs a new evaluation.
       const certification = head !== input && await tryRun(git, ["rev-parse", `${head}^`]).then((parent) => parent?.trim() === input);
       const committedAllowed = new Set(certification ? [STATE_PATH, STATUS_PATH, evidencePath, evaluationPath] : []);
-      const dirtyAllowed = new Set([STATE_PATH, STATUS_PATH, reviewPath]);
+      const dirtyAllowed = new Set([STATE_PATH, STATUS_PATH, reviewPath, outcomeApprovalPath(state.id, attempt, "close"), outcomeApprovalPath(state.id, attempt, "remediate")]);
       changedSinceInput = [...new Set([
         ...diff.split("\n").filter((path) => path && !committedAllowed.has(path)),
         ...uncommitted.filter((path) => !dirtyAllowed.has(path)),
@@ -211,6 +212,10 @@ async function outcomeContext(cwd: string, git: GitRepository, state: WorkState,
   if (missing.length > 0) blockers.push(`criteria without evidence: ${missing.join(", ")}`);
   if (evaluationStatus !== "passed") blockers.push(`evaluation ${evaluationStatus}${changedSinceInput.length > 0 ? ` (changed since input: ${changedSinceInput.join(", ")})` : ""}`);
   if (review.status !== "pass") blockers.push(`review ${review.status}`);
+  for (const approval of (await outcomeApprovalStatus(cwd, state)).checkpoints) {
+    // Close approval blocks close; a remediate approval blocks the only way forward after a recorded failure.
+    if (approval.status === "required" && (approval.checkpoint === "close" || state.stage === "execute")) blockers.push(`human approval of ${approval.checkpoint} required: ${approval.action}`);
+  }
 
   return {
     goal: typeof spec?.goal === "string" ? spec.goal : null,
