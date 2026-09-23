@@ -39,10 +39,22 @@ describe("reproducible eval runner", () => {
     }
   });
 
+  it("parses observable adapter metrics and rejects invalid values", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "ways-eval-metrics-"));
+    const execute = (metrics: string) => commandAdapter(process.execPath, ["-e", `process.stdout.write(JSON.stringify({doneClaim:true,metrics:${metrics}})+'\\n')`]).run({ task: { id: "m", description: "m", setup: [], prompt: "run", success: [], regressions: [] }, repo, prompt: "run", session: "initial", harness: "full-sdd", model: "test", startingRevision: "fixture", seed: 0, maxOutputBytes: 1024, signal: new AbortController().signal });
+    try {
+      expect((await execute("{toolCalls:4,contextCompactions:null,humanInterventions:0}")).metrics).toEqual({ toolCalls: 4, contextCompactions: null, humanInterventions: 0 });
+      expect((await execute("{toolCalls:-1}")).error).toBe("adapter JSON metrics are invalid");
+      expect((await execute("{tokens:3}")).error).toBe("adapter JSON metrics are invalid");
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
   it("emits machine-readable CLI output and rejects non-A/B labels", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "ways-eval-cli-"));
     expect(await run(["evals", "run", "--adapter=fake", "--output=result.json"], cwd)).toBe(0);
-    expect(JSON.parse(await readFile(join(cwd, "result.json"), "utf8"))).toMatchObject({ schemaVersion: 1, evidence: { architecturalBenchmark: false } });
-    await expect(run(["evals", "run", "--harness=unknown"], cwd)).rejects.toThrow("no-ways or checks-only");
+    expect(JSON.parse(await readFile(join(cwd, "result.json"), "utf8"))).toMatchObject({ schemaVersion: 2, evidence: { kind: "fixture", architecturalBenchmark: false } });
+    await expect(run(["evals", "run", "--harness=unknown"], cwd)).rejects.toThrow("no-ways, checks-only, full-sdd");
   });
 });
