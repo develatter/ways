@@ -128,7 +128,10 @@ async function headHasManifest(git: GitRepository): Promise<boolean> {
 
 /** Isolation is required: outside its own transitions, an outcome work only accepts integrated task commits. */
 async function outcomeCommitFailure(git: GitRepository, active: WorkState, trailers: ReturnType<typeof parseTrailers>): Promise<string | undefined> {
-  if (trailers.phase === OUTCOME_PHASES.open) return trailers.state === "opened" ? undefined : "opening commits carry Harness-State: opened";
+  if (trailers.phase === OUTCOME_PHASES.open) {
+    if (trailers.state !== "opened") return "opening commits carry Harness-State: opened";
+    return await headState(git) ? "the work is already open" : undefined;
+  }
   if (trailers.phase === OUTCOME_PHASES.execute) {
     if (trailers.state !== "completed" || active.stage !== "evaluate") return "execution is certified only by ways outcome evaluate";
     try {

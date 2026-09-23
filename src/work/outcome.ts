@@ -117,9 +117,10 @@ export async function outcomeOpenCommit(git: GitRepository, workId: string, ref 
   return commit.trailers.work === workId && commit.trailers.phase === OUTCOME_PHASES.open && commit.trailers.state === "opened" ? commit : undefined;
 }
 
-/** Only integrated task commits may carry production changes when isolation is required. */
-function isolationFailure(commits: readonly CommitInfo[], workId: string): string | undefined {
-  const direct = commits.find((commit) => commit.trailers.work !== workId || !commit.trailers.task);
+/** Only commits the harness integrated from task worktrees may carry production changes when isolation is required. */
+function isolationFailure(commits: readonly CommitInfo[], workId: string, state: unknown): string | undefined {
+  const integrated = new Set(validateState(state) ? state.tasks.flatMap((task) => task.commits) : []);
+  const direct = commits.find((commit) => commit.trailers.work !== workId || !commit.trailers.task || !integrated.has(commit.hash));
   return direct ? `commit ${direct.hash.slice(0, 12)} "${direct.subject}" was not integrated from an isolated task` : undefined;
 }
 
@@ -149,7 +150,7 @@ export async function outcomeCloseFailure(git: GitRepository, workId: string, ex
   if (evaluation.passed !== true) return "evaluation did not pass";
   const cited = citedCheckFailure(evidence as OutcomeEvidence, evaluation);
   if (cited) return cited;
-  const isolation = isolationFailure(await commitsBetween(git, open.hash, input), workId);
+  const isolation = isolationFailure(await commitsBetween(git, open.hash, input), workId, await showJson(git, executeCommit, STATE_PATH));
   if (isolation) return isolation;
   if (!validateReview(review)) return "an independent review is required";
   if (review.workId !== workId || (review.attempt ?? 0) !== attempt || !review.reviewer.trim()) return "review does not belong to this work and attempt";
@@ -252,7 +253,7 @@ export async function evaluateOutcome(cwd: string): Promise<{ commit: string; ev
   const pending = state.tasks.filter((task) => task.status !== "completed").map((task) => task.id);
   if (pending.length > 0) throw new Error(`Every task must be integrated before evaluation: ${pending.join(", ")}`);
   const open = (await outcomeOpenCommit(git, state.id))!;
-  const isolation = isolationFailure(await commitsBetween(git, open.hash, "HEAD"), state.id);
+  const isolation = isolationFailure(await commitsBetween(git, open.hash, "HEAD"), state.id, state);
   if (isolation) throw new Error(`Isolation is required: ${isolation}`);
   const allowed = new Set([STATE_PATH, STATUS_PATH, outcomeEvidencePath(state.id, attempt)]);
   const unrelated = (await dirtyPaths(git)).filter((path) => !allowed.has(path));
@@ -327,6 +328,10 @@ export async function closeOutcome(cwd: string): Promise<string> {
   }
   const failure = await outcomeCloseFailure(git, state.id, await git.head(), review, attempt);
   if (failure) throw new Error(`Close refused: ${failure}`);
+  // The evaluated tree is still HEAD's; re-running the checks means a hand-written evaluation cannot close failing work.
+  const checks = await runChecks(cwd);
+  const failing = [...checks.issues.map((issue) => `${issue.code}: ${issue.path}`), ...failedCheckDetails(checks), ...(!checks.checks && checks.testExitCode !== 0 ? [`test: exit code ${checks.testExitCode}`] : [])];
+  if (failing.length > 0) throw new Error(`Close refused: checks fail on the evaluated input:\n${failing.join("\n")}`);
   for (const task of state.tasks) {
     if (task.worktree) await git.run(["worktree", "remove", "--force", task.worktree]).catch(() => undefined);
     if (task.branch) await git.run(["branch", "-D", task.branch]).catch(() => undefined);

@@ -143,3 +143,29 @@ describe("outcome workflow", () => {
     expect(await checkHistory(cwd)).toEqual([]);
   });
 });
+
+describe("outcome review fixes", () => {
+  it("rejects a forged task trailer that was never integrated", async () => {
+    const { cwd, git } = await repository();
+    await openOutcome(cwd, "hello", "Say hello", CRITERIA);
+    await executeTask(cwd);
+    await writeFile(join(cwd, "bogus.txt"), "direct\n");
+    await git.commit(["bogus.txt"], "bogus", { work: "hello", task: "bogus" });
+    await writeEvidence(cwd);
+    await expect(evaluateOutcome(cwd)).rejects.toThrow(/not integrated from an isolated task/);
+  });
+
+  it("re-runs checks at close and refuses a re-opening transition", async () => {
+    const { cwd, git } = await repository("process.exit(require('node:fs').existsSync('fail') ? 1 : 0)");
+    await openOutcome(cwd, "hello", "Say hello", CRITERIA);
+    await expect(git.run(["commit", "-q", "--allow-empty", "-m", "reopen", "-m", "Harness-Work: hello\nHarness-Phase: outcome-open\nHarness-State: opened"])).rejects.toThrow(/already open/);
+    await executeTask(cwd);
+    await writeEvidence(cwd);
+    await evaluateOutcome(cwd);
+    await review(cwd);
+    // An ignored file flips the configured check without changing the evaluated tree.
+    await writeFile(join(cwd, ".git", "info", "exclude"), "fail\n");
+    await writeFile(join(cwd, "fail"), "");
+    await expect(closeOutcome(cwd)).rejects.toThrow(/checks fail on the evaluated input/);
+  });
+});
