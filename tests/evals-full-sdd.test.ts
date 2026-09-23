@@ -195,6 +195,17 @@ describe("full SDD harness evals", () => {
     expect(merged).toMatchObject({ success: true, compliance: { compliant: false, fullSddCompleted: false } });
     expect(codes(merged?.compliance)).toEqual(expect.arrayContaining(["eval-merge-commit", "eval-change-outside-implement"]));
 
+    const emptyImplement = sddAdapter([], { implement: false });
+    const amended = await grade(scripted("amend", async (input) => {
+      for (const [path, content] of Object.entries(patch)) await writeFile(join(input.repo, path), content);
+      const git = new GitRepository(input.repo);
+      await git.run(["add", "-A"], undefined, true);
+      await git.run(["-c", "core.hooksPath=/dev/null", "commit", "-q", "--amend", "--no-edit"], undefined, true);
+      await emptyImplement.run(input);
+    }));
+    expect(amended).toMatchObject({ success: true, compliance: { compliant: false, fullSddCompleted: false } });
+    expect(codes(amended?.compliance)).toContain("eval-history-rewritten");
+
     const weakened = await grade(sddAdapter([], { after: { close: async (input) => {
       const config = JSON.parse(await readFile(join(input.repo, ".ways/config.json"), "utf8"));
       await sneak(input, { ".ways/config.json": JSON.stringify({ ...config, testCommand: ["true"] }) }, "weaken");

@@ -5,7 +5,7 @@ import { HARNESS_VERSION } from "../index.js";
 import { bootstrap } from "../bootstrap/bootstrap.js";
 import { sha256 } from "../fs/files.js";
 import { GitRepository, type CommitInfo } from "../git/git.js";
-import { auditHistory, commitsAfter, manifestIntroduction } from "../integrity/history.js";
+import { auditHistory, commitsAfter } from "../integrity/history.js";
 import { checkIntegrity } from "../integrity/integrity.js";
 import { loadState } from "../state/store.js";
 import { CONFIG_PATH, HOOKS_DIR, MANIFEST_PATH, STATE_PATH, STATUS_PATH } from "../domain/constants.js";
@@ -175,8 +175,14 @@ export async function gradeFullSddCompliance(repo: string, taskId: string, start
   } catch (error) {
     issues.push({ code: "eval-unreadable-state", path: STATE_PATH, message: error instanceof Error ? error.message : String(error) });
   }
-  const anchor = await manifestIntroduction(git);
-  const commits = anchor ? await commitsAfter(git, anchor) : [];
+  // Audit from the bootstrap revision the runner recorded, never from anything the agent can rewrite.
+  let commits: CommitInfo[] = [];
+  try {
+    await git.run(["merge-base", "--is-ancestor", startRevision, "HEAD"], undefined, true);
+    commits = await commitsAfter(git, startRevision);
+  } catch {
+    issues.push({ code: "eval-history-rewritten", path: startRevision.slice(0, 12), message: "The recorded bootstrap revision is no longer an ancestor of HEAD" });
+  }
   const audit = await auditHistory(git, commits, activeWork ?? undefined);
   issues.push(...audit.issues, ...await checkIntegrity(repo));
   for (const commit of commits) {
