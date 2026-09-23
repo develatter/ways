@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "workId": "issue-5-full-sdd-evals",
+  "attempt": 7,
+  "reviewer": "ways-reviewer",
+  "digest": "9b9f5f38ca88efbf017bb4eae4b68e650ac8d9fb5d432517930ec6f4df2d8d91",
+  "verdict": "pass",
+  "findings": [
+    {
+      "id": "R6-F1-memory-evidence-graded-as-product",
+      "severity": "high",
+      "summary": "Fixed in f83868f: implement-window replay removed; .ways/memory commits no longer flagged.",
+      "disposition": "fixed"
+    },
+    {
+      "id": "R6-F2-untracked-tool-files-flag-uncommitted",
+      "severity": "medium",
+      "summary": "Fixed: git status --porcelain respects ignore files.",
+      "disposition": "fixed"
+    },
+    {
+      "id": "R6-F3-resume-task-prompt-conflict",
+      "severity": "low",
+      "summary": "Fixed: prompts allow stopping early and resuming or starting the task work.",
+      "disposition": "fixed"
+    },
+    {
+      "id": "R6-F4-d-task-precheck-failure-compliance-na",
+      "severity": "low",
+      "summary": "Fixed: pre-grading failure under full-sdd returns complianceGradingError.",
+      "disposition": "fixed"
+    },
+    {
+      "id": "R7-F1-post-review-changes-no-longer-graded",
+      "severity": "low",
+      "summary": "Post-review product commits under the task trailer are not penalised; deliberate trade-off for the honest-agent threat model.",
+      "disposition": "accepted"
+    },
+    {
+      "id": "R7-F2-missing-regression-tests",
+      "severity": "low",
+      "summary": "No regression tests for memory/discovery commits in a closed task work or for pre-grading eval-compliance-error.",
+      "disposition": "deferred"
+    },
+    {
+      "id": "R6-F5-command-adapter-always-real",
+      "severity": "low",
+      "summary": "Command adapter runs are always evidence.kind real, per spec decision 2.",
+      "disposition": "accepted"
+    },
+    {
+      "id": "L1",
+      "severity": "low",
+      "summary": "Deliberate Git subversion is beyond local verification; documented and out of scope.",
+      "disposition": "accepted"
+    }
+  ]
+}
