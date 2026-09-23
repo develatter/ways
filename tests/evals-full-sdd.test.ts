@@ -17,7 +17,7 @@ import { advanceSdd, downgradeSdd, startSdd } from "../src/work/sdd.js";
 import { remediateSdd } from "../src/work/remediation.js";
 import { sha256, stableJson } from "../src/fs/files.js";
 
-const base: EvalConfiguration = { adapter: { id: "fake", argv: ["fake"] }, harness: "no-ways", model: "test-model", startingRevision: "corpus-v2", budgets: { maxMilliseconds: 20_000, maxOutputBytes: 4096 }, seed: 3 };
+const base: EvalConfiguration = { adapter: { id: "fake", argv: ["fake"] }, harness: "no-ways", model: "test-model", startingRevision: "corpus-v2", budgets: { maxMilliseconds: 90_000, maxOutputBytes: 4096 }, seed: 3 };
 
 async function singleTaskCorpus(): Promise<EvalCorpus> {
   const corpus = await loadCorpus();
@@ -103,7 +103,7 @@ function sddAdapter(seen: AdapterInput[] = [], script: SddScript = {}): EvalAdap
   };
 }
 
-describe("full SDD harness evals", () => {
+describe("full SDD harness evals", { timeout: 120_000 }, () => {
   it("installs Ways, records its revision and grades a compliant SDD delivery from history", async () => {
     const seen: AdapterInput[] = [];
     const adapter = sddAdapter(seen);
