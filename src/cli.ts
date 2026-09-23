@@ -302,9 +302,9 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
       console.log("History checks passed.");
       return 0;
     }
-    const result = await runChecks(cwd, args.includes("--integrity-only"));
+    const result = await runChecks(cwd, args.includes("--integrity-only"), undefined, { services: args.includes("--with-services") });
     for (const issue of result.issues) console.error(`${issue.code}: ${issue.path}: ${issue.message}`);
-    if (result.checks) console.log(JSON.stringify({ checks: result.checks }));
+    if (result.checks) console.log(JSON.stringify({ checks: result.checks, ...(result.environment ? { environment: result.environment } : {}) }));
     if (result.issues.length > 0 || (result.testExitCode !== undefined && result.testExitCode !== 0)) return 1;
     console.log("Checks passed.");
     return 0;

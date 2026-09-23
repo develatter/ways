@@ -37,7 +37,7 @@ export async function finishQuick(cwd: string, subject: string, _legacyMemoryDis
   if (!state || state.mode !== "quick" || state.status !== "active") throw new Error("No active quick work");
   if (!subject.trim()) throw new Error("A concise commit message is required");
 
-  const checks = await runChecks(cwd);
+  const checks = await runChecks(cwd, false, undefined, { services: true });
   if (checks.issues.length > 0) throw new Error(checks.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n"));
   const namedFailures = failedCheckDetails(checks);
   if (namedFailures.length > 0) throw new Error(namedFailures.join("\n"));
