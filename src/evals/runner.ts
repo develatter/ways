@@ -168,7 +168,7 @@ async function runTask(task: EvalTask, adapter: EvalAdapter, config: EvalConfigu
       elapsedMs: Date.now() - started,
       usage: unavailableUsage,
       metrics: unavailableMetrics(reason),
-      compliance: { applicable: false, reason },
+      compliance: config.harness === "full-sdd" ? complianceGradingError(reason) : { applicable: false, reason },
       sessions: [{
         session: "initial",
         doneClaim: false,
