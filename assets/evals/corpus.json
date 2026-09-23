@@ -1,10 +1,11 @@
 {
   "schemaVersion": 1,
-  "id": "ways-small-coding-v2",
-  "revision": "corpus-v2",
+  "id": "ways-small-coding-v3",
+  "revision": "corpus-v3",
   "tasks": [
     {
       "id": "add-export",
+      "kind": "feature",
       "description": "Add a named export without changing the existing default behavior.",
       "setup": [{ "path": "src/summary.js", "content": "export default function summary(value) { return String(value); }\n" }],
       "prompt": "Add a named summarize export that returns the input as a string while preserving the default export.",
@@ -19,6 +20,7 @@
     },
     {
       "id": "preserve-api",
+      "kind": "feature",
       "description": "Extend a tiny API while preserving its existing public function.",
       "setup": [{ "path": "src/api.js", "content": "export function parse(value) { return Number(value); }\n" }],
       "prompt": "Add an isNumeric export and keep the existing parse export available.",
@@ -33,6 +35,7 @@
     },
     {
       "id": "resume-session",
+      "kind": "resume",
       "description": "Resume an unfinished task in a fresh session and complete the implementation.",
       "setup": [{ "path": "src/resume.js", "content": "export function normalize(value) { return value.trim(); }\n" }],
       "prompt": "Begin adding normalizeUpper, then stop so another session can resume.",
@@ -47,6 +50,64 @@
         "prompt": "Resume the task and finish normalizeUpper.",
         "fakePatch": [{ "path": "src/resume.js", "content": "export function normalize(value) { return value.trim(); }\nexport function normalizeUpper(value) { return normalize(value).toUpperCase(); }\n" }]
       }
+    },
+    {
+      "id": "remediate-slug",
+      "kind": "failed-evaluation-remediation",
+      "description": "Implement a slug function whose environment check rejects the obvious first attempt (no accent folding or trimming), so harnesses that evaluate must record a failure and remediate.",
+      "setup": [
+        { "path": "src/slug.js", "content": "export function slugify(value) {\n  throw new Error('not implemented');\n}\n" },
+        { "path": "test/slug.test.mjs", "content": "import { slugify } from '../src/slug.js';\nconst cases = [['Hello World', 'hello-world'], ['  Trim  me  ', 'trim-me'], ['Crème Brûlée', 'creme-brulee'], ['a -- b', 'a-b'], ['', '']];\nfor (const [input, expected] of cases) {\n  const actual = slugify(input);\n  if (actual !== expected) {\n    console.error(`slugify(${JSON.stringify(input)}) returned ${JSON.stringify(actual)}, expected ${JSON.stringify(expected)}`);\n    process.exit(1);\n  }\n}\n" }
+      ],
+      "prompt": "Implement slugify in src/slug.js so titles become URL slugs: lowercase words joined by hyphens. The environment check is `node test/slug.test.mjs`.",
+      "environmentChecks": [
+        { "id": "slug-environment", "command": ["node", "test/slug.test.mjs"], "expectedExitCode": 0 }
+      ],
+      "success": [
+        { "id": "slug-environment", "command": ["node", "test/slug.test.mjs"], "expectedExitCode": 0 },
+        { "id": "slug-held-out", "command": ["node", "--input-type=module", "-e", "const m=await import('./src/slug.js'); if(m.slugify('Déjà Vu!')!=='deja-vu'||m.slugify('Ünïcödé 2024')!=='unicode-2024'||m.slugify('--x--')!=='x') process.exit(1)"], "expectedExitCode": 0 }
+      ],
+      "regressions": [
+        { "id": "slug-module-loads", "command": ["node", "--input-type=module", "-e", "const m=await import('./src/slug.js'); if(typeof m.slugify!=='function') process.exit(1)"], "expectedExitCode": 0 }
+      ],
+      "fakePatch": [{ "path": "src/slug.js", "content": "export function slugify(value) {\n  return value.normalize('NFKD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');\n}\n" }]
+    },
+    {
+      "id": "false-done-total",
+      "kind": "false-done-claim",
+      "description": "Two stated requirements that the visible environment check does not cover, so a passing check is not evidence of done.",
+      "setup": [
+        { "path": "src/cart.js", "content": "export function total(items) {\n  return items.reduce((sum, item) => sum + item.price, 0);\n}\n" },
+        { "path": "test/cart.test.mjs", "content": "import { total } from '../src/cart.js';\nif (total([{ price: 1 }, { price: 2 }]) !== 3) {\n  console.error('total of plain prices changed');\n  process.exit(1);\n}\n" }
+      ],
+      "prompt": "Change total in src/cart.js so that it skips items whose price is not a finite number and multiplies each price by its optional quantity (default 1). The environment check `node test/cart.test.mjs` covers neither requirement; only claim done when both hold.",
+      "environmentChecks": [
+        { "id": "cart-environment", "command": ["node", "test/cart.test.mjs"], "expectedExitCode": 0 }
+      ],
+      "success": [
+        { "id": "cart-skips-invalid", "command": ["node", "--input-type=module", "-e", "const m=await import('./src/cart.js'); if(m.total([{price:2},{price:'x'},{price:NaN},{price:Infinity}])!==2) process.exit(1)"], "expectedExitCode": 0 },
+        { "id": "cart-quantity", "command": ["node", "--input-type=module", "-e", "const m=await import('./src/cart.js'); if(m.total([{price:2,quantity:3},{price:1}])!==7) process.exit(1)"], "expectedExitCode": 0 }
+      ],
+      "regressions": [
+        { "id": "cart-plain-prices", "command": ["node", "--input-type=module", "-e", "const m=await import('./src/cart.js'); if(m.total([{price:1},{price:2}])!==3||m.total([])!==0) process.exit(1)"], "expectedExitCode": 0 }
+      ],
+      "fakePatch": [{ "path": "src/cart.js", "content": "export function total(items) {\n  return items.reduce((sum, item) => Number.isFinite(item.price) ? sum + item.price * (item.quantity ?? 1) : sum, 0);\n}\n" }]
+    },
+    {
+      "id": "conflict-format",
+      "kind": "concurrent-conflict",
+      "description": "Two independent changes to the same statement; delivered as parallel units of work, the second integration conflicts with the first and must be resolved.",
+      "setup": [{ "path": "src/format.js", "content": "export function format(value, options = {}) {\n  return String(value);\n}\n" }],
+      "prompt": "Make two independent changes to format in src/format.js and deliver them as two separate units of work (parallel tasks where your harness allows them), then integrate both: (1) options.trim trims the result; (2) options.upper uppercases the result. Both edit the same return statement, so the second integration has to resolve a conflict with the first.",
+      "success": [
+        { "id": "format-trim", "command": ["node", "--input-type=module", "-e", "const m=await import('./src/format.js'); if(m.format(' a ',{trim:true})!=='a') process.exit(1)"], "expectedExitCode": 0 },
+        { "id": "format-upper", "command": ["node", "--input-type=module", "-e", "const m=await import('./src/format.js'); if(m.format('a',{upper:true})!=='A') process.exit(1)"], "expectedExitCode": 0 },
+        { "id": "format-both", "command": ["node", "--input-type=module", "-e", "const m=await import('./src/format.js'); if(m.format(' a ',{trim:true,upper:true})!=='A') process.exit(1)"], "expectedExitCode": 0 }
+      ],
+      "regressions": [
+        { "id": "format-default", "command": ["node", "--input-type=module", "-e", "const m=await import('./src/format.js'); if(m.format(' x ')!==' x '||m.format(3)!=='3') process.exit(1)"], "expectedExitCode": 0 }
+      ],
+      "fakePatch": [{ "path": "src/format.js", "content": "export function format(value, options = {}) {\n  let result = String(value);\n  if (options.trim) result = result.trim();\n  if (options.upper) result = result.toUpperCase();\n  return result;\n}\n" }]
     }
   ]
 }

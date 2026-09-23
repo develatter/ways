@@ -108,6 +108,7 @@ export function commandAdapter(command: string, args: readonly string[] = []): E
           WAYS_EVAL_PROMPT: input.prompt,
           WAYS_EVAL_SEED: String(input.seed),
           ...(input.waysBin ? { WAYS_EVAL_WAYS_BIN: input.waysBin } : {}),
+          ...(input.outcomePolicy ? { WAYS_EVAL_OUTCOME_POLICY: JSON.stringify(input.outcomePolicy) } : {}),
         },
         stdio: ["ignore", "pipe", "pipe"],
       });

@@ -1,5 +1,21 @@
-export type HarnessLabel = "no-ways" | "checks-only" | "full-sdd";
-export const HARNESS_LABELS: readonly HarnessLabel[] = ["no-ways", "checks-only", "full-sdd"];
+export type HarnessLabel = "no-ways" | "checks-only" | "lightweight-state" | "full-sdd" | "outcome";
+export const HARNESS_LABELS: readonly HarnessLabel[] = ["no-ways", "checks-only", "lightweight-state", "full-sdd", "outcome"];
+/** Harnesses whose disposable repository has the running Ways package installed and committed. */
+export const WAYS_HARNESSES: readonly HarnessLabel[] = ["lightweight-state", "full-sdd", "outcome"];
+/** The A–E letters used in issues and reports; results record the label. */
+export const HARNESS_LETTERS: Record<HarnessLabel, string> = { "no-ways": "A", "checks-only": "B", "lightweight-state": "C", "full-sdd": "D", "outcome": "E" };
+
+/** Policies an outcome (E) run asks the agent to open with; the committed spec is graded against them. */
+export interface OutcomeEvalPolicy {
+  isolation: "required" | "optional";
+  parallel: "allowed" | "disabled";
+  evaluation: "independent" | "self";
+  memory: "none" | "normal" | "high";
+}
+export const DEFAULT_OUTCOME_POLICY: OutcomeEvalPolicy = { isolation: "required", parallel: "allowed", evaluation: "independent", memory: "normal" };
+
+export const TASK_KINDS = ["feature", "resume", "failed-evaluation-remediation", "false-done-claim", "concurrent-conflict"] as const;
+export type TaskKind = typeof TASK_KINDS[number];
 
 export interface EvalFile {
   path: string;
@@ -21,11 +37,15 @@ export interface EvalResume {
 
 export interface EvalTask {
   id: string;
+  /** Absent reads as "feature". */
+  kind?: TaskKind;
   description: string;
   setup: EvalFile[];
   prompt: string;
   success: EvalCheck[];
   regressions: EvalCheck[];
+  /** Checks the task environment exposes to every harness (their files are in setup); Ways harnesses also configure them as the test command. */
+  environmentChecks?: EvalCheck[];
   fakePatch?: EvalFile[];
   freshSessionResume?: EvalResume;
 }
@@ -49,6 +69,8 @@ export interface EvalConfiguration {
   startingRevision: string;
   budgets: EvalBudgets;
   seed: number;
+  /** Present exactly for the outcome (E) harness. */
+  outcomePolicy?: OutcomeEvalPolicy;
 }
 
 export interface AdapterInput {
@@ -61,8 +83,9 @@ export interface AdapterInput {
   startingRevision: string;
   seed: number;
   maxOutputBytes: number;
-  /** Absolute path of the installed Ways CLI; present only for the full-sdd harness. */
+  /** Absolute path of the installed Ways CLI; present only for Ways harnesses (C, D, E). */
   waysBin?: string;
+  outcomePolicy?: OutcomeEvalPolicy;
   signal: AbortSignal;
 }
 
@@ -96,7 +119,7 @@ export interface ObservedMetric<T extends number | boolean = number> {
   reason?: string;
 }
 
-export type TaskMetrics = Record<AdapterMetricName | "timeouts" | "remediationAttempts", ObservedMetric> & {
+export type TaskMetrics = Record<AdapterMetricName | "timeouts" | "remediationAttempts" | "humanApprovals", ObservedMetric> & {
   resumeSuccess: ObservedMetric<boolean>;
 };
 
@@ -115,17 +138,27 @@ export interface ComplianceIssue {
   message: string;
 }
 
+/** The Ways workflow a harness asks for: quick work plus an evidence file (C), SDD (D) or the outcome loop (E). */
+export type EvalWorkflow = "quick-evidence" | "sdd" | "outcome";
+
 export type HarnessCompliance =
   | { applicable: false; reason: string }
   | {
     applicable: true;
+    workflow: EvalWorkflow;
     compliant: boolean;
-    fullSddCompleted: boolean;
-    sddWorksStarted: number;
-    sddWorksClosed: number;
+    /** The task's work reached the workflow's terminal state: quick finish with evidence, SDD close or outcome close. */
+    completed: boolean;
+    worksStarted: number;
+    worksClosed: number;
     downgrades: number;
     remediationAttempts: number;
+    /** Recorded check failures: SDD validation failures or failed outcome evaluations. */
     validationFailures: number;
+    /** Human approval commits (Harness-State: approved) in the graded history. */
+    humanApprovals: number;
+    /** Policy the repository recorded for the task's work; null when none was recorded. */
+    effectivePolicy: Record<string, string> | null;
     activeWork: string | null;
     issues: ComplianceIssue[];
   };
@@ -156,9 +189,18 @@ export interface EvalSessionResult {
   grading: GradedResult;
 }
 
+export interface EvalEnvironment {
+  waysInstalled: boolean;
+  /** Configured Ways test command (regression plus environment checks); null without Ways. */
+  testCommand: string[] | null;
+  environmentChecks: EvalCheck[];
+}
+
 export interface EvalTaskResult {
   taskId: string;
+  kind: TaskKind;
   startingRevision: string;
+  environment: EvalEnvironment;
   freshSessionResume: boolean;
   success: boolean;
   regressions: boolean;
@@ -178,7 +220,7 @@ export interface HarnessPrompt {
 export type EvidenceKind = "fixture" | "real";
 
 export interface EvalRunResult {
-  schemaVersion: 2;
+  schemaVersion: 3;
   runId: string;
   corpus: { id: string; revision: string; digest: string; taskCount: number };
   configuration: EvalConfiguration;
@@ -194,6 +236,7 @@ export interface EvalRunResult {
     regressionCount: number;
     incorrectDoneClaimCount: number;
     compliantCount: number | null;
+    completedCount: number | null;
     elapsedMs: number;
   };
 }
