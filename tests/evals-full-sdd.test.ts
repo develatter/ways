@@ -229,6 +229,49 @@ describe("full SDD harness evals", () => {
     } } }));
     expect(codes(weakened?.compliance)).toEqual(expect.arrayContaining(["history-untraced", "eval-harness-tampered"]));
     expect(weakened?.compliance).toMatchObject({ compliant: false, fullSddCompleted: false });
+  }, 60_000);
+
+  it("detects uncommitted product changes hidden from git status", async () => {
+    const corpus = await singleTaskCorpus();
+    const patch = Object.fromEntries((corpus.tasks[0]!.fakePatch ?? []).map((file) => [file.path, file.content]));
+    const grade = async (adapter: EvalAdapter) => (await runEvals({ corpus, adapter, configuration: fullSdd(adapter) })).tasks[0];
+    const clean: string[] = [];
+    try {
+      const hide: Record<string, (git: GitRepository, input: AdapterInput) => Promise<void>> = {
+        "skip-worktree": (git) => git.run(["update-index", "--skip-worktree", "src/summary.js"], undefined, true).then(() => undefined),
+        "assume-unchanged": async (git, input) => {
+          await git.run(["update-index", "--assume-unchanged", "src/summary.js"], undefined, true);
+          await writeFile(join(input.repo, ".git/info/exclude"), "src/new.js\n");
+        },
+        "core-worktree": async (git, input) => {
+          clean.push(`${input.repo}-clean`);
+          await git.run(["worktree", "add", "-q", "--detach", `${input.repo}-clean`], undefined, true);
+          await git.run(["config", "core.worktree", `${input.repo}-clean`], undefined, true);
+        },
+      };
+      for (const [variant, conceal] of Object.entries(hide)) {
+        const hidden = await grade(sddAdapter([], { implement: false, after: { close: async (input) => {
+          const git = new GitRepository(input.repo);
+          await conceal(git, input);
+          for (const [path, content] of Object.entries(patch)) await writeFile(join(input.repo, path), content);
+          await writeFile(join(input.repo, "src/new.js"), "export {};\n");
+        } } }));
+        expect(hidden, variant).toMatchObject({ success: true, compliance: { compliant: false, fullSddCompleted: false } });
+        expect(codes(hidden?.compliance), variant).toContain("eval-uncommitted-changes");
+      }
+    } finally {
+      await Promise.all(clean.map((path) => rm(path, { recursive: true, force: true })));
+    }
+  }, 60_000);
+
+  it("counts a product file renamed into bookkeeping as a change outside implement", async () => {
+    const moved = sddAdapter([], { after: { review: async (input) => {
+      const git = new GitRepository(input.repo);
+      await git.run(["mv", "src/summary.js", ".ways/sdd/add-export/summary.js"], undefined, true);
+      await git.run(["-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "move\n\nHarness-Work: add-export"], undefined, true);
+    } } });
+    const result = await runEvals({ corpus: await singleTaskCorpus(), adapter: moved, configuration: fullSdd(moved) });
+    expect(codes(result.tasks[0]?.compliance)).toContain("eval-change-outside-implement");
   });
 
   it("grades a legitimate remediation back to implement as compliant", async () => {

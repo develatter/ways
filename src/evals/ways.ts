@@ -1,4 +1,5 @@
-import { access, appendFile, mkdir, readdir, readFile, realpath, symlink } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { access, appendFile, lstat, mkdir, readdir, readFile, readlink, realpath, symlink } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HARNESS_VERSION } from "../index.js";
@@ -129,6 +130,51 @@ function isHarnessBookkeeping(path: string): boolean {
     || path === STATE_PATH || path === STATUS_PATH;
 }
 
+/** Untracked by design: harness runtime output and the runner's own package links. */
+const UNTRACKED_PREFIXES = [".ways/runtime/", ".ways/worktrees/", ".ways/indexes/", "node_modules/"];
+
+function gitBlobId(content: Buffer): string {
+  return createHash("sha1").update(`blob ${content.length}\0`).update(content).digest("hex");
+}
+
+async function diskFiles(root: string, directory = ""): Promise<string[]> {
+  const entries = await readdir(join(root, directory), { withFileTypes: true });
+  const nested = await Promise.all(entries.map(async (entry) => {
+    const path = directory ? `${directory}/${entry.name}` : entry.name;
+    if (path === ".git") return [];
+    return entry.isDirectory() ? diskFiles(root, path) : [path];
+  }));
+  return nested.flat();
+}
+
+/**
+ * Compares the files on disk with HEAD's tree by content, without asking Git's index or config,
+ * so skip-worktree, assume-unchanged, excludes or core.worktree cannot hide uncommitted changes.
+ */
+async function divergentPaths(repo: string, git: GitRepository): Promise<string[]> {
+  const tree = new Map<string, string>();
+  for (const line of (await git.run(["ls-tree", "-r", "-z", "HEAD"], undefined, true)).split("\0").filter(Boolean)) {
+    const [meta, path] = line.split("\t") as [string, string];
+    const [, type, object] = meta.split(" ") as [string, string, string];
+    if (type === "blob") tree.set(path, object);
+  }
+  const divergent: string[] = [];
+  const seen = new Set<string>();
+  for (const path of await diskFiles(repo)) {
+    seen.add(path);
+    const expected = tree.get(path);
+    if (expected === undefined) {
+      if (!UNTRACKED_PREFIXES.some((prefix) => path.startsWith(prefix))) divergent.push(path);
+      continue;
+    }
+    const stats = await lstat(join(repo, path));
+    const content = stats.isSymbolicLink() ? Buffer.from(await readlink(join(repo, path))) : await readFile(join(repo, path));
+    if (gitBlobId(content) !== expected) divergent.push(path);
+  }
+  for (const path of tree.keys()) if (!seen.has(path)) divergent.push(path);
+  return divergent.sort();
+}
+
 /**
  * Replays the task work's own transitions: product changes are legitimate only in commits made
  * while implement is the next phase to certify (including the implement certification itself).
@@ -148,7 +194,8 @@ async function windowIssues(git: GitRepository, commits: readonly CommitInfo[], 
     }
     if (next !== "implement") {
       // Diff against the first parent: diff-tree prints nothing for merges, which would hide their changes.
-      const changed = (await git.run(["diff", "--name-only", `${commit.hash}^1`, commit.hash], undefined, true)).split("\n").filter(Boolean);
+      // --no-renames: a product file moved into bookkeeping must count as a product deletion.
+      const changed = (await git.run(["diff", "--no-renames", "--name-only", `${commit.hash}^1`, commit.hash], undefined, true)).split("\n").filter(Boolean);
       const product = changed.filter((changedPath) => !isHarnessBookkeeping(changedPath));
       if (product.length > 0) issues.push({ code: "eval-change-outside-implement", path, message: `Commit changes ${product.join(", ")} while ${next} is the next phase of ${taskId}` });
     }
@@ -210,8 +257,8 @@ export async function gradeFullSddCompliance(repo: string, taskId: string, start
     // An unset hooks path is reported below.
   }
   if (hooksPath !== HOOKS_DIR) issues.push({ code: "eval-harness-tampered", path: "core.hooksPath", message: `core.hooksPath is ${hooksPath || "unset"}, expected ${HOOKS_DIR}` });
-  const uncommitted = (await git.run(["status", "--porcelain"], undefined, true)).split("\n").filter(Boolean);
-  if (uncommitted.length > 0) issues.push({ code: "eval-uncommitted-changes", path: ".", message: `Run ended with ${uncommitted.length} uncommitted path(s)` });
+  const uncommitted = await divergentPaths(repo, git);
+  if (uncommitted.length > 0) issues.push({ code: "eval-uncommitted-changes", path: uncommitted[0]!, message: `Run ended with ${uncommitted.length} path(s) differing from HEAD: ${uncommitted.slice(0, 5).join(", ")}` });
   if (activeWork !== null) issues.push({ code: "eval-active-work", path: STATE_PATH, message: `Work ${activeWork} is still active` });
 
   const closed = new Set(audit.checkpoints.filter((checkpoint) => checkpoint.kind === "certification" && checkpoint.phase === "close").map((checkpoint) => checkpoint.work));
