@@ -1,5 +1,5 @@
 import { access, appendFile, mkdir, readdir, readFile, realpath, symlink } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HARNESS_VERSION } from "../index.js";
 import { bootstrap } from "../bootstrap/bootstrap.js";
@@ -175,6 +175,15 @@ export async function gradeFullSddCompliance(repo: string, taskId: string, start
   } catch (error) {
     issues.push({ code: "eval-unreadable-state", path: STATE_PATH, message: error instanceof Error ? error.message : String(error) });
   }
+  // Replace refs and grafts silently substitute history under every git command, including the
+  // shared history audit, so their presence alone makes the history unverifiable.
+  const replaced = await git.run(["for-each-ref", "--format=%(refname)", "refs/replace/"], undefined, true);
+  const grafts = await git.run(["rev-parse", "--git-path", "info/grafts"], undefined, true);
+  const grafted = await access(resolve(repo, grafts)).then(() => true, () => false);
+  if (replaced !== "" || grafted) {
+    issues.push({ code: "eval-history-rewritten", path: replaced !== "" ? "refs/replace" : grafts, message: "Replace refs or grafts substitute recorded history" });
+    return complianceResult(issues, [], activeWork, taskId, new Set());
+  }
   // Audit from the bootstrap revision the runner recorded, never from anything the agent can rewrite.
   let commits: CommitInfo[] = [];
   try {
@@ -205,10 +214,14 @@ export async function gradeFullSddCompliance(repo: string, taskId: string, start
   if (uncommitted.length > 0) issues.push({ code: "eval-uncommitted-changes", path: ".", message: `Run ended with ${uncommitted.length} uncommitted path(s)` });
   if (activeWork !== null) issues.push({ code: "eval-active-work", path: STATE_PATH, message: `Work ${activeWork} is still active` });
 
+  const closed = new Set(audit.checkpoints.filter((checkpoint) => checkpoint.kind === "certification" && checkpoint.phase === "close").map((checkpoint) => checkpoint.work));
+  return complianceResult(issues, commits, activeWork, taskId, closed, audit.checkpoints.filter((checkpoint) => checkpoint.kind === "remediation").length);
+}
+
+function complianceResult(issues: ComplianceIssue[], commits: readonly CommitInfo[], activeWork: string | null, taskId: string, closed: ReadonlySet<string | undefined>, remediationAttempts = 0): HarnessCompliance {
   const downgrades = commits.filter((commit) => commit.trailers.state?.startsWith("downgraded")).length;
   if (downgrades > 0) issues.push({ code: "eval-downgraded", path: ".", message: `SDD was downgraded ${downgrades} time(s)` });
   const sddWorks = new Set(commits.filter((commit) => commit.trailers.work && commit.trailers.phase).map((commit) => commit.trailers.work));
-  const closed = new Set(audit.checkpoints.filter((checkpoint) => checkpoint.kind === "certification" && checkpoint.phase === "close").map((checkpoint) => checkpoint.work));
   if (!closed.has(taskId)) issues.push({ code: "eval-sdd-not-closed", path: ".", message: `No SDD work ${taskId} was certified through close` });
   const compliant = issues.length === 0;
   return {
@@ -218,7 +231,7 @@ export async function gradeFullSddCompliance(repo: string, taskId: string, start
     sddWorksStarted: sddWorks.size,
     sddWorksClosed: closed.size,
     downgrades,
-    remediationAttempts: audit.checkpoints.filter((checkpoint) => checkpoint.kind === "remediation").length,
+    remediationAttempts,
     validationFailures: commits.filter((commit) => commit.trailers.state === "validation-failed").length,
     activeWork,
     issues,

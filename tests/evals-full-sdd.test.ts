@@ -206,6 +206,23 @@ describe("full SDD harness evals", () => {
     expect(amended).toMatchObject({ success: true, compliance: { compliant: false, fullSddCompleted: false } });
     expect(codes(amended?.compliance)).toContain("eval-history-rewritten");
 
+    for (const substitute of ["replace", "grafts"] as const) {
+      const substituted = await grade(scripted(substitute, async (input) => {
+        const git = new GitRepository(input.repo);
+        const start = await git.run(["rev-parse", "HEAD"], undefined, true);
+        for (const [path, content] of Object.entries(patch)) await writeFile(join(input.repo, path), content);
+        await git.run(["add", "-A"], undefined, true);
+        await git.run(["-c", "core.hooksPath=/dev/null", "commit", "-q", "--amend", "--no-edit"], undefined, true);
+        const forged = await git.run(["rev-parse", "HEAD"], undefined, true);
+        await git.run(["reset", "-q", "--soft", start], undefined, true);
+        if (substitute === "replace") await git.run(["replace", start, forged], undefined, true);
+        else await writeFile(join(input.repo, ".git/info/grafts"), `${start}\n`);
+        await emptyImplement.run(input);
+      }));
+      expect(substituted).toMatchObject({ compliance: { compliant: false, fullSddCompleted: false } });
+      expect(codes(substituted?.compliance)).toContain("eval-history-rewritten");
+    }
+
     const weakened = await grade(sddAdapter([], { after: { close: async (input) => {
       const config = JSON.parse(await readFile(join(input.repo, ".ways/config.json"), "utf8"));
       await sneak(input, { ".ways/config.json": JSON.stringify({ ...config, testCommand: ["true"] }) }, "weaken");
