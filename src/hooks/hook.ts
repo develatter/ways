@@ -10,6 +10,7 @@ import { remediationEvidenceFailure } from "../work/remediation.js";
 import { validationFailureRecordFailure, validationFailureReplayFailure } from "../work/validation-failure.js";
 import { committedMismatch } from "../work/sdd.js";
 import { indexReader, outcomeApprovalFailure } from "../work/outcome-approvals.js";
+import { committedExecutionPolicy } from "../work/outcome-policy.js";
 import { attemptFailureCommit, closeCommitExtraPaths, isPriorOutcomeArtifact, OUTCOME_PHASES, OUTCOME_STATES, outcomeCheckFailurePath, outcomeCloseFailure, outcomeEvaluationPath, outcomeEvidencePath, outcomeMemoryReviewPath, outcomeReviewPath, remediationContentFailure } from "../work/outcome.js";
 
 export interface HookVerdict {
@@ -127,7 +128,7 @@ async function headHasManifest(git: GitRepository): Promise<boolean> {
   }
 }
 
-/** Isolation is required: outside its own transitions, an outcome work only accepts integrated task commits. */
+/** Outside its own transitions, an outcome work accepts task commits, and traced direct commits when isolation is optional. */
 async function outcomeCommitFailure(git: GitRepository, active: WorkState, trailers: ReturnType<typeof parseTrailers>): Promise<string | undefined> {
   if (trailers.phase === OUTCOME_PHASES.open) {
     if (trailers.state !== "opened") return "opening commits carry Harness-State: opened";
@@ -175,7 +176,8 @@ async function outcomeCommitFailure(git: GitRepository, active: WorkState, trail
   }
   if (active.stage !== "execute") return "the evaluated increment is frozen; close it or cancel the work";
   if (await attemptFailureCommit(git, active.id, attempt)) return `attempt ${attempt} has a recorded evaluation failure; run ways outcome remediate --reason=<text> first`;
-  return trailers.task ? undefined : "isolation is required; commit in a task worktree (ways task prepare) and integrate it";
+  if (trailers.task || (await committedExecutionPolicy(git, active.id)).isolation === "optional") return undefined;
+  return "isolation is required; commit in a task worktree (ways task prepare) and integrate it";
 }
 
 export async function judgeCommitMessage(cwd: string, message: string): Promise<HookVerdict> {

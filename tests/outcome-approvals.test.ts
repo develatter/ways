@@ -76,7 +76,7 @@ describe("outcome approval policy", () => {
 
   it("persists the policy at open, defaults to none and rejects unsupported checkpoints", async () => {
     const { cwd, git } = await repository();
-    await expect(openOutcome(cwd, "hello", "Say hello", CRITERIA, "normal", ["evaluate" as never])).rejects.toThrow(/unsupported policy/);
+    await expect(openOutcome(cwd, "hello", "Say hello", CRITERIA, "normal", "independent", {}, ["evaluate" as never])).rejects.toThrow(/unsupported policy/);
     await expect(execFileAsync(process.execPath, [process.env.WAYS_CLI!, "outcome", "open", "hello", "--goal=x", "--criterion=AC1:x", "--approvals=plan"], { cwd })).rejects.toThrow(/--approvals must be/);
     await openOutcome(cwd, "hello", "Say hello", CRITERIA);
     expect(JSON.parse(await readFile(join(cwd, outcomeSpecPath("hello")), "utf8")).policy.approvals).toBeUndefined();
@@ -88,7 +88,7 @@ describe("outcome approval policy", () => {
 describe("outcome close approval", () => {
   it("blocks close until a human approves the exact reviewed input in a terminal", async () => {
     const { cwd, git } = await repository();
-    await openOutcome(cwd, "hello", "Say hello", CRITERIA, "normal", ["close"]);
+    await openOutcome(cwd, "hello", "Say hello", CRITERIA, "normal", "independent", {}, ["close"]);
     expect(JSON.parse(await readFile(join(cwd, outcomeSpecPath("hello")), "utf8")).policy.approvals).toEqual(["close"]);
     await expect(approveOutcomeInteractively(cwd, "close", terminal(true, "close"))).rejects.toThrow(/cannot take close from execute/);
     await execute(cwd, "hello\n", "feature");
@@ -124,7 +124,7 @@ describe("outcome close approval", () => {
 
   it("rejects closing commits without approval in the hook and the history audit, whatever the edited spec says", async () => {
     const { cwd, git } = await repository();
-    await openOutcome(cwd, "hello", "Say hello", CRITERIA, "normal", ["close"]);
+    await openOutcome(cwd, "hello", "Say hello", CRITERIA, "normal", "independent", {}, ["close"]);
     await execute(cwd, "hello\n", "feature");
     await evaluateOutcome(cwd);
     await review(cwd, "pass");
@@ -153,7 +153,7 @@ describe("outcome close approval", () => {
 describe("outcome remediate approval", () => {
   it("gates remediation per attempt and refuses reused approvals", async () => {
     const { cwd, git } = await repository();
-    await openOutcome(cwd, "hello", "Say hello", CRITERIA, "normal", ["close", "remediate"]);
+    await openOutcome(cwd, "hello", "Say hello", CRITERIA, "normal", "independent", {}, ["close", "remediate"]);
     await execute(cwd, "bye\n", "feature");
     await expect(evaluateOutcome(cwd)).rejects.toThrow(/Evaluation failed and was recorded/);
     await expect(remediateOutcome(cwd, "says bye")).rejects.toThrow(/remediate requires human approval .*`ways approve remediate`/);
@@ -189,7 +189,7 @@ describe("outcome remediate approval", () => {
 
   it("detects a no-verify remediation that skipped approval", async () => {
     const { cwd, git } = await repository();
-    await openOutcome(cwd, "hello", "Say hello", CRITERIA, "normal", ["remediate"]);
+    await openOutcome(cwd, "hello", "Say hello", CRITERIA, "normal", "independent", {}, ["remediate"]);
     await execute(cwd, "hello\n", "feature");
     await evaluateOutcome(cwd);
     await review(cwd, "fail");

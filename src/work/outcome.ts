@@ -14,6 +14,8 @@ import { closeWork } from "./close.js";
 import { committedWorkDigest } from "./digest.js";
 import { approvalPolicyFailure, assertOutcomeApproval, commitReader, outcomeApprovalFailure, outcomeApprovalPath } from "./outcome-approvals.js";
 import { reviewBlocks } from "./review.js";
+import { committedExecutionPolicy, effectiveExecutionPolicy, executionPolicyInvalid, isolationFailure, optionalIsolationOpenings, parallelStateFailure, type ExecutionPolicy } from "./outcome-policy.js";
+import { evaluationPolicy, INDEPENDENT_EVALUATION, outcomeEvaluationFailure, type EvaluationMode } from "./outcome-evaluation-policy.js";
 import { canonicalChecks, validationFailureDigest, validationFailureRecordFailure, validationFailureReplayFailure } from "./validation-failure.js";
 
 /** Trailer phases of the outcome workflow. They never collide with SDD phase names. */
@@ -99,7 +101,7 @@ function specFailure(value: unknown, workId: string): string | undefined {
     ids.add(criterion.id);
   }
   const policy = value.policy;
-  if (!isRecord(policy) || policy.isolation !== "required" || policy.independentEvaluation !== "required" || policy.checks !== "configured"
+  if (!isRecord(policy) || executionPolicyInvalid(policy) || !INDEPENDENT_EVALUATION.includes(policy.independentEvaluation) || policy.checks !== "configured"
     || (policy.memory !== undefined && !(MEMORY_TIERS as readonly unknown[]).includes(policy.memory))) {
     return "outcome spec has an unsupported policy";
   }
@@ -195,14 +197,6 @@ export async function outcomeOpenCommit(git: GitRepository, workId: string, ref 
   return commit.trailers.work === workId && commit.trailers.phase === OUTCOME_PHASES.open && commit.trailers.state === "opened" ? commit : undefined;
 }
 
-/** Only commits the harness integrated from task worktrees may carry production changes when isolation is required. */
-function isolationFailure(commits: readonly CommitInfo[], workId: string, state: unknown): string | undefined {
-  const integrated = new Set(validateState(state) ? state.tasks.flatMap((task) => task.commits) : []);
-  const transition = (commit: CommitInfo): boolean => commit.trailers.work === workId && (commit.trailers.phase?.startsWith("outcome-") ?? false) && !commit.trailers.task;
-  const direct = commits.find((commit) => !transition(commit) && (commit.trailers.work !== workId || !commit.trailers.task || !integrated.has(commit.hash)));
-  return direct ? `commit ${direct.hash.slice(0, 12)} "${direct.subject}" was not integrated from an isolated task` : undefined;
-}
-
 /**
  * Verifies everything close relies on, from committed content only: the
  * certified execution, its passing evaluation, complete criterion evidence and
@@ -229,13 +223,10 @@ export async function outcomeCloseFailure(git: GitRepository, workId: string, ex
   if (evaluation.passed !== true) return "evaluation did not pass";
   const cited = citedCheckFailure(evidence as OutcomeEvidence, evaluation);
   if (cited) return cited;
-  const isolation = isolationFailure(await commitsBetween(git, open.hash, input), workId, await showJson(git, executeCommit, STATE_PATH));
+  const isolation = isolationFailure(await commitsBetween(git, open.hash, input), workId, await showJson(git, executeCommit, STATE_PATH), (spec as OutcomeSpec).policy.isolation);
   if (isolation) return isolation;
-  if (!validateReview(review)) return "an independent review is required";
-  if (review.workId !== workId || (review.attempt ?? 0) !== attempt || !review.reviewer.trim()) return "review does not belong to this work and attempt";
-  const blockers = reviewBlocks(review);
-  if (blockers.length > 0) return `review blocked by: ${blockers.join(", ")}`;
-  if (review.digest !== await outcomeDigest(git, open.hash, executeCommit)) return "review is stale: it does not match the evaluated increment";
+  const evaluationFailure = await outcomeEvaluationFailure(git, { spec: spec as OutcomeSpec, workId, attempt, openCommit: open.hash, input, digest: () => outcomeDigest(git, open.hash, executeCommit) }, review);
+  if (evaluationFailure) return evaluationFailure;
   return memoryPolicyFailure(git, spec as OutcomeSpec, open.hash, executeCommit, memoryReview, attempt);
 }
 
@@ -268,6 +259,8 @@ export async function assertOutcomeConsistency(cwd: string, state: WorkState): P
   }
   const open = await outcomeOpenCommit(git, state.id);
   if (!open || await git.parent(open.hash) !== state.baseCommit) throw new Error("Outcome work has no opening commit on its base; run ways repair");
+  const parallel = await parallelStateFailure(git, state);
+  if (parallel) throw new Error(parallel);
   if (state.stage === "evaluate") {
     const head = await git.commitInfo("HEAD");
     if (head.trailers.work !== state.id || head.trailers.phase !== OUTCOME_PHASES.execute || head.trailers.state !== "completed"
@@ -284,7 +277,7 @@ async function dirtyPaths(git: GitRepository): Promise<string[]> {
   return [...paths].sort();
 }
 
-export async function openOutcome(cwd: string, id: string, goal: string, criteria: OutcomeCriterion[], memory: MemoryTier = "normal", approvals: readonly OutcomeCheckpoint[] = []): Promise<WorkState> {
+export async function openOutcome(cwd: string, id: string, goal: string, criteria: OutcomeCriterion[], memory: MemoryTier = "normal", evaluation: EvaluationMode = "independent", execution: ExecutionPolicy = {}, approvals: readonly OutcomeCheckpoint[] = []): Promise<WorkState> {
   if (!/^[a-z0-9][a-z0-9-]{1,62}$/.test(id)) throw new Error("Work id must be a lowercase slug");
   if (await loadState(cwd)) throw new Error("Another mutating work is already active");
   const spec: OutcomeSpec = {
@@ -292,7 +285,7 @@ export async function openOutcome(cwd: string, id: string, goal: string, criteri
     workId: id,
     goal: goal.trim(),
     criteria,
-    policy: { isolation: "required", independentEvaluation: "required", checks: "configured", memory, ...(approvals.length > 0 ? { approvals: [...approvals] } : {}) },
+    policy: { ...effectiveExecutionPolicy(execution), independentEvaluation: evaluationPolicy(evaluation), checks: "configured", memory, ...(approvals.length > 0 ? { approvals: [...approvals] } : {}) },
   };
   const failure = specFailure(spec, id);
   if (failure) throw new Error(failure[0]!.toUpperCase() + failure.slice(1));
@@ -328,15 +321,16 @@ export async function evaluateOutcome(cwd: string): Promise<{ commit: string; ev
   await assertOutcomeConsistency(cwd, state);
   const git = new GitRepository(cwd);
   const attempt = state.attempt ?? 0;
-  if (state.tasks.length === 0) throw new Error("Isolation is required: implement through at least one task (ways task add/prepare/integrate)");
+  const { isolation: isolationPolicy } = await committedExecutionPolicy(git, state.id);
+  if (isolationPolicy === "required" && state.tasks.length === 0) throw new Error("Isolation is required: implement through at least one task (ways task add/prepare/integrate)");
   const pending = state.tasks.filter((task) => task.status !== "completed").map((task) => task.id);
   if (pending.length > 0) throw new Error(`Every task must be integrated before evaluation: ${pending.join(", ")}`);
   const open = (await outcomeOpenCommit(git, state.id))!;
   if (await recordedFailure(git, open.hash, state.id, attempt)) {
     throw new Error(`Attempt ${attempt} has a recorded evaluation failure; open a new attempt with ways outcome remediate --reason=<text>`);
   }
-  const isolation = isolationFailure(await commitsBetween(git, open.hash, "HEAD"), state.id, state);
-  if (isolation) throw new Error(`Isolation is required: ${isolation}`);
+  const isolation = isolationFailure(await commitsBetween(git, open.hash, "HEAD"), state.id, state, isolationPolicy);
+  if (isolation) throw new Error(`Isolation is ${isolationPolicy}: ${isolation}`);
   // A failure record left by an interrupted evaluation is rewritten below.
   const allowed = new Set([STATE_PATH, STATUS_PATH, outcomeEvidencePath(state.id, attempt), outcomeCheckFailurePath(state.id, attempt)]);
   const unrelated = (await dirtyPaths(git)).filter((path) => !allowed.has(path));
@@ -602,13 +596,15 @@ export interface OutcomeReplay {
 }
 
 interface OutcomeCursor {
+  /** Opening commit, which fixes the isolation policy. */
+  open: string;
   next: "execute" | "close";
   attempt: number;
   failed: boolean;
 }
 
 /** Ordered replay: open, then per attempt execute or a recorded failure, remediation, and finally close or cancel. */
-export function replayOutcomes(commits: readonly CommitInfo[]): OutcomeReplay {
+export function replayOutcomes(commits: readonly CommitInfo[], optionalIsolation: ReadonlySet<string> = new Set()): OutcomeReplay {
   const replay: OutcomeReplay = { issues: [], closes: [], failures: [], remediations: [], attempts: [] };
   const cursors = new Map<string, OutcomeCursor>();
   const phases = new Set<string>(Object.values(OUTCOME_PHASES));
@@ -622,12 +618,12 @@ export function replayOutcomes(commits: readonly CommitInfo[]): OutcomeReplay {
     const attempt = trailerAttempt(commit);
     if (phase && phases.has(phase)) {
       if (phase === OUTCOME_PHASES.open && state === "opened" && cursor === undefined) {
-        cursors.set(work, { next: "execute", attempt: 0, failed: false });
+        cursors.set(work, { open: commit.hash, next: "execute", attempt: 0, failed: false });
       } else if (!cursor) {
         fail(`Outcome transition ${phase} for ${work} precedes its opening`);
       } else if (phase === OUTCOME_PHASES.evaluate && state === OUTCOME_STATES.remediated
         && attempt === cursor.attempt + 1 && (cursor.next === "close" || cursor.failed)) {
-        cursors.set(work, { next: "execute", attempt, failed: false });
+        cursors.set(work, { open: cursor.open, next: "execute", attempt, failed: false });
         replay.remediations.push({ work, commit });
       } else if (attempt !== cursor.attempt) {
         fail(`Outcome transition ${phase} for ${work} does not belong to attempt ${cursor.attempt}`);
@@ -651,8 +647,8 @@ export function replayOutcomes(commits: readonly CommitInfo[]): OutcomeReplay {
     if (state === "cancelled") cursors.delete(work);
     else if (cursor.next === "close") fail(`Outcome ${work} changed after its evaluation: "${commit.subject}"`);
     else if (cursor.failed) fail(`Outcome ${work} changed after a recorded evaluation failure: "${commit.subject}"`);
-    else if (!task) fail(`Outcome ${work} requires isolation; "${commit.subject}" was not integrated from a task`);
-    else if (attempt !== cursor.attempt) fail(`Task commit for ${work} does not belong to attempt ${cursor.attempt}`);
+    else if (!task && !optionalIsolation.has(cursor.open)) fail(`Outcome ${work} requires isolation; "${commit.subject}" was not integrated from a task`);
+    else if (attempt !== cursor.attempt) fail(`${task ? "Task" : "Direct"} commit for ${work} does not belong to attempt ${cursor.attempt}`);
   }
   return replay;
 }
@@ -663,7 +659,7 @@ export function replayOutcomes(commits: readonly CommitInfo[]): OutcomeReplay {
  * no-verify transitions fail the audit.
  */
 export async function outcomeHistoryIssues(git: GitRepository, commits: readonly CommitInfo[]): Promise<OutcomeReplay["issues"]> {
-  const replay = replayOutcomes(commits);
+  const replay = replayOutcomes(commits, await optionalIsolationOpenings(git, commits));
   const issues = [...replay.issues];
   const invalid = (commit: CommitInfo, message: string): void => {
     issues.push({ code: "history-invalid-outcome-evidence", path: commit.hash.slice(0, 12), message });
