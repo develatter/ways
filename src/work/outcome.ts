@@ -269,7 +269,7 @@ export async function evaluateOutcome(cwd: string): Promise<{ commit: string; ev
   const missing = evidenceFailure(evidence, spec, attempt);
   if (missing) throw new Error(`Map every acceptance criterion to evidence in ${outcomeEvidencePath(state.id, attempt)}: ${missing}`);
 
-  const result = await runChecks(cwd);
+  const result = await runChecks(cwd, false, undefined, { services: true });
   const failures = [
     ...result.issues.map((issue) => `${issue.code}: ${issue.path}: ${issue.message}`),
     ...failedCheckDetails(result),
@@ -329,7 +329,7 @@ export async function closeOutcome(cwd: string): Promise<string> {
   const failure = await outcomeCloseFailure(git, state.id, await git.head(), review, attempt);
   if (failure) throw new Error(`Close refused: ${failure}`);
   // The evaluated tree is still HEAD's; re-running the checks means a hand-written evaluation cannot close failing work.
-  const checks = await runChecks(cwd);
+  const checks = await runChecks(cwd, false, undefined, { services: true });
   const failing = [...checks.issues.map((issue) => `${issue.code}: ${issue.path}`), ...failedCheckDetails(checks), ...(!checks.checks && checks.testExitCode !== 0 ? [`test: exit code ${checks.testExitCode}`] : [])];
   if (failing.length > 0) throw new Error(`Close refused: checks fail on the evaluated input:\n${failing.join("\n")}`);
   for (const task of state.tasks) {
