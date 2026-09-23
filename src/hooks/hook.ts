@@ -9,6 +9,7 @@ import { attemptNumber, attemptPhasePath, attemptReviewPath, isPriorAttemptArtif
 import { remediationEvidenceFailure } from "../work/remediation.js";
 import { validationFailureRecordFailure, validationFailureReplayFailure } from "../work/validation-failure.js";
 import { committedMismatch } from "../work/sdd.js";
+import { closeCommitExtraPaths, OUTCOME_PHASES, outcomeCloseFailure, outcomeEvaluationPath, outcomeReviewPath } from "../work/outcome.js";
 
 export interface HookVerdict {
   accepted: boolean;
@@ -125,6 +126,23 @@ async function headHasManifest(git: GitRepository): Promise<boolean> {
   }
 }
 
+/** Isolation is required: outside its own transitions, an outcome work only accepts integrated task commits. */
+async function outcomeCommitFailure(git: GitRepository, active: WorkState, trailers: ReturnType<typeof parseTrailers>): Promise<string | undefined> {
+  if (trailers.phase === OUTCOME_PHASES.open) return trailers.state === "opened" ? undefined : "opening commits carry Harness-State: opened";
+  if (trailers.phase === OUTCOME_PHASES.execute) {
+    if (trailers.state !== "completed" || active.stage !== "evaluate") return "execution is certified only by ways outcome evaluate";
+    try {
+      const evaluation = JSON.parse(await git.run(["show", `:${outcomeEvaluationPath(active.id, active.attempt)}`])) as { inputCommit?: string; passed?: boolean };
+      if (evaluation.inputCommit !== await git.head() || evaluation.passed !== true) return "execution certification needs a passing evaluation of HEAD";
+    } catch {
+      return "execution certification must stage its evaluation";
+    }
+    return undefined;
+  }
+  if (active.stage !== "execute") return "the evaluated increment is frozen; close it or cancel the work";
+  return trailers.task ? undefined : "isolation is required; commit in a task worktree (ways task prepare) and integrate it";
+}
+
 export async function judgeCommitMessage(cwd: string, message: string): Promise<HookVerdict> {
   const trailers = parseTrailers(message);
   const git = new GitRepository(cwd);
@@ -173,6 +191,11 @@ export async function judgeCommitMessage(cwd: string, message: string): Promise<
         const failure = await stagedPriorArtifactFailure(git, active);
         if (failure) return { accepted: false, reason: failure };
       }
+      if (active.mode === "outcome") {
+        const failure = await outcomeCommitFailure(git, active, trailers);
+        if (failure) return { accepted: false, reason: `Outcome ${active.id}: ${failure}` };
+        return { accepted: true, reason: `Commit traced to active outcome work ${active.id}` };
+      }
       const certified = active.lastCompletedPhase;
       const certifying = trailers.state === "completed" && certified !== undefined && trailers.phase === certified;
       if (certifying && requiresApproval({ ...active, phase: certified })) {
@@ -187,8 +210,22 @@ export async function judgeCommitMessage(cwd: string, message: string): Promise<
   const closing = await headState(git);
   if (closing) {
     const traced = trailers.work === closing.id && trailers.state !== undefined && CLOSING_STATES.has(trailers.state);
-    const phased = closing.mode !== "sdd" || trailers.state === "cancelled" || trailers.phase === "close";
+    const phased = closing.mode === "outcome"
+      ? trailers.state === "cancelled" || trailers.phase === OUTCOME_PHASES.close
+      : closing.mode !== "sdd" || trailers.state === "cancelled" || trailers.phase === "close";
     if (traced && phased && trailerAttemptMatches(trailers.attempt, closing.attempt) && await stagesStateDeletion(git)) {
+      if (closing.mode === "outcome" && trailers.phase === OUTCOME_PHASES.close) {
+        const extra = closeCommitExtraPaths((await git.run(["diff", "--cached", "--name-only", "HEAD"])).split("\n").filter(Boolean), closing.id, closing.attempt);
+        if (extra.length > 0) return { accepted: false, reason: `Close of outcome ${closing.id} may only record its review: ${extra.join(", ")}` };
+        let review: unknown;
+        try {
+          review = JSON.parse(await git.run(["show", `:${outcomeReviewPath(closing.id, closing.attempt)}`]));
+        } catch {
+          review = undefined;
+        }
+        const failure = await outcomeCloseFailure(git, closing.id, await git.head(), review, closing.attempt ?? 0);
+        if (failure) return { accepted: false, reason: `Close of outcome ${closing.id} refused: ${failure}` };
+      }
       if (trailers.phase === "close" && requiresApproval({ ...closing, phase: "close" })) {
         const failure = await deletedApprovalFailure(git, closing);
         if (failure) return { accepted: false, reason: `Human gate close of ${closing.id}: ${failure}` };

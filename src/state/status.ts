@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { STATUS_PATH } from "../domain/constants.js";
-import type { ApprovalProfile, ExecutionMode, Mode, RemediationMetadata, SddPhase, WorkState, WorkStatus } from "../domain/types.js";
+import type { ApprovalProfile, ExecutionMode, Mode, OutcomeStage, RemediationMetadata, SddPhase, WorkState, WorkStatus } from "../domain/types.js";
 import { workflowForState } from "../domain/workflow.js";
 import { stableJson, writeAtomic } from "../fs/files.js";
 import { GitRepository } from "../git/git.js";
@@ -14,6 +14,8 @@ export interface StatusSummary {
   id?: string;
   status?: WorkStatus;
   phase?: SddPhase;
+  /** Outcome work only. */
+  stage?: OutcomeStage;
   profile?: ApprovalProfile;
   execution?: ExecutionMode;
   humanGate?: boolean;
@@ -39,6 +41,7 @@ export function projectStatus(state: WorkState | undefined, now = new Date().toI
     summary.phase = state.phase;
     summary.humanGate = state.profile === "supervised" && state.mode === "sdd" && workflowForState(state).isHumanGate(state.phase);
   }
+  if (state.stage) summary.stage = state.stage;
   if (state.profile) summary.profile = state.profile;
   if (state.execution) summary.execution = state.execution;
   if (state.attempt && state.attempt > 0) summary.attempt = state.attempt;

@@ -8,6 +8,7 @@ import { auditHistory, commitsAfter, type HistoryCheckpoint } from "../integrity
 import { loadState, removeState, saveState } from "../state/store.js";
 import { remediationRecordPath } from "../work/attempt.js";
 import { assertSddConsistency } from "../work/sdd.js";
+import { assertOutcomeConsistency } from "../work/outcome.js";
 
 export interface RepairDiagnosis {
   consistent: boolean;
@@ -18,6 +19,14 @@ export interface RepairDiagnosis {
 export async function diagnose(cwd: string): Promise<RepairDiagnosis> {
   const state = await loadState(cwd);
   if (!state) return { consistent: true, message: "No active state" };
+  if (state.mode === "outcome") {
+    try {
+      await assertOutcomeConsistency(cwd, state);
+      return { consistent: true, message: `Outcome work is consistent with Git (${state.stage})`, state };
+    } catch (error) {
+      return { consistent: false, message: error instanceof Error ? error.message : String(error), state };
+    }
+  }
   if (state.mode !== "sdd") return { consistent: true, message: `Active ${state.mode} work has valid state`, state };
   try {
     await assertSddConsistency(cwd, state);

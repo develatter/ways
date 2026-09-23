@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { SDD_DIR, STATE_PATH, STATUS_PATH } from "../domain/constants.js";
+import { OUTCOME_DIR, SDD_DIR, STATE_PATH, STATUS_PATH } from "../domain/constants.js";
 import type { WorkState } from "../domain/types.js";
 import { GitRepository } from "../git/git.js";
 import { attemptNumber, remediationTransitionCommit } from "./attempt.js";
@@ -11,7 +11,8 @@ const BOOKKEEPING = [STATUS_PATH, `${STATE_PATH}`];
 
 function isBookkeeping(path: string): boolean {
   if (BOOKKEEPING.includes(path)) return true;
-  return new RegExp(`^${SDD_DIR}/[^/]+/(?:attempts/[0-9]+/)?(approvals|reviews)/`).test(path);
+  return new RegExp(`^${SDD_DIR}/[^/]+/(?:attempts/[0-9]+/)?(approvals|reviews)/`).test(path)
+    || new RegExp(`^${OUTCOME_DIR}/[^/]+/attempts/[0-9]+/reviews/`).test(path);
 }
 
 /**
@@ -26,6 +27,7 @@ const DIGEST_EXCLUDES = [
   `:(exclude,glob)${SDD_DIR}/*/reviews/**`,
   `:(exclude,glob)${SDD_DIR}/*/attempts/*/approvals/**`,
   `:(exclude,glob)${SDD_DIR}/*/attempts/*/reviews/**`,
+  `:(exclude,glob)${OUTCOME_DIR}/*/attempts/*/reviews/**`,
 ];
 
 // Mnemonic prefixes differ between worktree and tree comparisons (c/w vs a/b),

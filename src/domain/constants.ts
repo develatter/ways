@@ -7,5 +7,6 @@ export const INDEX_DIR = `${WAYS_DIR}/indexes`;
 export const MEMORY_DIR = `${WAYS_DIR}/memory`;
 export const PLAN_DIR = `${WAYS_DIR}/plans`;
 export const SDD_DIR = `${WAYS_DIR}/sdd`;
+export const OUTCOME_DIR = `${WAYS_DIR}/outcomes`;
 export const STATUS_PATH = `${WAYS_DIR}/status.json`;
 export const HOOKS_DIR = `${WAYS_DIR}/hooks`;

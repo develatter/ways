@@ -8,6 +8,7 @@ import { loadState } from "../state/store.js";
 import { attemptPhasePath, attemptReviewPath, isPriorAttemptArtifact, remediationRecordPath } from "../work/attempt.js";
 import { remediationEvidenceFailure } from "../work/remediation.js";
 import { committedValidationFailureFailure } from "../work/validation-failure.js";
+import { outcomeHistoryIssues } from "../work/outcome.js";
 import type { IntegrityIssue } from "./integrity.js";
 
 export interface HistoryOptions {
@@ -292,6 +293,7 @@ export async function auditHistory(git: GitRepository, allCommits: readonly Comm
     ...await remediationEvidenceIssues(git, replayed.checkpoints),
     ...await validationFailureIssues(git, commits),
     ...await priorArtifactMutationIssues(git, commits),
+    ...await outcomeHistoryIssues(git, commits),
   ] };
 }
 

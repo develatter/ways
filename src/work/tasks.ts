@@ -9,9 +9,14 @@ import { commitsAfter } from "../integrity/history.js";
 import { loadState, saveState } from "../state/store.js";
 import { attemptNumber, attemptPhasePath, isPriorAttemptArtifact, remediationTransitionCommit } from "./attempt.js";
 
-function requireSdd(state: WorkState | undefined): WorkState {
-  if (!state || state.mode !== "sdd") throw new Error("No active SDD work");
+function requireTaskWork(state: WorkState | undefined): WorkState {
+  if (!state || (state.mode !== "sdd" && state.mode !== "outcome")) throw new Error("No active SDD or outcome work");
   return state;
+}
+
+/** Outcome work runs tasks throughout execution; SDD confines them to implement. */
+function executing(state: WorkState): boolean {
+  return state.mode === "outcome" ? state.stage === "execute" : state.phase === "implement";
 }
 
 function taskAttempt(task: TaskState): number {
@@ -33,13 +38,13 @@ function taskAttemptTrailer(infoAttempt: string | undefined, attempt: number): b
 }
 
 function canAddTask(state: WorkState): boolean {
-  return state.phase === "decompose"
+  return (state.mode === "outcome" && state.stage === "execute") || state.phase === "decompose"
     || (state.phase === "implement" && attemptNumber(state.attempt) > 0 && state.remediation?.attempt === state.attempt);
 }
 
 export async function addTask(cwd: string, id: string, title: string, dependsOn: string[] = []): Promise<TaskState> {
-  const state = requireSdd(await loadState(cwd));
-  if (!canAddTask(state)) throw new Error("Tasks can only be defined during decompose or remediated implement");
+  const state = requireTaskWork(await loadState(cwd));
+  if (!canAddTask(state)) throw new Error("Tasks can only be defined during decompose, remediated implement or outcome execution");
   if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(id)) throw new Error("Task id must be a lowercase slug");
   if (!title.trim()) throw new Error("Task title is required");
   if (state.tasks.some((task) => task.id === id)) throw new Error(`Task already exists: ${id}`);
@@ -61,8 +66,8 @@ export async function addTask(cwd: string, id: string, title: string, dependsOn:
 }
 
 export async function prepareTask(cwd: string, id: string): Promise<TaskState> {
-  const state = requireSdd(await loadState(cwd));
-  if (state.phase !== "implement") throw new Error("Task worktrees can only be prepared during implement");
+  const state = requireTaskWork(await loadState(cwd));
+  if (!executing(state)) throw new Error("Task worktrees can only be prepared during implement or outcome execution");
   const task = requireCurrentTask(state, id);
   const incomplete = task.dependsOn.filter((dependency) => state.tasks.find((candidate) => candidate.id === dependency)?.status !== "completed");
   if (incomplete.length > 0) throw new Error(`Incomplete dependencies: ${incomplete.join(", ")}`);
@@ -99,8 +104,8 @@ async function priorArtifactChangedBy(git: GitRepository, commit: string, workId
 }
 
 export async function integrateTask(cwd: string, id: string, commits: string[]): Promise<TaskState> {
-  const state = requireSdd(await loadState(cwd));
-  if (state.phase !== "implement") throw new Error("Tasks can only be integrated during implement");
+  const state = requireTaskWork(await loadState(cwd));
+  if (!executing(state)) throw new Error("Tasks can only be integrated during implement or outcome execution");
   const task = requireCurrentTask(state, id);
   if (task.status !== "active" || !task.branch || !task.worktree) throw new Error(`Task must be prepared before integration: ${id}`);
   if (commits.length === 0) throw new Error("At least one commit is required");
