@@ -31,6 +31,7 @@ import {
   memoryCommitReviewDigest,
   requestDiscovery,
 } from "./memory/workflow.js";
+import { buildContext, renderContext } from "./context/context.js";
 import { queryKnowledgeResult } from "./query/query.js";
 import { adoptHead, diagnose, restoreStateFromHead, rollbackToLastGate } from "./repair/repair.js";
 import { projectStatus, readStatus, statusMatches } from "./state/status.js";
@@ -40,7 +41,7 @@ import { cancelQuick, finishQuick, startQuick } from "./work/quick.js";
 import { approveInteractively } from "./work/approve.js";
 import { reviewDigest, submitReview } from "./work/review.js";
 import { advanceSdd, downgradeSdd, startSdd } from "./work/sdd.js";
-import { cancelOutcome, closeOutcome, evaluateOutcome, openOutcome, outcomeMemoryReviewDigest, parseCriterion, submitOutcomeMemoryReview } from "./work/outcome.js";
+import { cancelOutcome, closeOutcome, evaluateOutcome, openOutcome, outcomeMemoryReviewDigest, parseCriterion, remediateOutcome, submitOutcomeMemoryReview } from "./work/outcome.js";
 import { remediateSdd } from "./work/remediation.js";
 import { recordValidationFailure } from "./work/validation-failure.js";
 import { addTask, integrateTask, prepareTask } from "./work/tasks.js";
@@ -127,6 +128,12 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
     throw new Error("Usage: ways repair [diagnose|adopt-head|restore-state|last-gate --discard]");
   }
 
+  if (command === "context") {
+    const packet = await buildContext(cwd);
+    process.stdout.write(args.includes("--json") ? stableJson(packet) : renderContext(packet));
+    return 0;
+  }
+
   if (command === "status") {
     const state = await loadState(cwd);
     if (args.includes("--json")) {
@@ -188,7 +195,7 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
 
   if (command === "outcome") {
     const [action, id] = args;
-    const usage = "Usage: ways outcome open <id> --goal=<text> --criterion=<ID>:<text>... [--memory=none|normal|high] | evaluate | memory-review digest | memory-review submit <review.json> | close | cancel";
+    const usage = "Usage: ways outcome open <id> --goal=<text> --criterion=<ID>:<text>... [--memory=none|normal|high] | evaluate | remediate --reason=<text> | memory-review digest | memory-review submit <review.json> | close | cancel";
     if (action === "open" && id) {
       const criteria = options(args, "--criterion").map(parseCriterion);
       const memory = args.find((arg) => arg.startsWith("--memory="))?.slice(9) ?? "normal";
@@ -209,6 +216,10 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
     if (action === "evaluate") {
       const { commit, evaluation } = await evaluateOutcome(cwd);
       console.log(`Evaluation passed on ${evaluation.inputCommit.slice(0, 12)}; execution certified: ${commit}. Obtain an independent review of \`ways review digest\`.`);
+      return 0;
+    }
+    if (action === "remediate") {
+      console.log(`Remediation attempt opened: ${await remediateOutcome(cwd, requiredOption(args, "--reason"))}. Fix it through new tasks, then run ways outcome evaluate.`);
       return 0;
     }
     if (action === "close") {

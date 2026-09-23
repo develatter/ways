@@ -117,12 +117,15 @@ npx ways task add write --title="Write the greeting" && npx ways task prepare wr
 npx ways task integrate write --commits=<sha>
 # map every criterion in .ways/outcomes/greeting/attempts/0/evidence.json
 npx ways outcome evaluate        # runs the configured checks against the executed input
+npx ways outcome remediate --reason=<text>  # new attempt after a recorded failure or blocking review
 npx ways review digest           # an independent reviewer binds a review to this digest
 npx ways review submit review.json
 npx ways outcome close
 ```
 
 The goal and stable criterion identifiers are committed at open and cannot change afterwards. The first slice uses a fixed conservative policy: production changes arrive only through integrated task worktrees, `evaluate` refuses missing criterion evidence or failing checks, and `close` refuses without a passing, fresh, digest-bound review. The commit hook, `ways check --history`, `ways status` and `ways repair diagnose` all understand the workflow and reject skipped transitions, direct commits and forged or tampered evidence.
+
+Remediation is additive. A failing `evaluate` commits a replayable check-failure record for the attempt; a blocking review stays pending. `ways outcome remediate --reason=<text>` then opens attempt n+1 from that evidence, and the attempt needs new tasks, its own evaluation and a fresh review. Artifacts of earlier attempts are immutable, and the hook and the history audit reject forged failures, remediations and rewrites.
 
 Memory assurance is chosen at open with `--memory=none|normal|high` (default `normal`) and stored in the immutable spec; there is no blanket reconciliation phase:
 
@@ -181,6 +184,8 @@ Provider notes: Codex and Cursor only load project hooks in trusted projects, an
 ## Observable status
 
 `.ways/status.json` is a tracked, derived projection of the active state: `active`, `mode`, `id`, `status`, `phase`, `profile`, `humanGate`, `gateCommit`, `updatedAt`, and, for remediation attempts after attempt zero, `attempt` plus `remediation`. It is rewritten on every transition, verified by integrity, and cheap to read from any agent statusline. `ways status --json` prints the same object. Attempt-zero output keeps its original shape.
+
+`ways context [--json]` prints a resumable packet for a fresh session (`schemaVersion: 1`): HEAD, the active work (mode, stage or phase, attempt, profile, uncommitted paths, and the recorded remediation on later attempts), its tasks with the ones genuinely ready (every dependency completed and its commits reachable from HEAD), every outcome in the repository with its status (`open`, `closed`, `cancelled`, `incomplete`), and links (path and title) to relevant OKF concepts. For outcome work it adds the committed goal and criteria, per-criterion evidence (`missing`/`filled`) and evaluation (`absent`, `stale` when anything close would refuse changed since the evaluated input, including evidence edited after evaluation, `passed`, `failed`), the review status (`absent`, `invalid`, `stale` on digest mismatch, `pass`, `fail`) and the remaining blockers. An idle repository yields `active: null`. Context never writes anything, contains no wall-clock time, and reports `divergence` from the same checks as `ways repair diagnose` instead of failing.
 
 Upgrades compare managed-file hashes and never overwrite modified files without checklist approval.
 

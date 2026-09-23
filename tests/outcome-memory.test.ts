@@ -103,7 +103,7 @@ describe("outcome memory assurance tiers", () => {
   });
 
   it("normal: existing OKF validity is still enforced on knowledge in the increment", async () => {
-    await expect(evaluated("normal", "---\ntype: faq\nstatus: stable\n---\n\n# Unsourced\n")).rejects.toThrow(/Evaluation failed:\n.*greeting\.md/);
+    await expect(evaluated("normal", "---\ntype: faq\nstatus: stable\n---\n\n# Unsourced\n")).rejects.toThrow(/Evaluation failed and was recorded[^]*greeting\.md/);
   });
 
   it("high: close requires a fresh, passing, digest-bound memory review", async () => {
