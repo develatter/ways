@@ -1,9 +1,22 @@
 {
   "schemaVersion": 1,
-  "harnessVersion": "0.1.0",
+  "harnessVersion": "0.2.0",
   "testCommand": [
     "npm",
     "test"
   ],
-  "historySince": "c1025e0bd2efcb52364e26825252f92012a242d3"
+  "historySince": "c1025e0bd2efcb52364e26825252f92012a242d3",
+  "memory": {
+    "releaseBranch": "master",
+    "reconciliationBranchPattern": "reconcile/*",
+    "relevantPaths": [
+      "**/*"
+    ],
+    "excludedPaths": [
+      ".git/**",
+      ".ways/**",
+      "dist/**",
+      "node_modules/**"
+    ]
+  }
 }
