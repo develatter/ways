@@ -15,7 +15,7 @@ import { HARNESS_NAME, HARNESS_VERSION } from "./index.js";
 import { writeIndexes } from "./knowledge/indexes.js";
 import type { MemoryState, ReconciliationEvidence } from "./memory/model.js";
 import { inspectOkf } from "./knowledge/okf.js";
-import type { NamedChecksConfig } from "./domain/types.js";
+import { MEMORY_TIERS, type MemoryTier, type NamedChecksConfig } from "./domain/types.js";
 import {
   inspectReconciliationCandidate,
   validateBackSyncMerge,
@@ -40,7 +40,7 @@ import { cancelQuick, finishQuick, startQuick } from "./work/quick.js";
 import { approveInteractively } from "./work/approve.js";
 import { reviewDigest, submitReview } from "./work/review.js";
 import { advanceSdd, downgradeSdd, startSdd } from "./work/sdd.js";
-import { cancelOutcome, closeOutcome, evaluateOutcome, openOutcome, parseCriterion } from "./work/outcome.js";
+import { cancelOutcome, closeOutcome, evaluateOutcome, openOutcome, outcomeMemoryReviewDigest, parseCriterion, submitOutcomeMemoryReview } from "./work/outcome.js";
 import { remediateSdd } from "./work/remediation.js";
 import { recordValidationFailure } from "./work/validation-failure.js";
 import { addTask, integrateTask, prepareTask } from "./work/tasks.js";
@@ -188,11 +188,22 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
 
   if (command === "outcome") {
     const [action, id] = args;
-    const usage = "Usage: ways outcome open <id> --goal=<text> --criterion=<ID>:<text>... | evaluate | close | cancel";
+    const usage = "Usage: ways outcome open <id> --goal=<text> --criterion=<ID>:<text>... [--memory=none|normal|high] | evaluate | memory-review digest | memory-review submit <review.json> | close | cancel";
     if (action === "open" && id) {
       const criteria = options(args, "--criterion").map(parseCriterion);
-      await openOutcome(cwd, id, requiredOption(args, "--goal"), criteria);
-      console.log(`Outcome ${id} opened with ${criteria.length} acceptance criteria; execute through tasks, then run ways outcome evaluate.`);
+      const memory = args.find((arg) => arg.startsWith("--memory="))?.slice(9) ?? "normal";
+      if (!(MEMORY_TIERS as readonly string[]).includes(memory)) throw new Error("--memory must be none, normal or high");
+      await openOutcome(cwd, id, requiredOption(args, "--goal"), criteria, memory as MemoryTier);
+      console.log(`Outcome ${id} opened with ${criteria.length} acceptance criteria and ${memory} memory assurance; execute through tasks, then run ways outcome evaluate.`);
+      return 0;
+    }
+    if (action === "memory-review" && id === "digest") {
+      console.log(await outcomeMemoryReviewDigest(cwd));
+      return 0;
+    }
+    if (action === "memory-review" && id === "submit" && args[2]) {
+      const result = await submitOutcomeMemoryReview(cwd, args[2]);
+      console.log(`Memory review recorded: ${result.verdict}`);
       return 0;
     }
     if (action === "evaluate") {

@@ -22,11 +22,21 @@ export interface OutcomeCriterion {
   text: string;
 }
 
-/** The fixed conservative policy of the first outcome slice. */
+/**
+ * Memory assurance of an outcome increment: none forbids knowledge changes,
+ * normal lets sourced knowledge travel with the change, high requires a
+ * digest-bound memory review before close.
+ */
+export type MemoryTier = "none" | "normal" | "high";
+export const MEMORY_TIERS: readonly MemoryTier[] = ["none", "normal", "high"];
+
+/** The conservative policy of an outcome work, fixed when it opens. */
 export interface OutcomePolicy {
   isolation: "required";
   independentEvaluation: "required";
   checks: "configured";
+  /** Absent in specs opened before memory tiers existed; read as normal. */
+  memory?: MemoryTier;
 }
 
 /** Immutable goal and acceptance criteria committed when an outcome work opens. */

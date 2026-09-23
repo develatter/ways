@@ -9,7 +9,7 @@ import { attemptNumber, attemptPhasePath, attemptReviewPath, isPriorAttemptArtif
 import { remediationEvidenceFailure } from "../work/remediation.js";
 import { validationFailureRecordFailure, validationFailureReplayFailure } from "../work/validation-failure.js";
 import { committedMismatch } from "../work/sdd.js";
-import { closeCommitExtraPaths, OUTCOME_PHASES, outcomeCloseFailure, outcomeEvaluationPath, outcomeReviewPath } from "../work/outcome.js";
+import { closeCommitExtraPaths, OUTCOME_PHASES, outcomeCloseFailure, outcomeEvaluationPath, outcomeMemoryReviewPath, outcomeReviewPath } from "../work/outcome.js";
 
 export interface HookVerdict {
   accepted: boolean;
@@ -220,13 +220,15 @@ export async function judgeCommitMessage(cwd: string, message: string): Promise<
       if (closing.mode === "outcome" && trailers.phase === OUTCOME_PHASES.close) {
         const extra = closeCommitExtraPaths((await git.run(["diff", "--cached", "--name-only", "HEAD"])).split("\n").filter(Boolean), closing.id, closing.attempt);
         if (extra.length > 0) return { accepted: false, reason: `Close of outcome ${closing.id} may only record its review: ${extra.join(", ")}` };
-        let review: unknown;
-        try {
-          review = JSON.parse(await git.run(["show", `:${outcomeReviewPath(closing.id, closing.attempt)}`]));
-        } catch {
-          review = undefined;
-        }
-        const failure = await outcomeCloseFailure(git, closing.id, await git.head(), review, closing.attempt ?? 0);
+        const staged = async (path: string): Promise<unknown> => {
+          try {
+            return JSON.parse(await git.run(["show", `:${path}`]));
+          } catch {
+            return undefined;
+          }
+        };
+        const failure = await outcomeCloseFailure(git, closing.id, await git.head(), await staged(outcomeReviewPath(closing.id, closing.attempt)),
+          closing.attempt ?? 0, await staged(outcomeMemoryReviewPath(closing.id, closing.attempt)));
         if (failure) return { accepted: false, reason: `Close of outcome ${closing.id} refused: ${failure}` };
       }
       if (trailers.phase === "close" && requiresApproval({ ...closing, phase: "close" })) {
