@@ -286,7 +286,8 @@ export async function evaluateOutcome(cwd: string): Promise<{ commit: string; ev
   }
   const isolation = isolationFailure(await commitsBetween(git, open.hash, "HEAD"), state.id, state);
   if (isolation) throw new Error(`Isolation is required: ${isolation}`);
-  const allowed = new Set([STATE_PATH, STATUS_PATH, outcomeEvidencePath(state.id, attempt)]);
+  // A failure record left by an interrupted evaluation is rewritten below.
+  const allowed = new Set([STATE_PATH, STATUS_PATH, outcomeEvidencePath(state.id, attempt), outcomeCheckFailurePath(state.id, attempt)]);
   const unrelated = (await dirtyPaths(git)).filter((path) => !allowed.has(path));
   if (unrelated.length > 0) throw new Error(`Uncommitted changes outside the evidence file block evaluation: ${unrelated.join(", ")}`);
 
@@ -346,6 +347,12 @@ export async function evaluateOutcome(cwd: string): Promise<{ commit: string; ev
   return { commit, evaluation };
 }
 
+/** The commit recording a failed evaluation of the active attempt, if any; that attempt accepts no more changes. */
+export async function attemptFailureCommit(git: GitRepository, workId: string, attempt: number): Promise<CommitInfo | undefined> {
+  const open = await outcomeOpenCommit(git, workId);
+  return open ? recordedFailure(git, open.hash, workId, attempt) : undefined;
+}
+
 /** The commit recording a failed evaluation in `attempt`, if any. */
 async function recordedFailure(git: GitRepository, openCommit: string, workId: string, attempt: number): Promise<CommitInfo | undefined> {
   return (await commitsBetween(git, openCommit, "HEAD")).find((commit) => commit.trailers.work === workId
@@ -370,6 +377,13 @@ export async function remediateOutcome(cwd: string, reason: string): Promise<str
   if (!reason.trim()) throw new Error("A remediation reason is required");
   await assertOutcomeConsistency(cwd, state);
   const git = new GitRepository(cwd);
+  const committed = await showJson(git, "HEAD", STATE_PATH) as WorkState | undefined;
+  if (state.remediation && state.attempt !== undefined && state.attempt === (committed?.attempt ?? 0) + 1) {
+    // Interrupted after writing the new attempt: commit it; the hook re-verifies it.
+    const paths = [STATE_PATH, STATUS_PATH, outcomeRemediationPath(state.id, state.attempt), outcomeEvidencePath(state.id, state.attempt)];
+    if (state.remediation.source === "review") paths.push(outcomeReviewPath(state.id, state.attempt - 1));
+    return commitRemediation(git, state, paths);
+  }
   const attempt = state.attempt ?? 0;
   const head = await git.head();
   const open = (await outcomeOpenCommit(git, state.id))!;
@@ -409,8 +423,12 @@ export async function remediateOutcome(cwd: string, reason: string): Promise<str
   state.remediation = metadata;
   state.updatedAt = metadata.timestamp;
   await saveState(cwd, state);
-  return git.commit(await git.changedPaths(), `outcome(evaluate): remediate ${state.id} in attempt ${next}`, {
-    work: state.id, phase: OUTCOME_PHASES.evaluate, state: OUTCOME_STATES.remediated, attempt: String(next),
+  return commitRemediation(git, state, await git.changedPaths());
+}
+
+async function commitRemediation(git: GitRepository, state: WorkState, paths: string[]): Promise<string> {
+  return git.commit(paths, `outcome(evaluate): remediate ${state.id} in attempt ${state.attempt}`, {
+    work: state.id, phase: OUTCOME_PHASES.evaluate, state: OUTCOME_STATES.remediated, attempt: String(state.attempt),
   });
 }
 

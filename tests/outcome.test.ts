@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { bootstrap } from "../src/bootstrap/bootstrap.js";
+import { run } from "../src/cli.js";
 import { GitRepository } from "../src/git/git.js";
 import { checkHistory } from "../src/integrity/history.js";
 import { checkIntegrity } from "../src/integrity/integrity.js";
@@ -250,5 +251,43 @@ describe("outcome remediation", () => {
     await git.run(["commit", "-q", "--allow-empty", "--no-verify", "-m", "forged", "-m", "Harness-Work: hello\nHarness-Phase: outcome-evaluate\nHarness-State: outcome-remediated\nHarness-Attempt: 1"]);
     const codes = (await checkHistory(cwd)).map((issue) => issue.code);
     expect(codes).toContain("history-outcome-broken-chain");
+  });
+
+  it("refuses changes to a failed attempt and recovers through the CLI", async () => {
+    const { cwd, git } = await repository(HELLO_TEST);
+    await openOutcome(cwd, "hello", "Say hello", CRITERIA);
+    await executeTask(cwd, "bye\n");
+    await writeEvidence(cwd);
+    await expect(evaluateOutcome(cwd)).rejects.toThrow(/recorded/);
+    // A fix landing in the failed attempt would strand the work; it must wait for remediation.
+    await expect(executeTask(cwd, "hello\n", "early-fix")).rejects.toThrow(/recorded evaluation failure; run ways outcome remediate/);
+    expect(await run(["outcome", "remediate", "--reason=feature.txt says bye"], cwd)).toBe(0);
+    await executeTask(cwd, "hello\n", "fix", 1);
+    expect(await run(["outcome", "evaluate"], cwd)).toBe(0);
+    await review(cwd, "pass", 1);
+    expect(await run(["outcome", "close"], cwd)).toBe(0);
+    expect(await checkHistory(cwd)).toEqual([]);
+  });
+
+  it("resumes an interrupted failed evaluation and an interrupted remediation", async () => {
+    const { cwd, git } = await repository(HELLO_TEST);
+    await openOutcome(cwd, "hello", "Say hello", CRITERIA);
+    await executeTask(cwd, "bye\n");
+    await writeEvidence(cwd);
+    await expect(evaluateOutcome(cwd)).rejects.toThrow(/recorded/);
+    // Interrupted before the failure commit: the record is written but not committed.
+    await git.run(["reset", "-q", "--soft", "HEAD~1"]);
+    await expect(evaluateOutcome(cwd)).rejects.toThrow(/Evaluation failed and was recorded/);
+    await remediateOutcome(cwd, "feature.txt says bye");
+    // Interrupted before the remediation commit: the new attempt is written but not committed.
+    await git.run(["reset", "-q", "--soft", "HEAD~1"]);
+    await remediateOutcome(cwd, "feature.txt says bye");
+    expect(await git.status()).toEqual([]);
+    expect(await loadState(cwd)).toMatchObject({ attempt: 1, stage: "execute" });
+    await executeTask(cwd, "hello\n", "fix", 1);
+    await evaluateOutcome(cwd);
+    await review(cwd, "pass", 1);
+    await closeOutcome(cwd);
+    expect(await checkHistory(cwd)).toEqual([]);
   });
 });

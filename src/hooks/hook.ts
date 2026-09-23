@@ -9,7 +9,7 @@ import { attemptNumber, attemptPhasePath, attemptReviewPath, isPriorAttemptArtif
 import { remediationEvidenceFailure } from "../work/remediation.js";
 import { validationFailureRecordFailure, validationFailureReplayFailure } from "../work/validation-failure.js";
 import { committedMismatch } from "../work/sdd.js";
-import { closeCommitExtraPaths, isPriorOutcomeArtifact, OUTCOME_PHASES, OUTCOME_STATES, outcomeCheckFailurePath, outcomeCloseFailure, outcomeEvaluationPath, outcomeEvidencePath, outcomeReviewPath, remediationContentFailure } from "../work/outcome.js";
+import { attemptFailureCommit, closeCommitExtraPaths, isPriorOutcomeArtifact, OUTCOME_PHASES, OUTCOME_STATES, outcomeCheckFailurePath, outcomeCloseFailure, outcomeEvaluationPath, outcomeEvidencePath, outcomeReviewPath, remediationContentFailure } from "../work/outcome.js";
 
 export interface HookVerdict {
   accepted: boolean;
@@ -172,6 +172,7 @@ async function outcomeCommitFailure(git: GitRepository, active: WorkState, trail
     return undefined;
   }
   if (active.stage !== "execute") return "the evaluated increment is frozen; close it or cancel the work";
+  if (await attemptFailureCommit(git, active.id, attempt)) return `attempt ${attempt} has a recorded evaluation failure; run ways outcome remediate --reason=<text> first`;
   return trailers.task ? undefined : "isolation is required; commit in a task worktree (ways task prepare) and integrate it";
 }
 
