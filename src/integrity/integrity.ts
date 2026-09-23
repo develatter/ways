@@ -13,6 +13,7 @@ import { isPriorAttemptArtifact, remediationRecordPath, remediationTransitionCom
 import { remediationEvidenceFailure } from "../work/remediation.js";
 import { committedValidationFailureFailure } from "../work/validation-failure.js";
 import { assertSddConsistency } from "../work/sdd.js";
+import { assertOutcomeConsistency } from "../work/outcome.js";
 
 export interface IntegrityIssue {
   code: string;
@@ -142,6 +143,8 @@ export async function checkIntegrity(cwd: string): Promise<IntegrityIssue[]> {
             issues.push({ code: "prior-artifact-mutated", path: priorMutation, message: "Prior SDD attempt artifacts are immutable" });
           }
         }
+      } else if (activeState.mode === "outcome") {
+        await assertOutcomeConsistency(cwd, activeState);
       } else if (activeState.mode === "quick" && head !== activeState.baseCommit) {
         const commit = await git.lastCommit();
         if (commit.trailers.work !== activeState.id || commit.trailers.state !== "downgraded-quick") {

@@ -102,6 +102,28 @@ Parallel tasks run in isolated worktrees. The core creates task packets and inte
 
 Supervised profile (`--supervised`) opens the work with a traced commit that fixes the profile in Git, and adds human gates at intake, plan and close. The way through is `ways approve`, run by the human in a real terminal: it refuses without a TTY, shows the gate and digest, asks for the phase name to be typed, and writes `.ways/sdd/<id>/approvals/<phase>.json` bound to work, phase, gate commit and content digest. The gate, the commit-msg hook and the provider guard all verify that binding; there is no flag an agent can pass, flipping the profile on disk is rejected, and any edit after approval invalidates it. Validation failure records likewise bind an immutable input commit/tree and digest. Every verifier re-runs the recorded checks in a fresh detached worktree at that input and rejects a result that does not reproduce; it never switches the caller's worktree to historical content. What remains unverifiable locally is authorship: an actor with unrestricted shell access can fabricate a record only when it describes a failure that the replay also observes. These checks establish Git linkage and reproducible results, not the identity of a local author.
 
+## Outcome workflow (experimental)
+
+An opt-in alternative to SDD that constrains results instead of reasoning steps. SDD stays the default.
+
+```text
+open → execute → evaluate → close
+```
+
+```bash
+npx ways outcome open greeting --goal="Greet users" --criterion="AC1:greeting.txt says hi"
+npx ways task add write --title="Write the greeting" && npx ways task prepare write
+# implement and commit inside the task worktree, then:
+npx ways task integrate write --commits=<sha>
+# map every criterion in .ways/outcomes/greeting/attempts/0/evidence.json
+npx ways outcome evaluate        # runs the configured checks against the executed input
+npx ways review digest           # an independent reviewer binds a review to this digest
+npx ways review submit review.json
+npx ways outcome close
+```
+
+The goal and stable criterion identifiers are committed at open and cannot change afterwards. The first slice uses a fixed conservative policy: production changes arrive only through integrated task worktrees, `evaluate` refuses missing criterion evidence or failing checks, and `close` refuses without a passing, fresh, digest-bound review. The commit hook, `ways check --history`, `ways status` and `ways repair diagnose` all understand the workflow and reject skipped transitions, direct commits and forged or tampered evidence.
+
 ## Knowledge
 
 The current repository memory is an OKF v0.2 bundle under `.ways/knowledge/`. Supported core types are `system`, `component`, `convention`, `decision`, and `faq`; custom OKF types remain valid.

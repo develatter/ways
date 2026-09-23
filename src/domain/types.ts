@@ -1,4 +1,4 @@
-export const MODES = ["query", "quick", "plan", "sdd"] as const;
+export const MODES = ["query", "quick", "plan", "sdd", "outcome"] as const;
 export type Mode = (typeof MODES)[number];
 
 export type SddPhase =
@@ -13,6 +13,53 @@ export type SddPhase =
   | "validate"
   | "reconcile-memory"
   | "close";
+
+/** Externally meaningful stages of the outcome workflow; open and close are transitions, not stages. */
+export type OutcomeStage = "execute" | "evaluate";
+
+export interface OutcomeCriterion {
+  id: string;
+  text: string;
+}
+
+/** The fixed conservative policy of the first outcome slice. */
+export interface OutcomePolicy {
+  isolation: "required";
+  independentEvaluation: "required";
+  checks: "configured";
+}
+
+/** Immutable goal and acceptance criteria committed when an outcome work opens. */
+export interface OutcomeSpec {
+  schemaVersion: 1;
+  workId: string;
+  goal: string;
+  criteria: OutcomeCriterion[];
+  policy: OutcomePolicy;
+}
+
+/** Evidence the agent maps to every acceptance criterion before evaluation. */
+export interface OutcomeEvidence {
+  schemaVersion: 1;
+  workId: string;
+  attempt: number;
+  criteria: Record<string, { summary: string; checks?: CheckName[] }>;
+}
+
+/** Checks run by the harness against the immutable evaluated input. */
+export interface OutcomeEvaluation {
+  schemaVersion: 1;
+  workId: string;
+  attempt: number;
+  inputCommit: string;
+  inputTree: string;
+  checks: {
+    integrity: Array<{ code: string; path: string; message: string }>;
+    testExitCode?: number;
+    named?: NamedCheckEvidence[];
+  };
+  passed: boolean;
+}
 
 export type WorkStatus = "active" | "blocked" | "completed" | "cancelled";
 export type ApprovalProfile = "autonomous" | "supervised";
@@ -106,6 +153,8 @@ export interface WorkState {
   workflowVersion?: number;
   phase?: SddPhase;
   lastCompletedPhase?: SddPhase;
+  /** Present only on outcome work. */
+  stage?: OutcomeStage;
   planPath?: string;
   /** Absent on v1 state files and therefore interpreted as attempt zero. */
   attempt?: number;

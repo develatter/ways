@@ -168,5 +168,28 @@ describe("baseline end-to-end coverage", () => {
     expect(bin).toBeTruthy();
     await execFileSync("npx", ["--no-install", "ways", "bootstrap", `--test-command=${JSON.stringify([process.execPath, "-e", "process.exit(0)"])}`, "--no-adapters"], { cwd, stdio: "ignore" });
     await execFileSync("sh", [join(cwd, "scripts/check.sh")], { cwd, stdio: "ignore" });
+
+    // One complete outcome increment through the packed CLI, including a refused premature done claim.
+    const ways = (...args: string[]): string => execFileSync("npx", ["--no-install", "ways", ...args], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    await writeFile(join(cwd, ".gitignore"), "node_modules/\n");
+    await git.run(["add", "."]);
+    await git.run(["commit", "-q", "-m", "bootstrap ways"]);
+    ways("outcome", "open", "greeting", "--goal=Greet users", "--criterion=AC1:greeting.txt says hi");
+    ways("task", "add", "write", "--title=Write the greeting");
+    const task = JSON.parse(ways("task", "prepare", "write")) as { worktree: string };
+    await writeFile(join(task.worktree, "greeting.txt"), "hi\n");
+    const taskGit = new GitRepository(task.worktree);
+    const taskCommit = await taskGit.commit(["greeting.txt"], "feat: greeting", { work: "greeting", task: "write" });
+    ways("task", "integrate", "write", `--commits=${taskCommit}`);
+    expect(() => ways("outcome", "evaluate")).toThrow(/AC1 has no evidence summary/);
+    await writeFile(join(cwd, ".ways/outcomes/greeting/attempts/0/evidence.json"), JSON.stringify({ schemaVersion: 1, workId: "greeting", attempt: 0, criteria: { AC1: { summary: "greeting.txt contains hi", checks: ["test"] } } }));
+    ways("outcome", "evaluate");
+    expect(() => ways("outcome", "close")).toThrow(/independent review is required/);
+    const digest = ways("review", "digest").trim();
+    await writeFile(join(packDir, "review.json"), JSON.stringify({ schemaVersion: 1, workId: "greeting", reviewer: "reviewer", digest, verdict: "pass", findings: [] }));
+    ways("review", "submit", join(packDir, "review.json"));
+    ways("outcome", "close");
+    expect(ways("status")).toContain("No active mutating work.");
+    await execFileSync("sh", [join(cwd, "scripts/check.sh")], { cwd, stdio: "ignore" });
   });
 });

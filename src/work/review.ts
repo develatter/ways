@@ -6,6 +6,7 @@ import { stableJson, writeAtomic } from "../fs/files.js";
 import { loadState } from "../state/store.js";
 import { attemptNumber, attemptReviewPath } from "./attempt.js";
 import { implementationDigest } from "./digest.js";
+import { outcomeReviewDigest, outcomeReviewPath } from "./outcome.js";
 
 export function reviewBlocks(result: ReviewResult): string[] {
   const blockers: string[] = [];
@@ -24,23 +25,25 @@ function reviewAttemptFailure(value: ReviewResult, state: WorkState): string | u
 
 export async function submitReview(cwd: string, inputPath: string): Promise<ReviewResult> {
   const state = await loadState(cwd);
-  if (!state || state.mode !== "sdd" || state.phase !== "review") throw new Error("Reviews are accepted only during the review phase");
+  const outcome = state?.mode === "outcome" && state.stage === "evaluate";
+  if (!state || (!outcome && (state.mode !== "sdd" || state.phase !== "review"))) throw new Error("Reviews are accepted only during the review phase or outcome evaluation");
   const value: unknown = JSON.parse(await readFile(inputPath, "utf8"));
   if (!validateReview(value)) throw new Error(`Invalid review: ${validationDetails("review", value).errors.join("; ")}`);
   if (value.workId !== state.id) throw new Error("Review work id does not match active work");
   if (!value.reviewer.trim()) throw new Error("Independent reviewer identity is required");
   const attemptFailure = reviewAttemptFailure(value, state);
   if (attemptFailure) throw new Error(attemptFailure);
-  const digest = await implementationDigest(cwd, state);
+  const digest = outcome ? await outcomeReviewDigest(cwd, state) : await implementationDigest(cwd, state);
   if (value.digest !== digest) throw new Error(`Review digest ${value.digest.slice(0, 12)} does not match the current diff ${digest.slice(0, 12)}; review the current content and obtain it with \`ways review digest\``);
-  await writeAtomic(join(cwd, attemptReviewPath(state.id, state.attempt)), stableJson(value));
+  await writeAtomic(join(cwd, outcome ? outcomeReviewPath(state.id, state.attempt) : attemptReviewPath(state.id, state.attempt)), stableJson(value));
   return value;
 }
 
 /** Digest of the complete implementation cycle a reviewer must have looked at. */
 export async function reviewDigest(cwd: string): Promise<string> {
   const state = await loadState(cwd);
-  if (!state || state.mode !== "sdd" || state.phase !== "review") throw new Error("Review digests exist only during the review phase");
+  if (state?.mode === "outcome" && state.stage === "evaluate") return outcomeReviewDigest(cwd, state);
+  if (!state || state.mode !== "sdd" || state.phase !== "review") throw new Error("Review digests exist only during the review phase or outcome evaluation");
   return implementationDigest(cwd, state);
 }
 
