@@ -23,7 +23,7 @@ A and B differ only in the label passed to the adapter, which decides what it ru
 Every configuration uses the shipped public CLI; none is a mock of a workflow:
 
 - **C, lightweight state/evidence.** Ways state and mechanics without a process: a quick work traced by the commit hook, the configured checks run by `ways quick finish`, and an evidence file `evidence/<task-id>.json` of the form `{"schemaVersion":1,"task":"<task-id>","claims":[{"criterion":"…","evidence":"…"}]}` committed in the task's work. The evidence file is an eval convention, not a Ways artifact: it is the agent's own claim and is graded for presence and shape only. C has no immutable goal or criteria, no evaluation record, no review and no remediation record, which is exactly what separates it from E.
-- **D, full SDD.** The certified phase chain, reviews and validation of SDD.
+- **D, full SDD.** The certified phase chain, reviews and validation of SDD. SDD is deprecated for new work ([decision 0001](decisions/0001-outcome-default.md)), but D keeps asking for it explicitly so its results stay comparable; `ways sdd start` only adds a deprecation notice on stderr.
 - **E, simplified execute/evaluate.** The outcome workflow (`open → execute → evaluate → close`): an immutable spec with criteria and policies, an evaluation record bound to the executed input, replayable failure and remediation records, and the review the evaluation policy requires.
 
 ### Outcome policies (E)
@@ -60,8 +60,6 @@ A task can therefore succeed while bypassing its workflow, or comply while faili
 | `concurrent-conflict` | `conflict-format` | two independent changes to the same statement; delivered as parallel units of work, the second integration conflicts and must be resolved |
 
 `environmentChecks` are checks whose files are part of the task setup, visible to every configuration; C, D and E also run them through the configured test command. Success checks are held out and never shown to the agent. Each task result records `kind` and `environment` (`waysInstalled`, the configured `testCommand` or `null`, and the environment checks), so the commands every configuration could run are part of the evidence.
-
-SDD is deprecated for new work ([decision 0001](decisions/0001-outcome-default.md)), but D keeps asking for SDD explicitly so its results stay comparable with earlier runs; `ways sdd start` only adds a deprecation notice on stderr.
 
 ## Observable metrics
 

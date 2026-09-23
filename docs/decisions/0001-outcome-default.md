@@ -11,7 +11,9 @@ New work opens with `ways outcome open` (or `ways quick start` for a small chang
 
 ## Measured evidence available so far
 
-Only deterministic fixture evidence exists. The comparative eval framework (#16) is landing in parallel; its runner and grader are exercised in CI with synthetic adapters, whose reports state `architecturalClaim: false` (see [EVALS](../EVALS.md)). No real-model comparison of full SDD (D) against the lightweight-state (C) and simplified execute/evaluate (E) configurations has been recorded yet, so this decision does not cite success, cost, time or compliance numbers. Real-model comparative runs following the #16 instructions should confirm it; if they show that the outcome default loses task success or assurance against full SDD, revisit this record.
+Only deterministic fixture evidence exists. The comparative eval framework (#16) runs the same corpus under A–E, including E (`outcome`) against D (`full-sdd`), but CI exercises its runner, grader and report with synthetic adapters only, and fixture results say nothing about harness quality (see [EVALS](../EVALS.md)). No real-model run has been recorded, so this record cites no success, cost, time or compliance numbers.
+
+This is therefore a maintainer decision taken ahead of the evidence, not a result of the [decision thresholds](../EVALS.md#decision-thresholds), which have not been evaluated. Real-model runs following the [real-run instructions](../EVALS.md#real-runs) should confirm it. If E misses a threshold against D (success regression, new assurance violations, failing assurance-specific tasks), revisit this record; the legacy SDD path remains available for that reason.
 
 ## Trade-offs (structural, verifiable in the code)
 
@@ -30,6 +32,6 @@ What outcome work gives up by default: explicit specify/plan artifacts and the i
 
 ## Compatibility
 
-- `ways upgrade` re-renders managed files and adapters only; it never rewrites `.ways/sdd/`, `.ways/outcomes/`, state, approvals, reviews, validation failures or remediation records. Re-applying it is a no-op.
+- `ways upgrade` re-renders managed files and adapters and runs harness-version migrations; it never rewrites `.ways/sdd/`, `.ways/outcomes/`, state, approvals, reviews, validation failures or remediation records. Re-applying it is a no-op.
 - `ways upgrade` reports an active SDD work as allowed to continue under its original workflow, and refuses to apply over unreadable or Git-divergent active state (diagnose with `ways repair diagnose`).
-- The eval `full-sdd` (D) harness keeps driving SDD explicitly so historical comparisons stay reproducible.
+- The eval `full-sdd` (D) configuration keeps asking for SDD explicitly so comparisons with E stay reproducible.
