@@ -40,7 +40,7 @@ import { cancelQuick, finishQuick, startQuick } from "./work/quick.js";
 import { approveInteractively } from "./work/approve.js";
 import { reviewDigest, submitReview } from "./work/review.js";
 import { advanceSdd, downgradeSdd, startSdd } from "./work/sdd.js";
-import { cancelOutcome, closeOutcome, evaluateOutcome, openOutcome, parseCriterion } from "./work/outcome.js";
+import { cancelOutcome, closeOutcome, evaluateOutcome, openOutcome, parseCriterion, remediateOutcome } from "./work/outcome.js";
 import { remediateSdd } from "./work/remediation.js";
 import { recordValidationFailure } from "./work/validation-failure.js";
 import { addTask, integrateTask, prepareTask } from "./work/tasks.js";
@@ -188,7 +188,7 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
 
   if (command === "outcome") {
     const [action, id] = args;
-    const usage = "Usage: ways outcome open <id> --goal=<text> --criterion=<ID>:<text>... | evaluate | close | cancel";
+    const usage = "Usage: ways outcome open <id> --goal=<text> --criterion=<ID>:<text>... | evaluate | remediate --reason=<text> | close | cancel";
     if (action === "open" && id) {
       const criteria = options(args, "--criterion").map(parseCriterion);
       await openOutcome(cwd, id, requiredOption(args, "--goal"), criteria);
@@ -198,6 +198,10 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
     if (action === "evaluate") {
       const { commit, evaluation } = await evaluateOutcome(cwd);
       console.log(`Evaluation passed on ${evaluation.inputCommit.slice(0, 12)}; execution certified: ${commit}. Obtain an independent review of \`ways review digest\`.`);
+      return 0;
+    }
+    if (action === "remediate") {
+      console.log(`Remediation attempt opened: ${await remediateOutcome(cwd, requiredOption(args, "--reason"))}. Fix it through new tasks, then run ways outcome evaluate.`);
       return 0;
     }
     if (action === "close") {

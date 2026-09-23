@@ -74,6 +74,7 @@ export function replayCommits(commits: readonly CommitInfo[], activeId?: string)
   const checkpoints: HistoryCheckpoint[] = [];
   const replay = new Map<string, ReplayState>();
   const opened = new Map<string, string>();
+  const outcomeWorks = new Set<string>();
 
   for (const commit of commits) {
     const { work, phase, state } = commit.trailers;
@@ -86,6 +87,12 @@ export function replayCommits(commits: readonly CommitInfo[], activeId?: string)
     }
     if (state === "opened") opened.set(work, commit.hash.slice(0, 12));
     else if (state === "completed" || state === "cancelled") opened.delete(work);
+    // Outcome works carry their own transitions and attempts; outcomeHistoryIssues replays them.
+    if (phase?.startsWith("outcome-")) outcomeWorks.add(work);
+    if (outcomeWorks.has(work)) {
+      if (state === "cancelled" || phase === "outcome-close") outcomeWorks.delete(work);
+      continue;
+    }
 
     const current = replay.get(work) ?? { attempt: 0, nextPhase: workflow.initialPhase, validationFailed: false };
     if (commit.trailers.task && parsedAttempt(commit.trailers.attempt) !== current.attempt) {

@@ -117,12 +117,15 @@ npx ways task add write --title="Write the greeting" && npx ways task prepare wr
 npx ways task integrate write --commits=<sha>
 # map every criterion in .ways/outcomes/greeting/attempts/0/evidence.json
 npx ways outcome evaluate        # runs the configured checks against the executed input
+npx ways outcome remediate --reason=<text>  # new attempt after a recorded failure or blocking review
 npx ways review digest           # an independent reviewer binds a review to this digest
 npx ways review submit review.json
 npx ways outcome close
 ```
 
 The goal and stable criterion identifiers are committed at open and cannot change afterwards. The first slice uses a fixed conservative policy: production changes arrive only through integrated task worktrees, `evaluate` refuses missing criterion evidence or failing checks, and `close` refuses without a passing, fresh, digest-bound review. The commit hook, `ways check --history`, `ways status` and `ways repair diagnose` all understand the workflow and reject skipped transitions, direct commits and forged or tampered evidence.
+
+Remediation is additive. A failing `evaluate` commits a replayable check-failure record for the attempt; a blocking review stays pending. `ways outcome remediate --reason=<text>` then opens attempt n+1 from that evidence, and the attempt needs new tasks, its own evaluation and a fresh review. Artifacts of earlier attempts are immutable, and the hook and the history audit reject forged failures, remediations and rewrites.
 
 ## Knowledge
 
