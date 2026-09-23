@@ -9,6 +9,10 @@
 - Harness configuration and state: `.ways/config.json`, `.ways/state/`, derived `.ways/status.json`
 - Managed Git hooks: `.ways/hooks/`
 - Provider adapters rendered from the harness canonical source: `.claude/` and siblings
-- Plans and active SDD artifacts: `.ways/plans/`, `.ways/sdd/`
-- Current OKF knowledge and indexes: `.ways/knowledge/`, `.ways/indexes/`
+- Outcome work (default) and its attempts: `.ways/outcomes/`
+- Plans and legacy SDD artifacts: `.ways/plans/`, `.ways/sdd/`
+- Architecture decisions: `docs/decisions/`
+- Current OKF knowledge, coverage and watermark: `.ways/knowledge/`
+- Discovery, semantic reviews and release reconciliation evidence: `.ways/memory/`, `.ways/reconciliations/`
+- Disposable derived search cache: `.ways/indexes/`
 - Canonical local and CI check: `scripts/check.sh`

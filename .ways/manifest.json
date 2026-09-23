@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "harnessVersion": "0.1.0",
-  "generatedAt": "2026-09-23T21:04:32.136Z",
+  "harnessVersion": "0.2.0",
+  "generatedAt": "2026-09-23T21:30:22.820Z",
   "managedFiles": {
-    "AGENTS.md": "11c77d328aefb52c308c28d1acccef1527a70557be147385d2ed71bf4b0ad21d",
-    "MAP.md": "3f00e500157d9e9be9256f4be948547c04fac612d0f76daaaf25dd35753f7a20",
+    "AGENTS.md": "0fb16400575da304def968e1c64fe239dd4bfc9a21275ea1a09b8d92cfee23b1",
+    "MAP.md": "a781560b9f46ba46eb6fff070d5acd384965aa62881f7dd6bd3f778857bfd9eb",
     "scripts/check.sh": "73210cf174221e35b70e9a6c70a3a298d16b55cf6a9cce374bf661fa3f4a30b3",
     ".ways/hooks/commit-msg": "f69c5d4bd61fef3fe2e152122a3ce8c134aea951dd8c92e79423ff2a3a6016d4",
-    ".ways/.gitignore": "bf8cd769ff4e47c7f82e7c84ba7b2c6c2f56a24fb27bb77dbfa815870d396c8f"
+    ".ways/.gitignore": "253008c20dd50386f1eb08cce1fe14f717d43efa0a382fa708918741ae14d5af"
   },
   "adapters": {
     "claude": {
