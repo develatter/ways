@@ -1,6 +1,6 @@
 # explore
 
-Goal:
-Evidence:
-Decision:
-Gate:
+Goal: Find what the #4 runner already provides and which Ways primitives can prove full-SDD compliance inside a disposable eval repository.
+Evidence: `src/evals/runner.ts` creates one disposable fixture repo per task, runs initial/resume sessions through an `EvalAdapter`, grades success/regression argv checks independently and records usage as explicit nulls; `HarnessLabel` only allows `no-ways | checks-only` and results are schemaVersion 1 with a global `architecturalBenchmark:false` warning. There is no comparison command. `bootstrap()` (`src/bootstrap/bootstrap.ts`) can install Ways in-process into any Git root; `auditHistory`/`commitsAfter`/`manifestIntroduction` (`src/integrity/history.ts`) replay SDD certifications, remediations and validation failures from trailers and reject bypassed gates; `checkIntegrity` validates state/Git consistency; `tests/sdd-flow.test.ts` shows a full lifecycle driven through `startSdd`/`advanceSdd`/`submitReview`, usable as a deterministic fixture adapter. The command adapter only reads `doneClaim` and `usage` from the final JSON line.
+Decision: Add harness label `full-sdd` (D). For D the runner bootstraps the running Ways package into the fixture repo (local `node_modules` links so `npx ways` resolves offline, regression checks as the configured test command), commits it before the agent starts and records the installed Ways revision (package/harness version, source Git revision when available, content digest of `dist/` and `assets/`). Compliance is graded from the repo after the run via history audit and integrity, never from agent claims. Extend the adapter protocol with optional observable metrics, add runner-observed ones, and add `ways evals compare` that validates comparability and links every score to raw result files by path and digest, keeping fixture and real runs apart.
+Gate: Exploration complete. Reuse points and the compliance oracle are identified; no workflow or gate semantics change.
