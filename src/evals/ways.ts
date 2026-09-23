@@ -1,4 +1,4 @@
-import { access, appendFile, mkdir, readdir, readFile, realpath, symlink } from "node:fs/promises";
+import { access, appendFile, chmod, mkdir, readdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HARNESS_VERSION } from "../index.js";
@@ -104,7 +104,9 @@ export async function prepareFullSdd(repo: string, task: EvalTask, gitEnv: NodeJ
   await mkdir(join(repo, "node_modules/.bin"), { recursive: true });
   await mkdir(join(repo, "node_modules/@develatter"), { recursive: true });
   await symlink(root, join(repo, PACKAGE_LINK), "dir");
-  await symlink(relative(join(repo, "node_modules/.bin"), join(repo, PACKAGE_LINK, "dist/cli.js")), join(repo, BIN_LINK));
+  // A wrapper, not a symlink: a fresh tsc build leaves dist/cli.js without the executable bit.
+  await writeFile(join(repo, BIN_LINK), `#!/bin/sh\nexec node "$(dirname "$0")/${relative(join(repo, "node_modules/.bin"), join(repo, PACKAGE_LINK, "dist/cli.js"))}" "$@"\n`, "utf8");
+  await chmod(join(repo, BIN_LINK), 0o755);
   let ignore = "";
   try {
     ignore = await readFile(join(repo, ".gitignore"), "utf8");
