@@ -4,103 +4,67 @@
   "mode": "sdd",
   "id": "issue-5-full-sdd-evals",
   "status": "active",
-  "gateCommit": "0052ba7943803b4eaf201576e9adac863ecc4983",
-  "updatedAt": "2026-09-23T18:09:31.629Z",
-  "phase": "review",
+  "gateCommit": "65754bddf8b3d3ac9841d3a5139f203a35b09dc4",
+  "updatedAt": "2026-09-23T18:11:39.425Z",
+  "phase": "implement",
   "humanGate": false,
   "profile": "autonomous",
-  "attempt": 2,
+  "attempt": 3,
   "remediation": {
     "source": "review",
     "target": "implement",
-    "reason": "Re-review failed: unreviewed changes after the implement window and forged state after close are graded compliant; fullSddCompleted diverges from the spec",
+    "reason": "Re-review failed: merge commits hide product changes from the implement-window check",
     "evidence": {
       "kind": "review",
       "review": {
         "schemaVersion": 1,
         "workId": "issue-5-full-sdd-evals",
         "reviewer": "ways-reviewer",
-        "digest": "c9beed02094e7eb098a581b5dca5699e9c1140c5ac46cab4a35d85e457f10f5b",
-        "attempt": 1,
+        "digest": "c7395c357e7855c450ff39e4d993ddfd603eb15c4719960a274702538cd5a59f",
+        "attempt": 2,
         "verdict": "fail",
         "findings": [
           {
-            "id": "F1-compliant-without-sdd",
-            "severity": "high",
-            "summary": "Verified fixed: no-op, quick-only and downgraded runs are no longer compliant (eval-sdd-not-closed, eval-foreign-work, eval-downgraded).",
-            "disposition": "fixed"
-          },
-          {
-            "id": "F2-forged-trailer-and-gate-weakening",
-            "severity": "high",
-            "summary": "Verified fixed for the reproduced cases: forged --no-verify trailer raises eval-untracked-work-commit; config testCommand weakening raises eval-harness-tampered; core.hooksPath drift checked. New variants in R1/R2.",
-            "disposition": "fixed"
-          },
-          {
-            "id": "F3-fullsdd-not-bound-to-task",
-            "severity": "medium",
-            "summary": "Verified fixed: fullSddCompleted requires closed.has(taskId); other-work commits raise eval-foreign-work.",
-            "disposition": "fixed"
-          },
-          {
-            "id": "F4-compliance-failure-voids-functional-success",
-            "severity": "medium",
-            "summary": "Verified fixed: grading errors become eval-compliance-error while keeping the functional grade.",
-            "disposition": "fixed"
-          },
-          {
-            "id": "F5-compare-crashes-on-malformed-v2",
-            "severity": "low",
-            "summary": "Verified fixed: metric/usage/compliance shape validated; unreadable inputs invalid with sha256 null.",
-            "disposition": "fixed"
-          },
-          {
-            "id": "F6-bin-and-hook-path-untested",
-            "severity": "medium",
-            "summary": "Verified fixed: installed bin and managed hook node_modules lookup exercised with WAYS_CLI unset; packed-layout revision tested.",
-            "disposition": "fixed"
-          },
-          {
-            "id": "F7-gitignore-append-without-newline",
-            "severity": "low",
-            "summary": "Verified fixed: separating newline inserted.",
-            "disposition": "fixed"
-          },
-          {
-            "id": "F8-source-revision-ignores-dist",
-            "severity": "low",
-            "summary": "Verified fixed: untracked dist/ is stated in sourceRevisionReason.",
-            "disposition": "fixed"
-          },
-          {
-            "id": "F9-comparability-key-gaps",
-            "severity": "low",
-            "summary": "Verified fixed: corpus.digest in the comparability key; partial sums are observedTotal with total null.",
-            "disposition": "fixed"
-          },
-          {
             "id": "R1-unreviewed-change-after-review",
             "severity": "high",
-            "summary": "An adapter that runs SDD with an empty implement, passes review/validate, then commits the real change with hooks disabled and a Harness-Work trailer while the work is active, then closes, is graded compliant and fullSddCompleted with no issues. Nothing ties non-phase commits to the implement window or the reviewed content to the final tree.",
-            "disposition": "open"
+            "summary": "Verified fixed for ordinary commits: a hooks-off task commit changing product code after validate yields eval-change-outside-implement. Merge variant tracked as R4.",
+            "disposition": "fixed"
           },
           {
             "id": "R2-forged-state-file-after-close",
             "severity": "high",
-            "summary": "After a legitimate close, committing a forged .ways/state/current.json with an arbitrary change (hooks disabled, trailer) and then deleting it is graded fully compliant: activeWorkAt trusts any committed state file, STATE_PATH is not protected, and commits after close are not rejected.",
-            "disposition": "open"
+            "summary": "Verified fixed: hooks-off task commits after close raise eval-commit-after-close; STATE_PATH protected; committed state no longer trusted.",
+            "disposition": "fixed"
           },
           {
             "id": "R3-fullsdd-decoupled-from-compliant",
             "severity": "low",
-            "summary": "fullSddCompleted is closed.has(taskId) without compliance, contradicting certified spec decision 3 ('compliant and at least one close certification'); docs changed but spec not, and the compare fullSddCompleted count can exceed compliant.",
+            "summary": "Verified fixed: fullSddCompleted = compliant && closed.has(taskId), matching spec decision 3 and docs.",
+            "disposition": "fixed"
+          },
+          {
+            "id": "R4-evil-merge-bypasses-implement-window",
+            "severity": "high",
+            "summary": "After validate, a --no-ff merge of a bookkeeping-only side branch that also stages the product change, committed hooks-off with the task trailer, is graded compliant and fullSddCompleted: windowIssues uses git diff-tree -r <hash>, which prints nothing for merge commits. Diff against the first parent or reject merge commits, with a test.",
             "disposition": "open"
+          },
+          {
+            "id": "R5-legitimate-flows-no-false-positive",
+            "severity": "low",
+            "summary": "Plain lifecycle, inline hook-verified implement commits and remediation back to implement grade compliant with no issues; smuggling into remediation/validate/reconcile-memory transitions is caught. A remediation false-positive test would lock this in.",
+            "disposition": "accepted"
+          },
+          {
+            "id": "L1-forged-full-certification-chain",
+            "severity": "low",
+            "summary": "A fully forged certification chain with hooks disabled cannot be proven locally; documented in docs/EVALS.md consistent with the README authorship caveat.",
+            "disposition": "accepted"
           }
         ]
       }
     },
-    "priorCheckpoint": "40b6455f4cb6bc64959ac369191971a9117bb627",
-    "attempt": 2,
-    "timestamp": "2026-09-23T18:07:17.366Z"
+    "priorCheckpoint": "65754bddf8b3d3ac9841d3a5139f203a35b09dc4",
+    "attempt": 3,
+    "timestamp": "2026-09-23T18:11:39.425Z"
   }
 }

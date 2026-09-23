@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "workId": "issue-5-full-sdd-evals",
+  "reviewer": "ways-reviewer",
+  "digest": "c7395c357e7855c450ff39e4d993ddfd603eb15c4719960a274702538cd5a59f",
+  "attempt": 2,
+  "verdict": "fail",
+  "findings": [
+    {
+      "id": "R1-unreviewed-change-after-review",
+      "severity": "high",
+      "summary": "Verified fixed for ordinary commits: a hooks-off task commit changing product code after validate yields eval-change-outside-implement. Merge variant tracked as R4.",
+      "disposition": "fixed"
+    },
+    {
+      "id": "R2-forged-state-file-after-close",
+      "severity": "high",
+      "summary": "Verified fixed: hooks-off task commits after close raise eval-commit-after-close; STATE_PATH protected; committed state no longer trusted.",
+      "disposition": "fixed"
+    },
+    {
+      "id": "R3-fullsdd-decoupled-from-compliant",
+      "severity": "low",
+      "summary": "Verified fixed: fullSddCompleted = compliant && closed.has(taskId), matching spec decision 3 and docs.",
+      "disposition": "fixed"
+    },
+    {
+      "id": "R4-evil-merge-bypasses-implement-window",
+      "severity": "high",
+      "summary": "After validate, a --no-ff merge of a bookkeeping-only side branch that also stages the product change, committed hooks-off with the task trailer, is graded compliant and fullSddCompleted: windowIssues uses git diff-tree -r <hash>, which prints nothing for merge commits. Diff against the first parent or reject merge commits, with a test.",
+      "disposition": "open"
+    },
+    {
+      "id": "R5-legitimate-flows-no-false-positive",
+      "severity": "low",
+      "summary": "Plain lifecycle, inline hook-verified implement commits and remediation back to implement grade compliant with no issues; smuggling into remediation/validate/reconcile-memory transitions is caught. A remediation false-positive test would lock this in.",
+      "disposition": "accepted"
+    },
+    {
+      "id": "L1-forged-full-certification-chain",
+      "severity": "low",
+      "summary": "A fully forged certification chain with hooks disabled cannot be proven locally; documented in docs/EVALS.md consistent with the README authorship caveat.",
+      "disposition": "accepted"
+    }
+  ]
+}
