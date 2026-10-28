@@ -2,7 +2,8 @@
 # Managed by ways. Blocks agent-issued git commits when no harness work is active,
 # blocks production writes in the main worktree during delegated SDD delivery phases
 # and during outcome execution whose committed spec requires isolation,
-# and blocks any tool write to human approvals or review verdicts.
+# and blocks any tool write to human approvals or review verdicts (SDD and outcome).
+# Redirections that write no file (2>&1, >/dev/null) are not treated as writes.
 input="$(cat)"
 command -v node >/dev/null 2>&1 || { echo "ways: node not found; refusing guarded tool use" >&2; exit 2; }
 printf '%s' "$input" | exec node -e '
@@ -12,11 +13,13 @@ process.stdin.on("data", (chunk) => { data += chunk; }).on("end", () => {
   try { event = JSON.parse(data); } catch { process.exit(0); }
   const tool = String(event.tool_name ?? "");
   const command = String(event.tool_input?.command ?? event.command ?? "");
+  // Descriptor duplication (`2>&1`, `>&2`) and discards (`>/dev/null`, `2>/dev/null`, `&>/dev/null`) write no file.
+  const shell = command.replace(/\d*>&[0-9-]+/g, " ").replace(/&?>>?\s*\/dev\/(?:null|stderr|stdout)\b/g, " ");
   const edits = /^(Edit|Write|MultiEdit|NotebookEdit|apply_patch)$/.test(tool);
   const option = "(?:-[^\\s]+\\s+(?:[^-\\s][^\\s]*\\s+)?)*";
   const prefix = "(?:(?:command|exec|builtin)\\s+|[^\\s;&|(`]*/)?";
   const commits = new RegExp("(?:^|[;&|(`\\x22\\x27]\\s*|\\$\\(\\s*)" + prefix + "git\\s+" + option + "commit(?:\\s|$)", "m");
-  const evidence = /(?:^|[\s/])\.ways\/(?:sdd\/[^\/\s]+\/(?:attempts\/[0-9]+\/)?(?:approvals|reviews)|outcomes\/[^\/\s]+\/approvals)(?:\/|$)/;
+  const evidence = /(?:^|[\s/])\.ways\/(?:sdd\/[^\/\s]+\/(?:attempts\/[0-9]+\/)?(?:approvals|reviews)|outcomes\/[^\/\s]+\/(?:approvals|attempts\/[0-9]+\/reviews))(?:\/|$)/;
   const edited = event.tool_input?.file_path ?? event.tool_input?.notebook_path ?? event.tool_input?.path;
   const patch = String(event.tool_input?.patch ?? event.tool_input?.input ?? "");
   const patchPaths = [...patch.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$|^\*\*\* Move to: (.+)$/gm)].map((match) => match[1] ?? match[2]);
@@ -44,7 +47,7 @@ process.stdin.on("data", (chunk) => { data += chunk; }).on("end", () => {
   };
   const phaseArtifact = (path) => new RegExp(`^${root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/\.ways/sdd/[a-z0-9][a-z0-9-]{0,62}/(?:attempts/[1-9][0-9]*/)?(?:intake|explore|assess|specify|plan|decompose|implement|review|validate|reconcile-memory|close)\.md$`).test(resolvePath(path));
   const artifactRedirections = (allowed) => {
-    const paths = [...command.matchAll(/(?:>>|<>|>)\s*([^\s;&|]+)/g)].map((match) => match[1]?.replace(/^["\x27]|["\x27]$/g, ""));
+    const paths = [...shell.matchAll(/(?:>>|<>|>)\s*([^\s;&|]+)/g)].map((match) => match[1]?.replace(/^["\x27]|["\x27]$/g, ""));
     return paths.length > 0 && paths.every((path) => path && allowed(path));
   };
   const artifactTee = (allowed) => {
@@ -52,16 +55,16 @@ process.stdin.on("data", (chunk) => { data += chunk; }).on("end", () => {
     return Boolean(match?.[1] && allowed(match[1].replace(/^["\x27]|["\x27]$/g, "")) && !shellControl.test(command));
   };
   const artifactShellWrite = artifactRedirections(phaseArtifact) || artifactTee(phaseArtifact);
-  if ((edits && targetPaths.some((path) => evidence.test(resolvePath(path)))) || (!edits && evidence.test(command) && writes.test(command) && !waysCommand)) {
-    process.stderr.write("ways: approvals and review verdicts are written only by `ways approve` and `ways review submit`\\n");
+  if ((edits && targetPaths.some((path) => evidence.test(resolvePath(path)))) || (!edits && evidence.test(command) && writes.test(shell) && !waysCommand)) {
+    process.stderr.write("ways: approvals and review verdicts under .ways/ are written only by `npx ways approve` (the human, in a terminal) and `npx ways review submit <review.json>`; write the review JSON elsewhere (e.g. .ways/runtime/review.json) and submit it\n");
     process.exit(2);
   }
   const protectedPhase = status.mode === "sdd" && status.execution === "delegated" && ["implement", "review", "validate"].includes(status.phase);
   if (protectedPhase && !existsSync(`${root}/.ways/runtime/task.json`)) {
     const productionEdit = edits && (targetPaths.length === 0 || targetPaths.some((path) => !phaseArtifact(path)));
-    const productionShellWrite = !edits && writes.test(command) && !waysCommand && !artifactShellWrite;
+    const productionShellWrite = !edits && writes.test(shell) && !waysCommand && !artifactShellWrite;
     if (productionEdit || productionShellWrite) {
-      process.stderr.write("ways: delegated execution; the orchestrator must not write production files during implement, review, or validate. Use a task worktree or ways orchestration.\\n");
+      process.stderr.write("ways: delegated execution; the orchestrator must not write production files during implement, review, or validate. Use a task worktree or ways orchestration.\n");
       process.exit(2);
     }
   }
@@ -75,14 +78,14 @@ process.stdin.on("data", (chunk) => { data += chunk; }).on("end", () => {
   if (outcomeId && !existsSync(`${root}/.ways/runtime/task.json`) && isolationRequired()) {
     const outcomeArtifact = (path) => [`${root}/.ways/outcomes/${outcomeId}/`, `${root}/.ways/runtime/`].some((prefix) => resolvePath(path).startsWith(prefix));
     const productionEdit = edits && (targetPaths.length === 0 || targetPaths.some((path) => !outcomeArtifact(path)));
-    const productionShellWrite = !edits && writes.test(command) && !waysCommand && !artifactRedirections(outcomeArtifact) && !artifactTee(outcomeArtifact);
+    const productionShellWrite = !edits && writes.test(shell) && !waysCommand && !artifactRedirections(outcomeArtifact) && !artifactTee(outcomeArtifact);
     if (productionEdit || productionShellWrite) {
-      process.stderr.write(`ways: outcome ${outcomeId} requires isolation; implement in a task worktree (ways task prepare) and integrate it\\n`);
+      process.stderr.write(`ways: outcome ${outcomeId} requires isolation; run \`npx ways task add <id> --title=<text>\` and \`npx ways task prepare <id>\`, implement in that worktree, then \`npx ways task integrate <id> --commits=<sha>\` (opened with --isolation=optional, direct commits would be allowed)\n`);
       process.exit(2);
     }
   }
   if (!edits && commits.test(command) && status.active === false) {
-    process.stderr.write("ways: no active work; open one with {{command:quick}}, {{command:plan}} or {{command:sdd}} before committing\\n");
+    process.stderr.write("ways: no active work; open one before committing: {{command:outcome}} for a delivery (`npx ways outcome open <id> --goal=<text> --criterion=<ID>:<text>`) or {{command:quick}} for a small change (`npx ways quick start <id>`)\n");
     process.exit(2);
   }
   process.exit(0);

@@ -13,6 +13,7 @@ import { GitRepository } from "../src/git/git.js";
 import { checkIntegrity } from "../src/integrity/integrity.js";
 import { applyUpgrade, planUpgrade } from "../src/upgrade/upgrade.js";
 import { loadState, saveState } from "../src/state/store.js";
+import { openOutcome } from "../src/work/outcome.js";
 import { startSdd } from "../src/work/sdd.js";
 import { prepareTask } from "../src/work/tasks.js";
 
@@ -233,6 +234,67 @@ describe("adapter installation", () => {
     expect(run({ tool_name: "NotebookEdit", tool_input: { notebook_path: join(task.worktree!, "n.ipynb") }, cwd })).toBe(0);
     const statusline = execFileSync("sh", [join(cwd, ".claude/ways-statusline.sh")], { cwd, input: JSON.stringify({ workspace: { project_dir: cwd } }), encoding: "utf8" });
     expect(statusline).toBe("ways: sdd:deleg @implement [autonomous] delegated");
+  });
+});
+
+describe("guard during outcome work", () => {
+  async function guarded(): Promise<(payload: unknown) => { code: number; stderr: string }> {
+    const { cwd, git } = await repository();
+    await bootstrap({ cwd, testCommand: [process.execPath, "-e", "process.exit(0)"] });
+    await git.run(["add", "."]);
+    await git.run(["commit", "-q", "-m", "bootstrap"]);
+    const guard = (payload: unknown): { code: number; stderr: string } => {
+      try {
+        execFileSync("sh", [join(cwd, ".claude/ways-guard.sh")], { cwd, input: JSON.stringify({ cwd, ...(payload as object) }), encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
+        return { code: 0, stderr: "" };
+      } catch (error) {
+        const failure = error as { status: number; stderr: string };
+        return { code: failure.status, stderr: failure.stderr };
+      }
+    };
+    // Idle: a commit is refused and the message names the outcome flow first.
+    const idle = guard({ tool_input: { command: "git commit -m x" } });
+    expect(idle.code).toBe(2);
+    expect(idle.stderr).toContain("/ways-outcome");
+    expect(idle.stderr).toContain("npx ways outcome open <id>");
+    expect(idle.stderr).toContain("npx ways quick start <id>");
+    expect(idle.stderr.endsWith("\n")).toBe(true);
+    await openOutcome(cwd, "hello", "Say hello", [{ id: "AC1", text: "feature.txt says hello" }]);
+    return guard;
+  }
+
+  it("protects outcome reviews as well as approvals", async () => {
+    const guard = await guarded();
+    const review = ".ways/outcomes/hello/attempts/0/reviews/latest.json";
+    const memory = ".ways/outcomes/hello/attempts/0/reviews/memory.json";
+    for (const path of [review, memory]) {
+      expect(guard({ tool_name: "Write", tool_input: { file_path: path } }).code).toBe(2);
+      expect(guard({ tool_name: "Bash", tool_input: { command: `cat > ${path}` } }).code).toBe(2);
+      expect(guard({ tool_name: "Bash", tool_input: { command: `cp r.json ${path}` } }).code).toBe(2);
+      expect(guard({ tool_name: "Bash", tool_input: { command: `cat ${path}` } }).code).toBe(0);
+    }
+    const refused = guard({ tool_name: "Write", tool_input: { file_path: review } });
+    expect(refused.stderr).toContain("npx ways review submit");
+    // Evidence is still the agent's to write.
+    expect(guard({ tool_name: "Write", tool_input: { file_path: ".ways/outcomes/hello/attempts/0/evidence.json" } }).code).toBe(0);
+  });
+
+  it("does not take descriptor duplication or discarded output for writes during execute", async () => {
+    const guard = await guarded();
+    const bash = (command: string) => guard({ tool_name: "Bash", tool_input: { command } });
+    expect(bash("npm test 2>&1 | tail -20").code).toBe(0);
+    expect(bash("npm test > /dev/null").code).toBe(0);
+    expect(bash("npm test >/dev/null 2>&1").code).toBe(0);
+    expect(bash("ls missing 2>/dev/null").code).toBe(0);
+    expect(bash("npm test &>/dev/null").code).toBe(0);
+    expect(bash("echo oops >&2").code).toBe(0);
+    const blocked = bash("echo hi > feature.txt");
+    expect(blocked.code).toBe(2);
+    expect(blocked.stderr).toContain("npx ways task prepare <id>");
+    expect(bash("echo hi > feature.txt 2>&1").code).toBe(2);
+    expect(bash("cp a.txt b.txt 2>&1").code).toBe(2);
+    expect(bash("echo hi > .ways/outcomes/hello/attempts/0/evidence.json 2>&1").code).toBe(0);
+    expect(guard({ tool_name: "Edit", tool_input: { file_path: join("src", "x.ts") } }).code).toBe(2);
   });
 });
 
