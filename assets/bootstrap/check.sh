@@ -1,14 +1,12 @@
 #!/usr/bin/env sh
+# Managed by ways. The canonical local and CI check: integrity, configured checks, history audit.
 set -eu
-if [ -f dist/cli.js ]; then
-  node dist/cli.js check
-  if [ -n "${WAYS_HISTORY_TO:-}" ]; then
-    exec node dist/cli.js check --history "--to=$WAYS_HISTORY_TO"
-  fi
-  exec node dist/cli.js check --history
-fi
-npx --no-install ways check
+ways() {
+  if [ -n "${WAYS_CLI:-}" ]; then node "$WAYS_CLI" "$@"; else npx --no-install ways "$@"; fi
+}
+ways check
 if [ -n "${WAYS_HISTORY_TO:-}" ]; then
-  exec npx --no-install ways check --history "--to=$WAYS_HISTORY_TO"
+  ways check --history "--to=$WAYS_HISTORY_TO"
+else
+  ways check --history
 fi
-exec npx --no-install ways check --history

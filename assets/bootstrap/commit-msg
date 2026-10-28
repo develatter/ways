@@ -4,5 +4,4 @@ set -euo pipefail
 main="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
 if [[ -n "${WAYS_CLI:-}" ]]; then exec node "$WAYS_CLI" hook commit-msg "$1"; fi
 if [[ -f "$main/node_modules/@develatter/ways/dist/cli.js" ]]; then exec node "$main/node_modules/@develatter/ways/dist/cli.js" hook commit-msg "$1"; fi
-if [[ -f "$main/dist/cli.js" && -f "$main/assets/bootstrap/commit-msg" ]]; then exec node "$main/dist/cli.js" hook commit-msg "$1"; fi
 cd "$main" && exec npx --no-install ways hook commit-msg "$1"

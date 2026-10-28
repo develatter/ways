@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, readFile, readlink, realpath, symlink } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, readlink, realpath, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HARNESS_VERSION } from "../index.js";
@@ -10,6 +10,7 @@ import { GitRepository } from "../git/git.js";
 import { installAllAdapters } from "../adapters/install.js";
 import { writeStatus } from "../state/status.js";
 import { requestDiscovery } from "../memory/workflow.js";
+import { CLAUDE_MD_CONTENT, CLAUDE_MD_PATH, withAgentsImport } from "./claude-md.js";
 
 export interface BootstrapOptions {
   cwd: string;
@@ -84,22 +85,21 @@ export async function bootstrap(options: BootstrapOptions): Promise<ManagedManif
     managedFiles[target] = await installFile(root, target, asset, force, mode);
   }
 
-  const claudePath = join(root, "CLAUDE.md");
-  if (await exists(claudePath)) {
-    let isExpectedLink = false;
-    try {
-      isExpectedLink = await readlink(claudePath) === "AGENTS.md";
-    } catch {
-      // Existing regular files are never silently replaced.
-    }
-    if (!isExpectedLink && !force) throw new Error("Refusing to replace CLAUDE.md; use --force");
-    if (!isExpectedLink || force) {
-      const { rm } = await import("node:fs/promises");
+  const claudePath = join(root, CLAUDE_MD_PATH);
+  if (!await exists(claudePath)) {
+    await writeAtomic(claudePath, CLAUDE_MD_CONTENT);
+  } else if ((await lstat(claudePath)).isSymbolicLink()) {
+    // A symlink from an earlier bootstrap keeps working; only a foreign target is replaced, and only with --force.
+    if (await readlink(claudePath) !== "AGENTS.md") {
+      if (!force) throw new Error("CLAUDE.md is a symlink to something other than AGENTS.md; rerun with --force to replace it, or point it at AGENTS.md");
       await rm(claudePath, { force: true });
-      await symlink("AGENTS.md", claudePath);
+      await writeAtomic(claudePath, CLAUDE_MD_CONTENT);
     }
   } else {
-    await symlink("AGENTS.md", claudePath);
+    // The user's own notes stay; the harness only adds the import line.
+    const current = await readFile(claudePath, "utf8");
+    const next = withAgentsImport(current);
+    if (next !== current) await writeAtomic(claudePath, next);
   }
 
   await installFile(root, `${KNOWLEDGE_DIR}/index.md`, "knowledge-index.md", force);

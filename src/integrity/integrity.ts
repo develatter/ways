@@ -7,6 +7,7 @@ import { sha256 } from "../fs/files.js";
 import { inspectOkf } from "../knowledge/okf.js";
 import { GitRepository } from "../git/git.js";
 import { providerById } from "../adapters/install.js";
+import { CLAUDE_MD_IMPORT, CLAUDE_MD_PATH, claudeMdImportsAgents } from "../bootstrap/claude-md.js";
 import { readStatus, statusMatches } from "../state/status.js";
 import { commitsAfter } from "./history.js";
 import { isPriorAttemptArtifact, remediationRecordPath, remediationTransitionCommit, validationFailureRecordPath } from "../work/attempt.js";
@@ -73,10 +74,14 @@ export async function checkIntegrity(cwd: string): Promise<IntegrityIssue[]> {
   }
 
   try {
-    const target = await readlink(join(cwd, "CLAUDE.md"));
-    if (target !== "AGENTS.md") issues.push({ code: "invalid-symlink", path: "CLAUDE.md", message: "CLAUDE.md must target AGENTS.md" });
+    const claudePath = join(cwd, CLAUDE_MD_PATH);
+    if ((await lstat(claudePath)).isSymbolicLink()) {
+      if (await readlink(claudePath) !== "AGENTS.md") issues.push({ code: "invalid-claude-md", path: CLAUDE_MD_PATH, message: `CLAUDE.md must import AGENTS.md: replace it with a line containing ${CLAUDE_MD_IMPORT}` });
+    } else if (!claudeMdImportsAgents(await readFile(claudePath, "utf8"))) {
+      issues.push({ code: "invalid-claude-md", path: CLAUDE_MD_PATH, message: `CLAUDE.md must import AGENTS.md: add a line containing ${CLAUDE_MD_IMPORT}` });
+    }
   } catch {
-    issues.push({ code: "missing-symlink", path: "CLAUDE.md", message: "CLAUDE.md symlink is missing" });
+    issues.push({ code: "missing-claude-md", path: CLAUDE_MD_PATH, message: `CLAUDE.md is missing: create it with the single line ${CLAUDE_MD_IMPORT} (or rerun \`ways bootstrap\`)` });
   }
 
   let activeState: WorkState | undefined;
