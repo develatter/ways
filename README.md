@@ -2,7 +2,7 @@
 
 A minimal, agent-agnostic development harness with Git-backed workflows, outcome-driven delivery with verifiable evidence, and living OKF v0.2 memory.
 
-> The core workflow, mechanical enforcement, human approvals and digest-bound reviews are implemented and tested. See the [roadmap](docs/ROADMAP.md) for planned milestones.
+> The core workflow, mechanical enforcement, human approvals and digest-bound reviews are implemented and tested. Version 0.3 is a work in progress towards a leaner harness; see the [roadmap](docs/ROADMAP.md) for what comes next.
 
 ## Why
 
@@ -28,7 +28,7 @@ npx ways bootstrap --test-command='["npm","test"]'
 scripts/check.sh
 ```
 
-Bootstrap creates the repository contract, including `AGENTS.md`, `MAP.md`, `.ways/`, `scripts/check.sh`, a `CLAUDE.md` symlink to `AGENTS.md`, the managed `commit-msg` hook, and the adapter files for every supported agent (Claude Code, Codex, Cursor, pi). Commit the result; from then on the agent you talk to follows the harness.
+Bootstrap creates the repository contract, including `AGENTS.md`, `MAP.md`, `.ways/`, `scripts/check.sh`, a `CLAUDE.md` that imports `AGENTS.md` (`@AGENTS.md`; an existing `CLAUDE.md` keeps its notes and just gains the import line), the managed `commit-msg` hook, and the adapter files for every supported agent (Claude Code, Codex, Cursor, pi). Commit the result; from then on the agent you talk to follows the harness.
 
 To configure multiple reproducible environment checks, pass a JSON command contract. Each command is an argument array; only names listed in `required` execute, in the stable order `test`, `lint`, `typecheck`, `build`, `e2e`. A missing required command is reported as unavailable, while non-required checks are skipped. The legacy `testCommand` remains the fallback:
 
@@ -172,6 +172,8 @@ Remediation is additive. A failing `evaluate` commits a replayable check-failure
 Evaluation assurance is chosen at open with `--evaluation=independent|self` (default `independent`) and stored in the immutable spec as `policy.independentEvaluation` (`required` or `optional`; specs without it read as `required`). Close, the commit hook and `ways check --history` read it from the committed spec, so editing the state or the spec after open cannot weaken it; a spec that changed after opening blocks close.
 
 - `independent`: close requires a review of this work and attempt whose digest binds the evaluated increment (its code, evidence, evaluation and the committed goal and criteria), with no blocking findings, by a reviewer who is not a known implementer. A review replayed from another attempt or input is stale.
+
+Only `critical` and `high` findings block, and they keep blocking until their disposition is `fixed`. `medium` and `low` findings are recorded in the review, printed by `ways review submit` and listed by `ways context`, but never block close, whatever their disposition; a reviewer who wants to stop the work records a `high` finding or a `fail` verdict.
 - `self`: close needs no review, but still requires the passing evaluation, complete criterion evidence and checks that pass again at close. A review that is recorded anyway must still bind and pass.
 
 Provenance is honest, not cryptographic. The known implementers are the Git author and committer names and emails of the increment's task commits (and direct commits under optional isolation); `review submit`, close, the hook and the history audit reject a reviewer string equal to one of them (case-insensitive, also written as `Name <email>`). Git identities and the reviewer field are self-asserted: the check catches an agent reviewing its own work under its configured identity, not an impostor who picks another name, and it never proves who wrote a review. Stronger identity channels are future work.
@@ -248,20 +250,22 @@ Upgrades compare managed-file hashes and never overwrite modified files without 
 
 ```bash
 npm ci
-npm run typecheck
-npm test
-npm run build
-scripts/check.sh
+npm run check        # typecheck, build and the whole test suite (what CI runs on Node 22 and 24)
+npm run test:e2e     # only the packed-tarball consumer test (installs the package from `npm pack`)
 ```
 
-The implementation lives in `src/`, bootstrap resources in `assets/`, and integration tests in `tests/`. Do not edit generated `dist/` files.
+The implementation lives in `src/`, bootstrap resources in `assets/`, and integration tests in `tests/`. Do not edit generated `dist/` files. This repository does not run the harness on itself: `scripts/check.sh` is what `ways bootstrap` writes into a consumer repository, not a script of this one.
+
+Tests drive the compiled CLI (`dist/`) for the Git hooks, so `npm test` builds first; if you run `npx vitest` directly, run `npm run build` before.
+
+Package versions on `master` are published by CI when the version in `package.json` is new; development versions (`0.x.0-dev.N`) live on branches.
 
 ## Current test baseline
 
 - Contract, Git, bootstrap, integrity, mode, SDD, repair, upgrade, OKF, indexing, review, worktree, and baseline end-to-end coverage
 - End-to-end SDD lifecycle test
 - Packed-consumer bootstrap and canonical check coverage
-- GitHub Actions using the same `scripts/check.sh` entrypoint
+- GitHub Actions running `npm run check` on Node 22 and 24
 
 ## License
 
