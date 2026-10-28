@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { installAdapter, PROVIDERS } from "./adapters/install.js";
 import { bootstrap } from "./bootstrap/bootstrap.js";
 import { runChecks } from "./check/check.js";
+import { findCommand, renderCommandHelp, renderOverview } from "./commands.js";
 import { effectiveMemoryConfig, loadConfig } from "./config/config.js";
 import { runCommitMsgHook } from "./hooks/hook.js";
 import { checkHistory } from "./integrity/history.js";
@@ -91,9 +92,37 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
   }
 
   if (command === "--help" || command === "-h" || command === undefined) {
-    console.log(`${HARNESS_NAME} ${HARNESS_VERSION}\n\nUsage: ways <command>`);
+    process.stdout.write(renderOverview(HARNESS_NAME, HARNESS_VERSION));
     return 0;
   }
+
+  const helpTarget = command === "help" ? args[0] : command;
+  if (command === "help" && helpTarget === undefined) {
+    process.stdout.write(renderOverview(HARNESS_NAME, HARNESS_VERSION));
+    return 0;
+  }
+  if (command === "help" || args.includes("--help") || args[0] === "-h") {
+    const spec = helpTarget === undefined ? undefined : findCommand(helpTarget);
+    if (!spec) {
+      console.error(`Unknown command: ${helpTarget}. Run \`ways --help\` to list the commands.`);
+      return 1;
+    }
+    process.stdout.write(renderCommandHelp(spec));
+    return 0;
+  }
+
+  try {
+    return await dispatch(command, args, cwd);
+  } catch (error) {
+    // Usage errors point at the registry instead of leaving the caller to guess the next command.
+    if (error instanceof Error && findCommand(command) && /^(Usage:|Missing required option)/.test(error.message)) {
+      throw new Error(`${error.message}\nRun \`ways ${command} --help\` for the full usage and examples.`);
+    }
+    throw error;
+  }
+}
+
+async function dispatch(command: string, args: string[], cwd: string): Promise<number> {
 
   if (command === "upgrade") {
     const plan = await planUpgrade(cwd);
@@ -559,7 +588,7 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
     return 0;
   }
 
-  console.error(`Unknown command: ${command}`);
+  console.error(`Unknown command: ${command}. Run \`ways --help\` to list the commands.`);
   return 1;
 }
 

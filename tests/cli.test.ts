@@ -63,6 +63,6 @@ describe("CLI", () => {
 
   it("rejects unknown commands", async () => {
     expect(await run(["unknown"])).toBe(1);
-    expect(error).toHaveBeenCalledWith("Unknown command: unknown");
+    expect(error).toHaveBeenCalledWith("Unknown command: unknown. Run `ways --help` to list the commands.");
   });
 });

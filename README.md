@@ -71,6 +71,33 @@ It shows the work, checkpoint or phase, gate and content digest, asks you to typ
 
 If something looks wrong, `npx ways status`, `npx ways check` and `npx ways repair diagnose` explain the state without changing it.
 
+## Commands
+
+`ways --help` lists them and `ways <command> --help` shows usage and examples.
+
+<!-- commands:start (generated from src/commands.ts; run `UPDATE_README=1 npx vitest run tests/commands.test.ts`) -->
+| Command | What it does | Example |
+| --- | --- | --- |
+| `ways bootstrap` | Install the harness in a Git repository (config, hook, check script, memory, agent adapters) | `ways bootstrap --test-command='["npm","test"]'` |
+| `ways status` | Show the active work, if any | `ways status --json` |
+| `ways context` | Print a resumable packet for a fresh agent session | `ways context` |
+| `ways query` | Search the OKF memory; read-only | `ways query token rotation` |
+| `ways quick` | Small direct change: start, check, one commit | `ways quick start button-spacing` |
+| `ways outcome` | Delivery constrained by criteria, evidence, checks and review (default for new work) | `ways outcome open greeting --goal="Greet users" --criterion="AC1:greeting.txt says hi"` |
+| `ways task` | Isolated worktree tasks inside an outcome | `ways task add write --title="Write the greeting"` |
+| `ways review` | Independent review bound to the exact content under review | `ways review digest` |
+| `ways approve` | Human approval of a gated checkpoint (needs a real terminal; agents cannot run it) | `ways approve close` |
+| `ways check` | Run integrity, the configured checks and the history audit (what CI runs) | `ways check` |
+| `ways memory` | Validate and index the OKF memory under .ways/knowledge | `ways memory check` |
+| `ways adapter` | List or (re)install the agent adapters (Claude Code, Codex, Cursor, pi) | `ways adapter list` |
+| `ways upgrade` | Re-render managed files after updating the package; never overwrites edits silently | `ways upgrade` |
+| `ways repair` | Diagnose or restore state that diverged from Git | `ways repair diagnose` |
+| `ways hook` | Entry point for the managed Git hooks (not called by hand) | `ways hook commit-msg .git/COMMIT_EDITMSG` |
+| `ways evals` | Run or compare the harness evaluation corpus | `ways evals run --harness=outcome --output=result.json` |
+| `ways plan` | Versioned proposal before executing (deprecated) | `ways plan start auth-refresh` |
+| `ways sdd` | Strict phased delivery, kept only to finish or audit existing work (deprecated) | `ways sdd advance` |
+<!-- commands:end -->
+
 ## Work modes
 
 | Mode | Purpose | Persistent ceremony |
