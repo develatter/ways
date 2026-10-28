@@ -43,4 +43,12 @@ describe("living-memory compatibility migration", () => {
     await runMigrations({ cwd, config }, "0.2.0");
     expect(config.harnessVersion).toBe("0.2.0");
   });
+
+  it("moves the recorded version between releases without structural changes, and refuses newer state", async () => {
+    const { cwd, config } = await legacyRepository();
+    config.harnessVersion = "0.2.0";
+    await runMigrations({ cwd, config }, "0.3.0-dev.0");
+    expect(config.harnessVersion).toBe("0.3.0-dev.0");
+    await expect(runMigrations({ cwd, config }, "0.2.0")).rejects.toThrow(/newer or unknown ways/);
+  });
 });

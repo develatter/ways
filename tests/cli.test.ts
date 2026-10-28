@@ -1,8 +1,10 @@
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { run } from "../src/cli.js";
+import { HARNESS_VERSION } from "../src/index.js";
 import { GitRepository } from "../src/git/git.js";
 
 const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -16,7 +18,14 @@ afterEach(() => {
 describe("CLI", () => {
   it("prints its version", async () => {
     expect(await run(["--version"])).toBe(0);
-    expect(log).toHaveBeenCalledWith("0.2.0");
+    const pkg = JSON.parse(await readFile(join(process.cwd(), "package.json"), "utf8")) as { version: string };
+    expect(log).toHaveBeenCalledWith(pkg.version);
+    expect(HARNESS_VERSION).toBe(pkg.version);
+  });
+
+  it("prints the same version from the built binary", async () => {
+    const pkg = JSON.parse(await readFile(join(process.cwd(), "package.json"), "utf8")) as { version: string };
+    expect(execFileSync(process.execPath, [process.env.WAYS_CLI!, "--version"], { encoding: "utf8" }).trim()).toBe(pkg.version);
   });
 
   it("serves the reviewed bootstrap discovery lifecycle with explicit branch configuration", async () => {

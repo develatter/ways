@@ -4,6 +4,7 @@ import type { HarnessConfig, MemoryConfig } from "../domain/types.js";
 import { INDEX_DIR, KNOWLEDGE_DIR } from "../domain/constants.js";
 import { writeAtomic } from "../fs/files.js";
 import { requestDiscovery } from "../memory/workflow.js";
+import { compareVersions } from "../version.js";
 
 export interface MigrationContext {
   cwd: string;
@@ -69,7 +70,12 @@ export async function runMigrations(context: MigrationContext, target: string): 
     if (visited.has(version)) throw new Error(`Migration cycle at ${version}`);
     visited.add(version);
     const migration = MIGRATIONS.find((candidate) => candidate.from === version);
-    if (!migration) throw new Error(`No migration path from ${version} to ${target}`);
+    if (!migration && compareVersions(version, target) < 0) {
+      // No structural change between these versions: only the recorded version moves.
+      context.config.harnessVersion = target;
+      return;
+    }
+    if (!migration) throw new Error(`No migration path from ${version} to ${target}; this repository was written by a newer or unknown ways`);
     await migration.run(context);
     version = migration.to;
     context.config.harnessVersion = version;

@@ -1,5 +1,4 @@
-export const HARNESS_NAME = "ways";
-export const HARNESS_VERSION = "0.2.0";
+export { HARNESS_NAME, HARNESS_VERSION } from "./version.js";
 
 export * from "./domain/types.js";
 export * from "./domain/validation.js";

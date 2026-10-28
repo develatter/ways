@@ -1,6 +1,6 @@
 {
   "name": "@develatter/ways",
-  "version": "0.2.2",
+  "version": "0.3.0-dev.0",
   "description": "A minimal, agent-agnostic development harness with Git-backed workflows and living OKF memory",
   "type": "module",
   "bin": {
