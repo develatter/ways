@@ -28,7 +28,7 @@
     "check": "npm run typecheck && npm test"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "keywords": [
     "coding-agent",

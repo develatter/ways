@@ -17,7 +17,7 @@ Long-running coding agents tend to lose state, skip process, perform unnecessary
 ## Requirements
 
 - Linux or macOS
-- Node.js 20 or newer
+- Node.js 22 or newer
 - Git
 
 ## Installation
