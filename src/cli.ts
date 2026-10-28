@@ -41,7 +41,7 @@ import { abandonPlan, finishPlan, promotePlan, proposePlan, startPlan } from "./
 import { cancelQuick, finishQuick, startQuick } from "./work/quick.js";
 import { approveInteractively } from "./work/approve.js";
 import { approveOutcomeInteractively, outcomeApprovalStatus, parseApprovalPolicy } from "./work/outcome-approvals.js";
-import { reviewDigest, submitReview } from "./work/review.js";
+import { reviewBlocks, reviewDigest, reviewNotes, submitReview } from "./work/review.js";
 import { advanceSdd, downgradeSdd, SDD_DEPRECATION, startSdd } from "./work/sdd.js";
 import { formatCheckResults } from "./work/outcome-evaluation.js";
 import { effectiveExecutionPolicy, parseExecutionPolicy } from "./work/outcome-policy.js";
@@ -202,6 +202,9 @@ async function dispatch(command: string, args: string[], cwd: string): Promise<n
     if (action === "submit" && path) {
       const result = await submitReview(cwd, path);
       console.log(`Review recorded: ${result.verdict}`);
+      const blockers = reviewBlocks(result);
+      if (blockers.length > 0) console.log(`Blocking: ${blockers.join(", ")}; the work cannot close until they are fixed and a fresh review passes.`);
+      for (const note of reviewNotes(result)) console.log(`Non-blocking finding ${note}`);
       return 0;
     }
     if (action === "digest") {

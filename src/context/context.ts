@@ -9,7 +9,7 @@ import { queryKnowledgeResult } from "../query/query.js";
 import { diagnose } from "../repair/repair.js";
 import { loadState } from "../state/store.js";
 import { OUTCOME_PHASES, outcomeDigest, outcomeEvaluationPath, outcomeEvidencePath, outcomeOpenCommit, outcomeReviewPath, outcomeSpecPath } from "../work/outcome.js";
-import { reviewBlocks } from "../work/review.js";
+import { reviewBlocks, reviewNotes } from "../work/review.js";
 import { outcomeApprovalPath, outcomeApprovalStatus } from "../work/outcome-approvals.js";
 
 /**
@@ -66,7 +66,7 @@ export interface OutcomeContext {
   evidencePath: string;
   criteria: Array<{ id: string; text: string; evidence: "missing" | "filled"; summary: string | null; checks: string[]; evaluation: EvaluationStatus }>;
   evaluation: { status: EvaluationStatus; path: string; inputCommit: string | null; changedSinceInput: string[] };
-  review: { status: "absent" | "invalid" | "stale" | "pass" | "fail"; path: string; blockers: string[] };
+  review: { status: "absent" | "invalid" | "stale" | "pass" | "fail"; path: string; blockers: string[]; notes: string[] };
   blockers: string[];
 }
 
@@ -187,7 +187,7 @@ async function outcomeContext(cwd: string, git: GitRepository, state: WorkState,
     return { id: criterion.id, text: criterion.text, evidence: summary ? "filled" as const : "missing" as const, summary, checks, evaluation: status };
   });
 
-  const review: OutcomeContext["review"] = { status: "absent", path: reviewPath, blockers: [] };
+  const review: OutcomeContext["review"] = { status: "absent", path: reviewPath, blockers: [], notes: [] };
   const reviewValue = await workingJson(cwd, reviewPath);
   if (reviewValue !== undefined) {
     if (!validateReview(reviewValue)) review.status = "invalid";
@@ -198,6 +198,7 @@ async function outcomeContext(cwd: string, git: GitRepository, state: WorkState,
       const fresh = certified && open && reviewValue.workId === state.id && (reviewValue.attempt ?? 0) === attempt
         && reviewValue.digest === await outcomeDigest(git, open.hash, head);
       review.blockers = reviewBlocks(reviewValue);
+      review.notes = reviewNotes(reviewValue);
       review.status = !fresh ? "stale" : review.blockers.length > 0 ? "fail" : "pass";
     }
   }
@@ -333,6 +334,7 @@ export function renderContext(packet: ContextPacket): string {
       lines.push(`Evaluation: ${outcome.evaluation.status}${outcome.evaluation.inputCommit ? ` (input ${outcome.evaluation.inputCommit})` : ""}`);
       if (outcome.evaluation.changedSinceInput.length > 0) lines.push(`  changed since input: ${outcome.evaluation.changedSinceInput.join(", ")}`);
       lines.push(`Review: ${outcome.review.status}${outcome.review.blockers.length > 0 ? ` (blocked by ${outcome.review.blockers.join(", ")})` : ""}`);
+      for (const note of outcome.review.notes) lines.push(`  non-blocking finding ${note}`);
       lines.push(`Blockers: ${outcome.blockers.length > 0 ? outcome.blockers.join("; ") : "none"}`);
     }
     lines.push(`Tasks: ${active.tasks.length === 0 ? "none" : ""}`);

@@ -20,9 +20,9 @@
         "required": ["id", "severity", "summary", "disposition"],
         "properties": {
           "id": { "type": "string", "minLength": 1 },
-          "severity": { "enum": ["critical", "high", "medium", "low"] },
+          "severity": { "enum": ["critical", "high", "medium", "low"], "description": "critical and high block until fixed; medium and low are recorded and shown but never block" },
           "summary": { "type": "string", "minLength": 1 },
-          "disposition": { "enum": ["open", "fixed", "accepted", "deferred"] }
+          "disposition": { "enum": ["open", "fixed", "accepted", "deferred"], "description": "only a fixed disposition clears a critical or high finding" }
         }
       }
     }

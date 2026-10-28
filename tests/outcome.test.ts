@@ -1,9 +1,10 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { bootstrap } from "../src/bootstrap/bootstrap.js";
 import { run } from "../src/cli.js";
+import { buildContext, renderContext } from "../src/context/context.js";
 import { GitRepository } from "../src/git/git.js";
 import { checkHistory } from "../src/integrity/history.js";
 import { checkIntegrity } from "../src/integrity/integrity.js";
@@ -109,6 +110,51 @@ describe("outcome workflow", () => {
     await expect(closeOutcome(cwd)).rejects.toThrow(/need a new evaluation/);
     await git.run(["checkout", "--", "feature.txt"]);
     await expect(git.commit(["feature.txt"], "sneak", { work: "hello", task: "feature" })).rejects.toThrow();
+  });
+
+  it("closes despite open medium and low findings, and shows them without blocking", async () => {
+    const { cwd, git } = await repository();
+    await openOutcome(cwd, "hello", "Say hello", CRITERIA);
+    await executeTask(cwd);
+    await writeEvidence(cwd);
+    await evaluateOutcome(cwd);
+    const path = join(cwd, ".ways", "runtime", "review.json");
+    await mkdir(join(cwd, ".ways", "runtime"), { recursive: true });
+    const findings = [
+      { id: "M1", severity: "medium", summary: "naming is inconsistent", disposition: "open" },
+      { id: "L1", severity: "low", summary: "typo in a comment", disposition: "open" },
+    ];
+    await writeFile(path, JSON.stringify({ schemaVersion: 1, workId: "hello", reviewer: "independent", digest: await reviewDigest(cwd), verdict: "pass", findings }));
+    const logged: string[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((message: unknown) => { logged.push(String(message)); });
+    try {
+      expect(await run(["review", "submit", path], cwd)).toBe(0);
+    } finally {
+      log.mockRestore();
+    }
+    expect(logged).toContain("Review recorded: pass");
+    expect(logged.some((line) => line.includes("Non-blocking finding M1 (medium, open): naming is inconsistent"))).toBe(true);
+    expect(logged.some((line) => line.startsWith("Blocking"))).toBe(false);
+    const packet = await buildContext(cwd);
+    expect(packet.active?.outcome?.review).toMatchObject({ status: "pass", blockers: [], notes: [expect.stringContaining("M1"), expect.stringContaining("L1")] });
+    expect(renderContext(packet)).toContain("non-blocking finding M1");
+    await closeOutcome(cwd);
+    expect(await loadState(cwd)).toBeUndefined();
+    expect(await checkHistory(cwd)).toEqual([]);
+    expect(await git.status()).toEqual([]);
+  });
+
+  it("still blocks close on an unfixed high finding even when the verdict passes", async () => {
+    const { cwd } = await repository();
+    await openOutcome(cwd, "hello", "Say hello", CRITERIA);
+    await executeTask(cwd);
+    await writeEvidence(cwd);
+    await evaluateOutcome(cwd);
+    const path = join(cwd, ".ways", "runtime", "review.json");
+    await mkdir(join(cwd, ".ways", "runtime"), { recursive: true });
+    await writeFile(path, JSON.stringify({ schemaVersion: 1, workId: "hello", reviewer: "independent", digest: await reviewDigest(cwd), verdict: "pass", findings: [{ id: "H1", severity: "high", summary: "data loss", disposition: "accepted" }] }));
+    await submitReview(cwd, path);
+    await expect(closeOutcome(cwd)).rejects.toThrow(/review blocked by: H1/);
   });
 
   it("rejects direct production commits, skipped transitions and tampered evidence", async () => {

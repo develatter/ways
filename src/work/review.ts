@@ -9,14 +9,25 @@ import { implementationDigest } from "./digest.js";
 import { outcomeReviewDigest, outcomeReviewPath } from "./outcome.js";
 import { submittedReviewerFailure } from "./outcome-evaluation-policy.js";
 
+const BLOCKING_SEVERITIES: ReadonlySet<string> = new Set(["critical", "high"]);
+
+/**
+ * Only an unfixed `critical` or `high` finding, or a verdict other than `pass`, blocks.
+ * `medium` and `low` findings are recorded and shown (see `reviewNotes`) but never block,
+ * whatever their disposition: a reviewer who wants to stop the work records a `high` finding.
+ */
 export function reviewBlocks(result: ReviewResult): string[] {
   const blockers: string[] = [];
   for (const finding of result.findings) {
-    if ((finding.severity === "critical" || finding.severity === "high") && finding.disposition !== "fixed") blockers.push(finding.id);
-    if ((finding.severity === "medium" || finding.severity === "low") && finding.disposition === "open") blockers.push(finding.id);
+    if (BLOCKING_SEVERITIES.has(finding.severity) && finding.disposition !== "fixed") blockers.push(finding.id);
   }
   if (result.verdict !== "pass") blockers.push("verdict");
   return [...new Set(blockers)];
+}
+
+/** Findings that are recorded but do not block, one line each. */
+export function reviewNotes(result: ReviewResult): string[] {
+  return result.findings.filter((finding) => !BLOCKING_SEVERITIES.has(finding.severity)).map((finding) => `${finding.id} (${finding.severity}, ${finding.disposition}): ${finding.summary}`);
 }
 
 function reviewAttemptFailure(value: ReviewResult, state: WorkState): string | undefined {
