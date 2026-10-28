@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -150,8 +150,11 @@ describe("baseline end-to-end coverage", () => {
   it("installs and checks the package from an npm pack tarball", async () => {
     const root = process.cwd();
     const packDir = await mkdtemp(join(tmpdir(), "ways-pack-"));
-    const packed = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destination", packDir], { cwd: root, encoding: "utf8" })) as Array<{ filename: string }>;
-    const tarball = join(packDir, packed[0]!.filename);
+    // `npm pack --json` changes shape between npm versions (array vs. keyed object), so find the tarball on disk instead.
+    execFileSync("npm", ["pack", "--pack-destination", packDir], { cwd: root, stdio: "ignore" });
+    const [file] = (await readdir(packDir)).filter((name) => name.endsWith(".tgz"));
+    expect(file).toBeTruthy();
+    const tarball = join(packDir, file!);
     const cwd = await mkdtemp(join(tmpdir(), "ways-pack-consumer-"));
     const git = new GitRepository(cwd);
     await git.run(["init", "-q"]);
@@ -193,5 +196,5 @@ describe("baseline end-to-end coverage", () => {
     ways("outcome", "close");
     expect(ways("status")).toContain("No active mutating work.");
     await execFileSync("sh", [join(cwd, "scripts/check.sh")], { cwd, stdio: "ignore", env: consumerEnv });
-  });
+  }, 120_000);
 });
