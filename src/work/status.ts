@@ -27,6 +27,23 @@ export interface StatusPacket {
   memory: RelevantConcept[];
   /** Checks and verifiers that failed and then passed on a retry (local quarantine). */
   quarantine: FlakyEntry[];
+  /** The repository's layers: onboarding still pending, MAP.md out of date. Said, never enforced. */
+  notices?: string[];
+}
+
+async function layerNotices(top: string): Promise<string[]> {
+  const notices: string[] = [];
+  try {
+    const { mapNotice, mapState, onboardingNotice } = await import("../context/layers.js");
+    const state = await mapState(gitDirs(top));
+    const onboarding = onboardingNotice(top, state.files);
+    if (onboarding) notices.push(onboarding);
+    const map = mapNotice(state.drift);
+    if (map) notices.push(map);
+  } catch {
+    // A notice is never worth failing the status for.
+  }
+  return notices;
 }
 
 export interface ActiveStatus {
@@ -70,6 +87,8 @@ export async function buildStatus(cwd: string): Promise<StatusPacket> {
     packet.next = "Make a first commit, then run `ways bootstrap`.";
     return packet;
   }
+  const notices = await layerNotices(top);
+  if (notices.length > 0) packet.notices = notices;
   let resolved;
   try {
     resolved = await resolveActive(top);
@@ -156,6 +175,7 @@ export function renderStatus(packet: StatusPacket): string {
     lines.push("Memory for the code you are changing:");
     for (const concept of packet.memory) lines.push(`  ${concept.path} — ${concept.title}${concept.stale ? " (possibly stale)" : ""}`);
   }
+  for (const notice of packet.notices ?? []) lines.push(notice);
   lines.push(`Next: ${packet.next}`);
   return `${lines.join("\n")}\n`;
 }

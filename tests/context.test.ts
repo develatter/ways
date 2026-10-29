@@ -66,7 +66,8 @@ describe("ways context --brief", () => {
     expect(text).toContain("- AC1 [test] failed: exports one row per invoice");
     expect(text).toContain("- AC2 [test] passed: amounts are integer cents");
     expect(text).toContain("- AC3 [review-only] needs review: the export is readable by a human");
-    expect(text).toMatch(/Failing: the last `ways done` ran on [0-9a-f]{12} \(HEAD\):\n- check test: failed \(exit 1\) after 3 attempts\n {4}test line 77 x+…?\n {4}test line 78 x+…?\n {4}test line 79 x+…?\n- check lint: failed \(exit 1\) after 3 attempts\n/);
+    // Each failure as `ways run` summarised it, with the full log one command away.
+    expect(text).toMatch(/Failing: the last `ways done` ran on [0-9a-f]{12} \(HEAD\):\n- check test: failed \(exit 1\) after 3 attempts\n {4}✗ exit 1: test line \d+ x+…?\n {4}full log: ways run --show test-[a-z0-9]+\n- check lint: failed \(exit 1\) after 3 attempts\n/);
     expect(text).toContain("\n- criterion AC1 (test): failed (exit 1)");
     expect(text).toContain("Next: fix what fails, commit, then `ways done`; if it cannot pass without weakening a test or check, `ways block \"<what is missing>\"` instead.");
     // At most five memories, the touched area first, each with the concept path to read more.

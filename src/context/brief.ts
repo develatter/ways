@@ -1,6 +1,6 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { CONFIG_PATH, isWikiPath, isWorkId, WAYS_DIR, WORK_DIR } from "../domain/constants.js";
+import { CONFIG_PATH, isWikiPath, isWorkId, MAP_PATH, ONBOARDING_PATH, WAYS_DIR, WORK_DIR } from "../domain/constants.js";
 import type { Enforcement, WorkRecord } from "../domain/types.js";
 import { fastHash } from "../runtime/lazy.js";
 import { currentBranchOf, headCommitOf, readActive, readLastRun, writeFileAtomic, type GitDirs, type LastRun } from "../runtime/runtime.js";
@@ -26,7 +26,7 @@ const MAX_FAILURE_LINES = 12;
 const TAIL_LINES = 3;
 const LINE_CHARS = 220;
 
-export type SectionId = "problem" | "work" | "failing" | "waiting" | "next" | `memory:${string}`;
+export type SectionId = "problem" | "onboarding" | "map" | "work" | "failing" | "waiting" | "next" | `memory:${string}`;
 
 export interface BriefSection {
   id: SectionId;
@@ -56,6 +56,8 @@ export interface BriefOptions {
   touched?: readonly string[];
   /** Cap the rendered text at BRIEF_MAX_CHARS and the memory at MAX_MEMORY (the default). */
   brief?: boolean;
+  /** The agent the brief is for (`claude`, `pi`), so the onboarding notice can say which agent it would start. */
+  agent?: string;
 }
 
 function clip(text: string, max = LINE_CHARS): string {
@@ -190,7 +192,7 @@ export function relevantMemory(concepts: readonly MemoryFact[], inPlay: { touche
 }
 
 export function renderMemory(concept: MemoryFact): string {
-  const stale = concept.stale ? " (possibly stale: its code changed after it was written)" : "";
+  const stale = `${concept.unverified ? " (unverified: seeded by onboarding, not confirmed by a person yet)" : ""}${concept.stale ? " (possibly stale: its code changed after it was written)" : ""}`;
   const lines = concept.fact.split("\n");
   // `ways remember` writes the fact as the body and its first line as the title.
   const body = lines[0]?.startsWith(concept.title.replace(/…$/, "")) ? lines : [concept.title, ...lines];
@@ -319,6 +321,16 @@ export async function buildBrief(dirs: GitDirs, options: BriefOptions = {}): Pro
     brief.sections.push({ id: "next", text: `Next: ${brief.next}.` });
   }
 
+  // The repository's layers: said once per session (the hooks inject a section again only when its text changes).
+  const pendingOnboarding = existsSync(join(dirs.top, ONBOARDING_PATH)) && readFileSync(join(dirs.top, ONBOARDING_PATH), "utf8").includes("\"pending\"");
+  if (pendingOnboarding || existsSync(join(dirs.top, MAP_PATH))) {
+    const { mapNotice, mapState, onboardingNotice } = await import("./layers.js");
+    const state = await mapState(dirs);
+    const onboarding = pendingOnboarding ? onboardingNotice(dirs.top, state.files, options.agent) : undefined;
+    if (onboarding) brief.sections.push({ id: "onboarding", text: onboarding });
+    const map = mapNotice(state.drift);
+    if (map) brief.sections.push({ id: "map", text: map });
+  }
   for (const concept of brief.memory) brief.sections.push({ id: `memory:${concept.path}`, text: renderMemory(concept) });
   return brief;
 }

@@ -361,6 +361,23 @@ async function dispatch(command: string, args: string[], cwd: string, invoked = 
     return result.passed ? 0 : 1;
   }
 
+  if (command === "onboard") {
+    const { onboard } = await import("./onboard/onboard.js");
+    const { processTerminal } = await import("./work/work.js");
+    const terminal = processTerminal();
+    const agent = option(args, "--agent");
+    const json = args.includes("--json");
+    const result = await onboard(cwd, {
+      ...(agent === undefined ? {} : { agent }),
+      yes: args.includes("--yes"),
+      refresh: args.includes("--refresh"),
+      dryRun: args.includes("--dry-run"),
+      ...(terminal.interactive && !json ? { confirm: async (question: string) => /^y(es)?$/i.test((await terminal.ask(`${question} [y/N] `)).trim()) } : {}),
+    }, json ? () => undefined : console.log);
+    if (json) process.stdout.write(`${JSON.stringify({ status: result.status, exitCode: result.exitCode, summary: result.summary ?? null, strays: result.strays ?? [], lines: result.lines }, null, 2)}\n`);
+    return result.exitCode;
+  }
+
   if (command === "run") {
     const { runRunCommand } = await import("./run/command.js");
     return runRunCommand(args, cwd, { option });
@@ -434,7 +451,21 @@ async function dispatch(command: string, args: string[], cwd: string, invoked = 
       console.log(`Memory is valid: ${result.concepts} concepts${result.warnings.length > 0 ? `, ${result.warnings.length} warnings` : ""}.`);
       return 0;
     }
-    throw new Error("Usage: ways memory check | index");
+    if (action === "confirm") {
+      const ids = args.slice(1).filter((arg) => !arg.startsWith("--"));
+      if (ids.length === 0) throw new Error("Usage: ways memory confirm <id>...   (the ids `ways memory check` lists as unverified, e.g. conventions/money-in-cents)");
+      // Like an approval: a person vouches for the fact, so an agent's shell (no terminal) cannot.
+      if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error("ways memory confirm needs a person at an interactive terminal: it says a human checked these facts against their sources. Ask the human to run it (`ways ask` if they are not watching).");
+      const { confirmConcept } = await import("./memory/verify.js");
+      const { GitRepository } = await import("./git/git.js");
+      const email = (await new GitRepository(cwd).run(["config", "user.email"]).catch(() => "")).trim() || process.env.USER || "unknown";
+      for (const id of ids) console.log(`Confirmed ${(await confirmConcept(cwd, id, `human:${email.replace(/\s+/g, "")}`)).path}.`);
+      const { syncRules } = await import("./context/rules.js");
+      await syncRules(cwd);
+      console.log("Commit the change; the facts are no longer marked unverified.");
+      return 0;
+    }
+    throw new Error("Usage: ways memory check | index | confirm <id>...");
   }
 
   if (command === "query") {

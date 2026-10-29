@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -26,9 +26,14 @@ export async function repository(prefix = "ways-test-"): Promise<{ cwd: string; 
  * built CLI through WAYS_CLI (set by vitest.config.ts), so `npm run build`
  * must have run.
  */
-export async function installed(options: { testCommand?: string[]; agents?: string[]; prefix?: string } = {}): Promise<{ cwd: string; git: GitRepository }> {
+export async function installed(options: { testCommand?: string[]; agents?: string[]; prefix?: string; layers?: boolean } = {}): Promise<{ cwd: string; git: GitRepository }> {
   const repo = await repository(options.prefix);
   await bootstrap({ cwd: repo.cwd, testCommand: options.testCommand ?? ["node", "-e", "process.exit(0)"], agents: options.agents ?? [] });
+  if (!options.layers) {
+    // Most tests are about one thing: without `layers`, the repository is past its first session and has no MAP.md to drift.
+    await writeFile(join(repo.cwd, ".ways/onboarding.json"), `${JSON.stringify({ schemaVersion: 1, status: "done", at: new Date().toISOString() })}\n`);
+    await rm(join(repo.cwd, "MAP.md"), { force: true });
+  }
   await repo.git.run(["add", "-A"]);
   await repo.git.run(["commit", "-q", "-m", "chore: install ways"]);
   return repo;

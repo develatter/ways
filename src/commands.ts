@@ -145,6 +145,7 @@ export const COMMANDS: readonly CommandSpec[] = [
     summary: "Run a configured check (test, lint, typecheck, build, e2e) and get a short summary instead of its output: counts, each failure on a line, new vs already failing at the base, and the full log kept",
     usage: [
       "ways run [<check>...] [--all] [--json]",
+      "ways run <check> -- <extra args>   (e.g. one test file: ways run test -- tests/test_cart.py)",
       "ways run --show <id> [--grep=<regex>] [--tail=<n>|all]",
       "  without a name: every configured check in order, except the slow ones (--all includes them); the exit code is the check's",
     ],
@@ -161,6 +162,17 @@ export const COMMANDS: readonly CommandSpec[] = [
     ],
     examples: ["ways check", "ways check add lint -- npx eslint .", "ways check --history --to=$GITHUB_SHA"],
     actions: ["check", "check add", "check --history"],
+  },
+  {
+    name: "onboard",
+    summary: "The first session: MAP.md and the checks ways can detect (each run once), then an onboarder agent for folder purposes, a few verified-by-source facts, proposed checks and AGENTS.md additions; ways validates all of it",
+    usage: [
+      "ways onboard [--agent=claude|pi|none|<command>] [--yes] [--refresh] [--dry-run] [--json]",
+      "  an agent spends the human's quota: with \"onboarding\": \"ask\" (default) it starts only after --yes or a yes at the terminal",
+      "  --refresh updates stale facts and missing folder purposes; --agent=none runs only the deterministic part",
+    ],
+    examples: ["ways onboard --dry-run", "ways onboard --yes", "ways onboard --refresh --yes"],
+    actions: ["onboard"],
   },
   {
     name: "map",
@@ -188,10 +200,10 @@ export const COMMANDS: readonly CommandSpec[] = [
   },
   {
     name: "memory",
-    summary: "Validate the OKF memory under .ways/knowledge (and flag possibly stale concepts), or rebuild its search index",
-    usage: ["ways memory check", "ways memory index"],
-    examples: ["ways memory check"],
-    actions: ["memory check", "memory index"],
+    summary: "Validate the OKF memory under .ways/knowledge (flag stale and unverified facts), rebuild its index, or confirm seeded facts (a person at a terminal)",
+    usage: ["ways memory check", "ways memory index", "ways memory confirm <id>...   (a person who checked the facts against their sources)"],
+    examples: ["ways memory check", "ways memory confirm conventions/money-in-cents"],
+    actions: ["memory check", "memory index", "memory confirm"],
   },
   {
     name: "query",

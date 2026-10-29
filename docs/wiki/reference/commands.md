@@ -18,13 +18,15 @@ Most work is two commands: `ways done` to finish a [small change](../how-to/smal
 
 ## `ways bootstrap`
 
-Install ways in a Git repository: config, commit hooks, memory and the Claude Code and pi adapters
+Install ways in a Git repository: checks detected and validated by running them, AGENTS.md, MAP.md, commit hooks, memory and the Claude Code and pi adapters
 
 ```text
 ways bootstrap [--test-command=<json-array>] [--commands=<json>] [--agents=claude,pi[,codex,cursor]] [--no-adapters] [--force]
+  without --test-command or --commands, ways detects the checks (manifests, CI, Makefile) and runs each candidate once
 ```
 
 ```sh ways-check
+ways bootstrap
 ways bootstrap --test-command='["npm","test"]'
 ```
 
@@ -195,18 +197,66 @@ ways cancel
 ways cancel
 ```
 
+## `ways run`
+
+Run a configured check (test, lint, typecheck, build, e2e) and get a short summary instead of its output: counts, each failure on a line, new vs already failing at the base, and the full log kept
+
+```text
+ways run [<check>...] [--all] [--json]
+ways run <check> -- <extra args>   (e.g. one test file: ways run test -- tests/test_cart.py)
+ways run --show <id> [--grep=<regex>] [--tail=<n>|all]
+  without a name: every configured check in order, except the slow ones (--all includes them); the exit code is the check's
+```
+
+```sh ways-check
+ways run test
+ways run
+ways run --show test-m3k2p0a1 --grep=FAIL
+```
+
 ## `ways check`
 
-Run integrity and the configured checks (what CI runs); --history audits work records and trailers
+Integrity and every configured check (what CI runs), one line per area; add a check, validated by running it; --history audits work records and trailers
 
 ```text
 ways check [--integrity-only] [--with-services]
+ways check add <test|lint|typecheck|build|e2e> -- <command> [args...]
 ways check --history [--since=<ref>] [--to=<ref>]
 ```
 
 ```sh ways-check
 ways check
+ways check add lint -- npx eslint .
 ways check --history --to=$GITHUB_SHA
+```
+
+## `ways onboard`
+
+The first session: MAP.md and the checks ways can detect (each run once), then an onboarder agent for folder purposes, a few verified-by-source facts, proposed checks and AGENTS.md additions; ways validates all of it
+
+```text
+ways onboard [--agent=claude|pi|none|<command>] [--yes] [--refresh] [--dry-run] [--json]
+  an agent spends the human's quota: with "onboarding": "ask" (default) it starts only after --yes or a yes at the terminal
+  --refresh updates stale facts and missing folder purposes; --agent=none runs only the deterministic part
+```
+
+```sh ways-check
+ways onboard --dry-run
+ways onboard --yes
+ways onboard --refresh --yes
+```
+
+## `ways map`
+
+Write MAP.md from the repository (stack, commands, folders, entry points, tests, CI) with the folder purposes in .ways/map-notes.json; --check fails when it drifted
+
+```text
+ways map [--check]
+```
+
+```sh ways-check
+ways map
+ways map --check
 ```
 
 ## `ways verify`
@@ -237,15 +287,17 @@ ways remember "Tokens refresh 60 s before expiry" --path=src/auth/**
 
 ## `ways memory`
 
-Validate the OKF memory under .ways/knowledge (and flag possibly stale concepts), or rebuild its search index
+Validate the OKF memory under .ways/knowledge (flag stale and unverified facts), rebuild its index, or confirm seeded facts (a person at a terminal)
 
 ```text
 ways memory check
 ways memory index
+ways memory confirm <id>...   (a person who checked the facts against their sources)
 ```
 
 ```sh ways-check
 ways memory check
+ways memory confirm conventions/money-in-cents
 ```
 
 ## `ways query`
