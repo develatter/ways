@@ -229,9 +229,17 @@ async function dispatch(command: string, args: string[], cwd: string): Promise<n
   }
 
   if (command === "approve") {
-    const { approve } = await import("./work/work.js");
-    const result = await approve(cwd);
-    console.log(result.status === "closed" ? "Approved; work closed." : "Approved.");
+    const { approvalPayloadOf, approve, processTerminal } = await import("./work/work.js");
+    if (args.includes("--payload")) {
+      process.stdout.write(await approvalPayloadOf(cwd));
+      return 0;
+    }
+    const key = option(args, "--key");
+    const signatureFile = option(args, "--signature");
+    const { readFile } = await import("node:fs/promises");
+    const signature = signatureFile === undefined ? undefined : await readFile(userPath(cwd, signatureFile), "utf8");
+    const result = await approve(cwd, processTerminal(), { ...(key ? { key } : {}), ...(signature ? { signature } : {}) });
+    console.log(`Approved${result.signedBy ? ` (signed by ${result.signedBy})` : ""}${result.status === "closed" ? "; work closed." : "."}`);
     return 0;
   }
 

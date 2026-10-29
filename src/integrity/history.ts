@@ -7,6 +7,7 @@ import { stableJson } from "../fs/files.js";
 import { GitRepository, type CommitInfo } from "../git/git.js";
 import { baseConfig } from "../work/evaluate.js";
 import { pending } from "../work/record.js";
+import { approvalPayload, verifyPayload } from "../work/signature.js";
 
 export interface HistoryOptions {
   since?: string;
@@ -104,6 +105,15 @@ async function recordVersionIssues(git: GitRepository, commit: CommitInfo, path:
       if (entry?.status !== expected || (criterion.verify && stableJson(entry.command ?? null) !== stableJson(criterion.verify))) {
         fail("history-evidence-criterion", `criterion ${criterion.id} of ${id} lacks a passing run of its own verifier`);
       }
+    }
+  }
+  const approval = record.approval;
+  if (approval?.signature && stableJson(approval) !== stableJson((previous as WorkRecord | undefined)?.approval ?? null) && evidence) {
+    try {
+      const principal = await verifyPayload(git, evidence.base, approvalPayload(id, approval.input, approval.digest), approval.signature.signature);
+      if (principal !== approval.signature.principal) fail("history-approval-signature", `the approval of ${id} names ${approval.signature.principal} but was signed by ${principal}`);
+    } catch (error) {
+      fail("history-approval-signature", `the approval of ${id} has a signature that does not verify: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   if (record.closed && !(previous as WorkRecord | undefined)?.closed) {

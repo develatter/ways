@@ -3,13 +3,15 @@ import { userInfo } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { defaultReview, loadConfig } from "../config/config.js";
 import { assertWorkId, slugify, WAYS_DIR, workRecordPath } from "../domain/constants.js";
-import { STRENGTHS, type ActiveWork, type ApprovalPolicy, type Criterion, type Evidence, type Review, type ReviewPolicy, type ReviewProvenance, type Strength, type WorkRecord } from "../domain/types.js";
+import { STRENGTHS, type ActiveWork, type Approval, type ApprovalPolicy, type Criterion, type Evidence, type Review, type ReviewPolicy, type ReviewProvenance, type Strength, type WorkRecord } from "../domain/types.js";
 import { validationDetails } from "../domain/validation.js";
 import { GitRepository, parseTrailers } from "../git/git.js";
 import { relevantConcepts, type RelevantConcept } from "../memory/memory.js";
 import { appendRun, clearActive, clearRuns, gitDirs, readActive, readRuns, writeActive, writeLastRun } from "../runtime/runtime.js";
 import { formatCommandLine, parseCommandLine } from "./argv.js";
 import { evaluate, evidenceFailures, inferStrength } from "./evaluate.js";
+import { approvalsPolicy } from "./policy.js";
+import { ALLOWED_SIGNERS_PATH, allowedSigners, approvalPayload, NAMESPACE, signingKey, signPayload, verifyPayload } from "./signature.js";
 import { approvalDigest, approvalReasons, committedRecord, isOpen, openRecords, pending, recordIntroduction, reviewBlockers, reviewNotes, writeRecord, type Pending } from "./record.js";
 
 const CRITERION_ID = /^[A-Z][A-Z0-9-]{0,31}$/;
@@ -476,19 +478,45 @@ async function approverIdentity(git: GitRepository): Promise<string> {
   return userInfo().username;
 }
 
+export interface ApproveOptions {
+  /** SSH key to sign with (a private key file, or a public key whose private half is in ssh-agent). */
+  key?: string;
+  /** A signature the human made elsewhere over the payload `ways approve --payload` printed. */
+  signature?: string;
+}
+
+/** The approval payload of the verifying work, for a human who signs it on another machine. */
+export async function approvalPayloadOf(cwd: string): Promise<string> {
+  const { record } = await verifyingRecord(cwd, "approve");
+  return approvalPayload(record.id, record.evidence.input.commit, approvalDigest(record));
+}
+
 /**
- * Human approval. Refuses without a real terminal so an agent driving the CLI
- * through a tool cannot approve; the human sees what they approve and types
- * the work id. It comes last: after a passing evidence and any review.
+ * Human approval. It comes last: after a passing evidence and any review.
+ * Interactively it refuses without a real terminal, shows what is approved and
+ * asks for the work id, then signs with the human's SSH key when one is
+ * configured. With `signature` (made elsewhere) no terminal is needed: the key
+ * is the proof. When `approvals.signature` is `required` in the base, only a
+ * signature verified against the base's `.ways/allowed_signers` counts.
  */
-export async function approve(cwd: string, terminal: Terminal = processTerminal()): Promise<{ status: "closed" | "verifying"; pending: Pending; commit: string }> {
-  if (!terminal.interactive) throw new Error("Approval needs a human at an interactive terminal; ask the human to run `ways approve` themselves");
+export async function approve(cwd: string, terminal: Terminal = processTerminal(), options: ApproveOptions = {}): Promise<{ status: "closed" | "verifying"; pending: Pending; commit: string; signedBy?: string }> {
+  if (!options.signature && !terminal.interactive) throw new Error("Approval needs a human at an interactive terminal; ask the human to run `ways approve` themselves (or to sign the payload of `ways approve --payload` and run `ways approve --signature=<file>`)");
   const { top, git, record } = await verifyingRecord(cwd, "approve");
   const reasons = approvalReasons(record, record.evidence);
   if (reasons.length === 0) throw new Error(`Work ${record.id} needs no human approval`);
   const before = pending(record);
   if (!before.approval) throw new Error(`Work ${record.id} is already approved for ${record.evidence.input.commit.slice(0, 12)}`);
-  if (before.review) throw new Error(`Approval comes last: ${before.review}. Submit the review first (\`ways review submit <file>\`)`);
+  if (before.review) throw new Error(`Approval comes last: ${before.review}. Get the review first (\`ways review\`)`);
+  const required = approvalsPolicy(record.evidence).signature === "required";
+  const digest = approvalDigest(record);
+  const payload = approvalPayload(record.id, record.evidence.input.commit, digest);
+  if (options.signature) {
+    const principal = await verifyPayload(git, record.evidence.base, payload, options.signature);
+    return finishApproval(top, git, record, reasons, { by: principal, via: "ssh-signature", signature: { namespace: NAMESPACE, principal, signature: options.signature.trim() } });
+  }
+  // Git's own signing key is used only where the base says whose keys count; `--key` always signs.
+  const key = options.key ?? (required || await allowedSigners(git, record.evidence.base) ? await signingKey(git) : undefined);
+  if (required && !key) throw new Error(`This repository requires SSH-signed approvals (approvals.signature: required): run \`ways approve --key=<your key>\`, or configure Git for SSH signing (git config gpg.format ssh; git config user.signingkey <key>). The key must be in ${ALLOWED_SIGNERS_PATH} of the base.`);
   terminal.say(`Work ${record.id} (${record.kind})${record.goal ? `: ${record.goal}` : ""}`);
   for (const criterion of record.criteria) {
     const entry = record.evidence.criteria[criterion.id];
@@ -498,9 +526,18 @@ export async function approve(cwd: string, terminal: Terminal = processTerminal(
   if (record.review) terminal.say(`Review by ${record.review.reviewer}: ${record.review.verdict}.`);
   for (const reason of reasons) terminal.say(`Needs approval because ${reason}.`);
   terminal.say(`Inspect it with: git diff ${record.evidence.base.slice(0, 12)} ${record.evidence.input.commit.slice(0, 12)}`);
-  const answer = await terminal.ask(`Type "${record.id}" to approve: `);
+  const answer = await terminal.ask(`Type "${record.id}" to approve${key ? ` (then sign with ${key})` : ""}: `);
   if (answer.trim() !== record.id) throw new Error("Approval cancelled; nothing was recorded");
-  const next: WorkRecord = { ...record, approval: { by: await approverIdentity(git), at: new Date().toISOString(), input: record.evidence.input.commit, digest: approvalDigest(record), reasons } };
+  if (key) {
+    const signature = signPayload(payload, key);
+    const principal = await verifyPayload(git, record.evidence.base, payload, signature);
+    return finishApproval(top, git, record, reasons, { by: principal, via: "ssh-signature", signature: { namespace: NAMESPACE, principal, signature } });
+  }
+  return finishApproval(top, git, record, reasons, { by: await approverIdentity(git), via: "terminal" });
+}
+
+async function finishApproval(top: string, git: GitRepository, record: WorkRecord & { evidence: Evidence }, reasons: string[], who: Pick<Approval, "by" | "via" | "signature">): Promise<{ status: "closed" | "verifying"; pending: Pending; commit: string; signedBy?: string }> {
+  const next: WorkRecord = { ...record, approval: { ...who, at: new Date().toISOString(), input: record.evidence.input.commit, digest: approvalDigest(record), reasons } };
   const missing = pending(next);
   const closing = !missing.review && !missing.approval;
   if (closing) next.closed = { at: new Date().toISOString() };
@@ -509,7 +546,7 @@ export async function approve(cwd: string, terminal: Terminal = processTerminal(
   if (closing) {
     clearActive(top, record.id);
   }
-  return { status: closing ? "closed" : "verifying", pending: missing, commit };
+  return { status: closing ? "closed" : "verifying", pending: missing, commit, ...(who.signature ? { signedBy: who.signature.principal } : {}) };
 }
 
 /** Drops the active work. A committed record is marked cancelled; commits stay as they are. */

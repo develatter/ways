@@ -86,9 +86,13 @@ export const COMMANDS: readonly CommandSpec[] = [
   },
   {
     name: "approve",
-    summary: "Human approval (needs a real terminal; agents cannot run it); closes the work when nothing else is missing",
-    usage: ["ways approve"],
-    examples: ["ways approve"],
+    summary: "Human approval (a real terminal, signed with the human's SSH key when configured); closes the work when nothing else is missing",
+    usage: [
+      "ways approve [--key=<ssh key>]          at an interactive terminal; signs when a key is given or Git signs with SSH",
+      "ways approve --payload                  print what to sign elsewhere: ssh-keygen -Y sign -n ways-approval -f <key>",
+      "ways approve --signature=<file>         record a signature made elsewhere (verified against .ways/allowed_signers of the base)",
+    ],
+    examples: ["ways approve", "ways approve --key=~/.ssh/id_ed25519_sk"],
     actions: ["approve"],
   },
   {
