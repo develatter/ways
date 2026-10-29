@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { mergeClaudeSettings, renderClaude, resolveNames } from "../src/adapters/claude.js";
+import { mergeClaudeSettings, renderClaude, resolveNames, RUNNER_IF } from "../src/adapters/claude.js";
 import { installAdapter, PROVIDERS } from "../src/adapters/install.js";
 import { mergeHookEntries } from "../src/adapters/hook-file.js";
 import { loadAdapterSource, MAX_ROLE_LINES, nonEmptyLines } from "../src/adapters/source.js";
@@ -72,11 +72,12 @@ describe("claude renderer", () => {
     expect(hooks.SubagentStart).toEqual([{ matcher: "ways-reviewer", hooks: [expect.objectContaining({ command: "\"$CLAUDE_PROJECT_DIR\"/.ways/hooks/agent-hook claude SubagentStart" })] }]);
     expect(hooks.SubagentStop).toEqual([{ matcher: "ways-reviewer", hooks: [expect.objectContaining({ command: "\"$CLAUDE_PROJECT_DIR\"/.ways/hooks/agent-hook claude SubagentStop", timeout: 60 })] }]);
     expect(hooks.PreToolUse![0]).toEqual(mine);
-    // The guard runs only on calls that could touch a record or switch the hooks off.
+    // The guard runs only on calls that could touch a record or switch the hooks off, plus the common check runners for the one `ways run` hint.
     expect(hooks.PreToolUse!.slice(1).map((group) => [group.matcher, group.hooks.map((entry) => entry.if)])).toEqual([
       ["Write|Edit|MultiEdit|NotebookEdit", ["Edit(**/.ways/work/**)", "Write(**/.ways/work/**)"]],
-      ["Bash", ["Bash(*.ways/work*)", "Bash(*WAYS_DISABLE*)", "Bash(git commit *)", "Bash(git -c *)", "Bash(git config *)"]],
+      ["Bash", ["Bash(*.ways/work*)", "Bash(*WAYS_DISABLE*)", "Bash(git commit *)", "Bash(git -c *)", "Bash(git config *)", ...RUNNER_IF]],
     ]);
+    expect(RUNNER_IF).toEqual(expect.arrayContaining(["Bash(pytest*)", "Bash(npm test*)", "Bash(cargo *)", "Bash(go test *)"]));
     expect(hooks.PostToolUse![0]).toMatchObject({ matcher: "Write|Edit|MultiEdit|NotebookEdit", hooks: [{ async: true }] });
     for (const event of AGENT_EVENTS) {
       for (const entry of hooks[event]!.at(-1)!.hooks) expect(entry).toMatchObject({ type: "command", command: `"$CLAUDE_PROJECT_DIR"/.ways/hooks/agent-hook claude ${event}`, timeout: 10 });
