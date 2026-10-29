@@ -22,7 +22,9 @@ import { loadMemory, safeMatch, type MemoryFact } from "./memory.js";
 export const BRIEF_MAX_CHARS = 6000;
 export const MAX_MEMORY = 5;
 const MAX_CRITERIA = 12;
-const MAX_FAILURE_LINES = 14;
+/** Failing items listed, and output lines kept for each. */
+const MAX_FAILURE_LINES = 12;
+const TAIL_LINES = 3;
 const LINE_CHARS = 220;
 
 export type SectionId = "problem" | "work" | "failing" | "waiting" | "next" | `memory:${string}`;
@@ -172,7 +174,11 @@ async function gitFacts(dirs: GitDirs, head: string | undefined, base: string | 
   return facts;
 }
 
-/** Ranks the concepts covering the paths in play: touched this session, then uncommitted, then changed by the work; fresh before possibly stale. */
+/**
+ * Ranks the concepts covering the paths in play: touched this session (most
+ * recent first), then uncommitted, then changed by the work; within that, the
+ * more specific glob first, then fresh before possibly stale.
+ */
 export function relevantMemory(concepts: readonly MemoryFact[], inPlay: { touched: readonly string[]; uncommitted: readonly string[]; changed: readonly string[] }, limit = MAX_MEMORY): MemoryFact[] {
   const scored: Array<{ concept: MemoryFact; score: number; specificity: number }> = [];
   for (const concept of concepts) {
@@ -185,22 +191,44 @@ export function relevantMemory(concepts: readonly MemoryFact[], inPlay: { touche
     const specificity = Math.max(...concept.paths.map((glob) => glob.split(/[*?]/, 1)[0]!.length));
     scored.push({ concept, score, specificity });
   }
-  scored.sort((a, b) => b.score - a.score || Number(a.concept.stale) - Number(b.concept.stale) || b.specificity - a.specificity || a.concept.path.localeCompare(b.concept.path));
+  scored.sort((a, b) => b.score - a.score || b.specificity - a.specificity || Number(a.concept.stale) - Number(b.concept.stale) || a.concept.path.localeCompare(b.concept.path));
   return scored.slice(0, limit).map((entry) => entry.concept);
 }
 
 export function renderMemory(concept: MemoryFact): string {
-  const stale = concept.stale ? ` (possibly stale: files under ${concept.paths.join(", ")} changed since it was last committed)` : "";
+  const stale = concept.stale ? " (possibly stale: its code changed after it was written)" : "";
   const lines = concept.fact.split("\n");
   // `ways remember` writes the fact as the body and its first line as the title.
   const body = lines[0]?.startsWith(concept.title.replace(/…$/, "")) ? lines : [concept.title, ...lines];
   return [`- [${concept.type}] ${body[0]} — ${concept.paths.join(", ")} (${concept.path})${stale}`, ...body.slice(1).map((line) => `  ${line}`)].join("\n");
 }
 
-function criterionResult(record: WorkRecord, id: string, fresh: boolean): string {
+/**
+ * Every failing item `ways done` printed (a headline), each with only the
+ * last lines of its output: what fails comes before why.
+ */
+export function failureSummary(failures: readonly string[]): string[] {
+  const blocks: Array<{ headline: string; tail: string[] }> = [];
+  for (const line of failures) {
+    if (/^\s/.test(line) && blocks.length > 0) blocks.at(-1)!.tail.push(line.trim());
+    else blocks.push({ headline: line, tail: [] });
+  }
+  const lines: string[] = [];
+  for (const block of blocks.slice(0, MAX_FAILURE_LINES)) {
+    lines.push(`- ${clip(block.headline)}`);
+    for (const line of block.tail.filter(Boolean).slice(-TAIL_LINES)) lines.push(`    ${clip(line, 160)}`);
+  }
+  if (blocks.length > MAX_FAILURE_LINES) lines.push(`- … ${blocks.length - MAX_FAILURE_LINES} more (\`ways status\`)`);
+  return lines;
+}
+
+/** From the evidence when it certifies HEAD, else from the last run on HEAD (failed runs leave no evidence). */
+function criterionResult(record: WorkRecord, id: string, fresh: boolean, lastRun: LastRun | undefined, head: string | undefined): string {
   const entry = fresh ? record.evidence?.criteria[id] : undefined;
-  if (!entry) return "not run on HEAD";
-  return entry.status === "review-only" ? "needs review" : entry.status;
+  if (entry) return entry.status === "review-only" ? "needs review" : entry.status;
+  if (!lastRun || lastRun.input !== head) return "not run on HEAD";
+  if (lastRun.failures.some((line) => line.startsWith(`criterion ${id} `))) return "failed";
+  return record.criteria.find((criterion) => criterion.id === id)?.strength === "review-only" ? "needs review" : "passed";
 }
 
 function nextCommand(work: { record: WorkRecord | undefined; base: string | undefined }, facts: GitFacts, lastRun: LastRun | undefined, head: string | undefined, missing: Pending): string {
@@ -265,7 +293,7 @@ export async function buildBrief(dirs: GitDirs, options: BriefOptions = {}): Pro
     const work = [`Work: ${kind} ${id}${goal}${where ? ` (${where})` : ""}`];
     const criteria = record?.criteria ?? [];
     for (const criterion of criteria.slice(0, options.brief === false ? criteria.length : MAX_CRITERIA)) {
-      work.push(`- ${criterion.id} [${criterion.strength}] ${criterionResult(record!, criterion.id, facts.fresh)}: ${clip(criterion.text, 160)}`);
+      work.push(`- ${criterion.id} [${criterion.strength}] ${criterionResult(record!, criterion.id, facts.fresh, lastRun, head)}: ${clip(criterion.text, 160)}`);
     }
     if (criteria.length > MAX_CRITERIA && options.brief !== false) work.push(`- … ${criteria.length - MAX_CRITERIA} more criteria (\`ways status\`)`);
     if (record?.evidence && facts.fresh) work.push(`Evaluated: ${record.evidence.passed ? "passed" : "failed"} on ${short(record.evidence.input.commit)}.`);
@@ -273,9 +301,7 @@ export async function buildBrief(dirs: GitDirs, options: BriefOptions = {}): Pro
 
     if (lastRun && !lastRun.passed) {
       const where = lastRun.input === head ? "HEAD" : "an earlier commit";
-      const lines = lastRun.failures.slice(0, MAX_FAILURE_LINES).map((line) => `  ${clip(line)}`);
-      if (lastRun.failures.length > MAX_FAILURE_LINES) lines.push(`  … ${lastRun.failures.length - MAX_FAILURE_LINES} more lines`);
-      brief.sections.push({ id: "failing", text: [`Failing: the last \`ways done\` ran on ${short(lastRun.input)} (${where}):`, ...lines].join("\n") });
+      brief.sections.push({ id: "failing", text: [`Failing: the last \`ways done\` ran on ${short(lastRun.input)} (${where}):`, ...failureSummary(lastRun.failures)].join("\n") });
       if (lastRun.input === head) brief.blockers.push({ key: `failing:${lastRun.input}`, who: "agent", text: `the last \`ways done\` failed on HEAD (${short(lastRun.input)}), so ${id} is not done` });
     }
 
