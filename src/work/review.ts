@@ -1,13 +1,12 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { loadConfig } from "../config/config.js";
-import type { CommandArgv, ReviewProvenance, WorkRecord } from "../domain/types.js";
+import type { CommandArgv, ReviewerConfig, ReviewProvenance, WorkRecord } from "../domain/types.js";
 import { sha256 } from "../fs/digest.js";
 import { GitRepository } from "../git/git.js";
 import { killTree } from "../check/process.js";
 import { gitDirs } from "../runtime/runtime.js";
 import { formatCommandLine } from "./argv.js";
-import { strengthSummary } from "./evaluate.js";
+import { baseConfig, strengthSummary } from "./evaluate.js";
 import { reviewOnlyCriteria, verifierCheckpoint } from "./policy.js";
 import { committedRecord } from "./record.js";
 import { recordReview, resolveActive, type ReviewOutcome } from "./work.js";
@@ -184,13 +183,41 @@ function runReviewer(command: CommandArgv, cwd: string, prompt: string): Promise
   });
 }
 
-/** Which reviewer to launch: `--agent`, then the config, then the agent ways is running under. */
-async function chooseReviewer(top: string, agent: string | undefined): Promise<{ preset?: ReviewPreset; command: CommandArgv; label: string; tools?: string[] }> {
-  const config = await loadConfig(top);
+/** The reviewer as the base configured it: a work cannot pick its own reviewer by editing the config it is judged by. */
+async function baseReviewer(git: GitRepository, base: string): Promise<ReviewerConfig | undefined> {
+  const value = (await baseConfig(git, base))?.reviewer;
+  if (!value || typeof value !== "object") return undefined;
+  const reviewer = value as ReviewerConfig;
+  const command = Array.isArray(reviewer.command) && reviewer.command.length > 0 && reviewer.command.every((part) => typeof part === "string" && part !== "") ? reviewer.command : undefined;
+  const agent = reviewer.agent === "claude" || reviewer.agent === "pi" ? reviewer.agent : undefined;
+  return { ...(command ? { command } : {}), ...(agent ? { agent } : {}) };
+}
+
+/**
+ * A process provenance is coherent when its command is a preset (with any
+ * session id) or the reviewer command the work's base configured. The history
+ * audit, and so `ways verify`, refuses anything else.
+ */
+export async function reviewerCommandTrusted(git: GitRepository, base: string, command: readonly string[] | undefined): Promise<boolean> {
+  if (!command) return false;
+  const configured = (await baseReviewer(git, base))?.command;
+  if (configured && JSON.stringify(configured) === JSON.stringify(command)) return true;
+  for (const agent of ["claude", "pi"] as const) {
+    const preset = reviewPreset(agent);
+    const expected = preset.command.filter((part) => part !== REVIEW_INSTRUCTION).map((part) => (part === preset.session ? "<session>" : part));
+    const actual = command.map((part, index) => (command[index - 1] === "--session-id" ? "<session>" : part));
+    if (JSON.stringify(expected) === JSON.stringify(actual)) return true;
+  }
+  return false;
+}
+
+/** Which reviewer to launch: `--agent`, then the base's config, then the agent ways is running under. */
+async function chooseReviewer(git: GitRepository, base: string, agent: string | undefined): Promise<{ preset?: ReviewPreset; command: CommandArgv; label: string; tools?: string[] }> {
+  const config = { reviewer: await baseReviewer(git, base) };
   if (agent !== undefined && agent !== "claude" && agent !== "pi") throw new Error(`--agent must be claude or pi, got "${agent}"`);
   if (!agent && config.reviewer?.command) return { command: config.reviewer.command, label: formatCommandLine(config.reviewer.command) };
   const chosen = agent ?? config.reviewer?.agent ?? (process.env.CLAUDECODE ? "claude" : process.env.PI_CODING_AGENT ? "pi" : undefined);
-  if (!chosen) throw new Error("Which reviewer? Run `ways review --agent=claude` or `--agent=pi`, or set \"reviewer\": {\"agent\": \"claude\"} in .ways/config.json (in Claude Code, the ways-reviewer subagent also works: ways records its verdict itself)");
+  if (!chosen) throw new Error("Which reviewer? Run `ways review --agent=claude` or `--agent=pi`, or set \"reviewer\": {\"agent\": \"claude\"} in .ways/config.json in a commit of its own (the base's setting is the one used; in Claude Code, the ways-reviewer subagent also works: ways records its verdict itself)");
   const preset = reviewPreset(chosen);
   return { preset, command: preset.command, label: chosen, tools: preset.tools };
 }
@@ -202,8 +229,8 @@ export async function describeReview(cwd: string, agent?: string): Promise<{ pro
   const commands: Record<string, string> = {};
   for (const name of ["claude", "pi"] as const) commands[name] = `${formatCommandLine(reviewPreset(name).command)} < <prompt>`;
   if (agent === undefined) {
-    const config = await loadConfig(top);
-    if (config.reviewer?.command) commands.configured = `${formatCommandLine(config.reviewer.command)} < <prompt>`;
+    const configured = (await baseReviewer(new GitRepository(top), prompt.base))?.command;
+    if (configured) commands.configured = `${formatCommandLine(configured)} < <prompt>`;
   }
   return { prompt, commands };
 }
@@ -215,7 +242,7 @@ export async function describeReview(cwd: string, agent?: string): Promise<{ pro
 export async function launchReview(cwd: string, options: { agent?: string } = {}): Promise<ReviewOutcome & { reviewer: string }> {
   const { top } = gitDirs(cwd);
   const prompt = await reviewPrompt(top);
-  const reviewer = await chooseReviewer(top, options.agent);
+  const reviewer = await chooseReviewer(new GitRepository(top), prompt.base, options.agent);
   const result = await runReviewer(reviewer.command, top, prompt.text);
   let answer = result.stdout;
   if (reviewer.preset?.agent === "claude") {

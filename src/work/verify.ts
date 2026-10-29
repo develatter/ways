@@ -5,7 +5,7 @@ import { GitRepository } from "../git/git.js";
 import { auditHistory, commitsAfter } from "../integrity/history.js";
 import { gitDirs } from "../runtime/runtime.js";
 import { evaluate, evidenceFailures, strengthSummary } from "./evaluate.js";
-import { verifierCheckpoint } from "./policy.js";
+import { pending, verifierCheckpoint } from "./policy.js";
 import { committedRecord } from "./record.js";
 
 /**
@@ -75,7 +75,11 @@ export async function verifyRange(cwd: string, options: { base: string; head?: s
     const record = await committedRecord(git, id, head).catch(() => undefined);
     if (!record) continue;
     const state = stateOf(record);
-    if (record.closed && record.evidence) for (const entry of verifierCheckpoint(record.evidence)) covered.add(entry);
+    // A close covers its verifier changes only if, judged now, nothing was missing (a valid approval, or an acceptance that still counts).
+    if (record.closed && record.evidence) {
+      if (Object.keys(pending(record)).length === 0) for (const entry of verifierCheckpoint(record.evidence)) covered.add(entry);
+      else failures.push(`${id} closed although ${Object.values(pending(record)).join("; ")}`);
+    }
     const report: WorkReport = { id, kind: record.kind, state, criteria: [], reproduced: true, summary: "", ...(record.blocked ? { blocked: record.blocked.reason } : {}) };
     if (state !== "cancelled" && record.criteria.length > 0) {
       const workBase = record.evidence?.base ?? base;

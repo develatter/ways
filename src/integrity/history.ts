@@ -7,6 +7,7 @@ import { stableJson } from "../fs/files.js";
 import { GitRepository, type CommitInfo } from "../git/git.js";
 import { baseConfig } from "../work/evaluate.js";
 import { pending } from "../work/record.js";
+import { reviewerCommandTrusted } from "../work/review.js";
 import { approvalPayload, verifyPayload } from "../work/signature.js";
 
 export interface HistoryOptions {
@@ -105,6 +106,18 @@ async function recordVersionIssues(git: GitRepository, commit: CommitInfo, path:
       if (entry?.status !== expected || (criterion.verify && stableJson(entry.command ?? null) !== stableJson(criterion.verify))) {
         fail("history-evidence-criterion", `criterion ${criterion.id} of ${id} lacks a passing run of its own verifier`);
       }
+    }
+  }
+  // A review's provenance must be one ways can produce for this base: a preset or the base's reviewer, or its own subagent.
+  const review = record.review;
+  if (review && stableJson(review) !== stableJson((previous as WorkRecord | undefined)?.review ?? null)) {
+    const provenance = review.provenance;
+    const reviewBase = evidence?.base;
+    if (!provenance) fail("history-review-provenance", `the review of ${id} has no provenance; only reviews ways recorded itself count`);
+    else if (provenance.via === "process" && !(reviewBase && await reviewerCommandTrusted(git, reviewBase, provenance.command))) {
+      fail("history-review-provenance", `the review of ${id} came from a reviewer command that is neither a preset nor the reviewer of its base's configuration`);
+    } else if (provenance.via === "subagent" && (provenance.agentType !== "ways-reviewer" || !provenance.agentId)) {
+      fail("history-review-provenance", `the review of ${id} names a subagent that is not ways-reviewer`);
     }
   }
   const approval = record.approval;

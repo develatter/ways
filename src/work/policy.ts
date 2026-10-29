@@ -65,10 +65,20 @@ export function attestedReview(record: WorkRecord): Review | undefined {
   return review && review.provenance && review.commit === record.evidence?.input.commit ? review : undefined;
 }
 
-/** Checkpoint entries an attested review explicitly accepted through a finding's `accepts`. */
+/**
+ * Checkpoint entries an independent review explicitly accepted through a
+ * finding's `accepts`. Only a reviewer ways launched or handed its prompt to
+ * (`process`, `subagent`) can accept; a file typed in at a terminal cannot,
+ * because a pseudo-terminal gives an agent one; that case is the human's
+ * approval. Where the base requires signed approvals no review can stand in
+ * for one: locally a review's provenance is only as strong as the hooks, and
+ * the signature is the one anchor CI can check.
+ */
 export function acceptedByReview(record: WorkRecord): Set<string> {
   const review = attestedReview(record);
-  return new Set(review ? review.findings.flatMap((finding) => finding.accepts ?? []) : []);
+  if (!review || (review.provenance!.via !== "process" && review.provenance!.via !== "subagent")) return new Set();
+  if (approvalsPolicy(record.evidence).signature === "required") return new Set();
+  return new Set(review.findings.flatMap((finding) => finding.accepts ?? []));
 }
 
 function verifierReason(evidence: Evidence, entries: readonly string[]): string {
