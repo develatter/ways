@@ -11,7 +11,7 @@ source_hashes:
   src/serve/command.ts: 8a12b06e80d6
   src/serve/board.ts: 9628da1d60cd
   src/inbox/commands.ts: e22dd8e17729
-  src/commands.ts: ed6b4c0f3337
+  src/commands.ts: 1e705fb54baf
 ---
 
 # See your agents and answer them

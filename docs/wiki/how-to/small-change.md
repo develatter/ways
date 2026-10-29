@@ -8,10 +8,10 @@ sources:
   - src/hooks/hook.ts
 reviewed: 2026-10-29
 source_hashes:
-  src/cli.ts: a8a25cb11118
+  src/cli.ts: 7ba297777707
   src/work/work.ts: 6cf798d8e5c6
-  src/work/evaluate.ts: 07fc688ed0ce
-  src/hooks/hook.ts: fd41f9993c45
+  src/work/evaluate.ts: c1c45d85e5af
+  src/hooks/hook.ts: 86cbc37c6c53
 ---
 
 # Make a small change
@@ -29,7 +29,7 @@ A small change has no criteria of its own: its judge is your check suite. You co
 
    It runs the integrity checks and your checks once, in a clean checkout of the committed HEAD, with the check configuration as it was where the change started. Then it records the evidence and closes the change when nothing is missing. It refuses to run with uncommitted changes in the tree, since they would not be what it checks; commit them, or pass `--message="<subject>"` and ways commits everything that is left (`git add -A`) with that subject, and starts the change if there was none.
 
-3. **If it fails**, it lists what failed and the next command. Fix, commit and run it again. A failing check is run again up to twice before the failure is recorded; a check that fails and then passes is recorded as flaky and listed by `ways status`.
+3. **If it fails**, it lists what failed, each failure on one line, and the next command. Fix, commit and run it again. A failing check is run again up to twice before the failure is recorded; a check that fails and then passes is recorded as flaky and listed by `ways status`. While you work, `npx ways run test` (or `lint`, `typecheck`, ...) runs one check in place and tells you which failures are new and which already failed before your change; `npx ways run --show <id>` prints the full log.
 
 ## Variations
 
@@ -46,4 +46,4 @@ A small change has no criteria of its own: its judge is your check suite. You co
 
 ## When it needs a person
 
-Removing or changing lines of an existing test, skipping or focusing tests, changing the check configuration, or running fewer tests than the base did is not blocked locally, but it cannot close without either a human's `ways approve` or an independent review that accepts the change. Adding tests never needs one, also to an existing test file. See [Get a review, and an approval](review.md).
+Removing or changing lines of an existing test, skipping or focusing tests, changing the check configuration, or running fewer tests than the base did is not blocked locally, but it cannot close without either a human's `ways approve` or an independent review that accepts the change. Adding tests never needs one, also to an existing test file, and neither does adding a check (`npx ways check add lint -- npx eslint .`). See [Get a review, and an approval](review.md).

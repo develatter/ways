@@ -9,9 +9,9 @@ sources:
   - src/config/config.ts
 reviewed: 2026-10-29
 source_hashes:
-  src/hooks/hook.ts: fd41f9993c45
-  src/hooks/guard.ts: 4d3ff1f5e49b
-  src/integrity/history.ts: 7dc05c41c7b6
+  src/hooks/hook.ts: 86cbc37c6c53
+  src/hooks/guard.ts: f8e9a4f25f25
+  src/integrity/history.ts: 518e8b8f43b0
   src/work/policy.ts: 08dda9672054
   src/config/config.ts: 4cbe2b4bb94f
 ---
@@ -27,13 +27,13 @@ So the question for each rule is: what real guarantee does it buy that a hook, t
 | The definition of done does not move | The goal and criteria are committed when an outcome opens. The commit hook refuses a commit that adds, changes or deletes a work record by hand, in every mode; the agent guard refuses the edit before it is made; the history audit flags a record whose criteria changed after they were opened. |
 | Evidence is the harness's | `ways done` runs the checks and writes the evidence for the exact commit and tree it ran on. The agent can add a note per criterion and nothing else. The audit refuses evidence that names another commit, another tree or other commands than the base's check configuration. |
 | A criterion shows the work did something | Its verifier must fail on the base and pass on the commit; otherwise the criterion counts as review-only and needs an independent review. |
-| Tests are not weakened silently | Removing or changing lines of an existing test, skipping or focusing tests, touching the check configuration, or running fewer tests than the base did, needs a human approval or an independent review that accepts it by name; in CI the approval covers only the content it was given for. Adding tests needs nothing, also to an existing file. |
+| Tests are not weakened silently | Removing or changing lines of an existing test, skipping or focusing tests, touching the check configuration, or running fewer tests than the base did, needs a human approval or an independent review that accepts it by name; in CI the approval covers only the content it was given for. Adding tests needs nothing, also to an existing file, and neither does adding a check while every earlier one stays. A check command enters the configuration only after ways ran it. |
 | Reviews are independent | A reviewer that ways started, with read-only tools, or the subagent it handed the prompt to, counts on its own. ways records the answer itself. A review typed in at a terminal counts only with the person's approval. |
 | Approvals come from a person | `ways approve` needs a real terminal. With the person's SSH key in `.ways/allowed_signers`, the approval is signed and CI re-verifies the signature; the policy can require one. |
 
 ## What is not blocked
 
-An ordinary commit is never refused for lacking ceremony. In the default `observe` mode the hook adds a `Harness-Work` trailer (starting a change named after the branch if none is active) and refuses only the hand-made record. Setting `"enforcement": "enforce"` in `.ways/config.json` additionally makes the commit hook refuse a commit outside an active work, and the agent guard refuse a shell command that switches the commit hooks off. How an agent gets to done, how many commits it makes, and which tools it uses are its own choice.
+An ordinary commit is never refused for lacking ceremony. In the default `observe` mode the hook adds a `Harness-Work` trailer (starting a change named after the branch if none is active) and refuses only the hand-made record. Setting `"enforcement": "enforce"` in `.ways/config.json` additionally makes the commit hook refuse a commit outside an active work, and the agent guard refuse a shell command that switches the commit hooks off. A session ways launched for a role (the documentalist, the onboarder) is confined to that role's paths by the guard, the commit hook and the history audit. How an agent gets to done, how many commits it makes, and which tools it uses are its own choice.
 
 ## Locally you can bypass; CI cannot be
 

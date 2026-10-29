@@ -5,7 +5,7 @@ sources:
   - src/commands.ts
 reviewed: 2026-10-29
 source_hashes:
-  src/commands.ts: ed6b4c0f3337
+  src/commands.ts: 1e705fb54baf
 ---
 
 # Commands

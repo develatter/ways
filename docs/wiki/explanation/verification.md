@@ -9,11 +9,11 @@ sources:
   - src/domain/constants.ts
 reviewed: 2026-10-29
 source_hashes:
-  src/work/evaluate.ts: 07fc688ed0ce
+  src/work/evaluate.ts: c1c45d85e5af
   src/check/sandbox.ts: 52520ed18752
   src/work/policy.ts: 08dda9672054
   src/work/verify.ts: 6bc3906b401e
-  src/domain/constants.ts: c77b27ca061a
+  src/domain/constants.ts: 5c9038c616a6
 ---
 
 # How verification works
@@ -40,8 +40,8 @@ A criterion without a verifier, or whose verifier already passes on the base, is
 2. **The base's checks.** The check configuration is read from the commit where the work started, not from the increment. Changing the test command to `["true"]` in the work does not make it pass.
 3. **Every verifier, red to green.** Each must pass on the commit and fail on the base. The base run happens once per base and is remembered.
 4. **Retries, not luck.** A failing check or verifier runs again up to twice before the failure is recorded; a pass after a failure is recorded as flaky.
-5. **The verifier checkpoint.** What the work does to the verifier paths (tests, test-runner and CI configuration, `.ways/config.json`, `package.json`, and the like; the list can be overridden) is judged by what changed inside each file: removing or changing existing lines, deleting a test file, adding a line that skips or focuses tests, and adding or changing check configuration, together with a drop in the number of tests the test check ran compared with the base, need a person's approval or an independent review that accepts them by name. Adding tests is free, also to an existing test file. The exact rule is in [docs/VERIFICATION.md](../../VERIFICATION.md#what-needs-approval-on-the-verifier-surface).
-6. **The evidence.** For every check and verifier: the command, the exit code, the duration, a digest of the output and its last lines, the attempts, and where it ran. The agent adds at most a note per criterion.
+5. **The verifier checkpoint.** What the work does to the verifier paths (tests, test-runner and CI configuration, `.ways/config.json`, `package.json`, and the like; the list can be overridden) is judged by what changed inside each file: removing or changing existing lines, deleting a test file, adding a line that skips or focuses tests, and adding or changing check configuration, together with a drop in the number of tests the test check ran compared with the base, need a person's approval or an independent review that accepts them by name. Adding tests is free, also to an existing test file, and so is adding a check to `commands` when every earlier check stays as it was. The exact rule is in [docs/VERIFICATION.md](../../VERIFICATION.md#what-needs-approval-on-the-verifier-surface).
+6. **The evidence.** For every check and verifier: the command, the exit code, the duration, a digest of the output and its last lines, the short summary `ways run` would print (counts and each failure on one line), the id of the run whose full log stays on that machine, the attempts, and where it ran. The agent adds at most a note per criterion.
 
 The work closes when the evidence passed for the exact tree being closed, a required review does not block, and a required approval is valid. Otherwise it waits, and `ways done` prints the next command.
 

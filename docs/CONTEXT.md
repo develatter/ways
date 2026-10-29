@@ -1,12 +1,24 @@
 # How context works
 
-ways does not tell the agent how to work. It tells it, at the moment it matters, what state it is working in: what is active, what "done" means for it, what fails, what is waiting on whom, and the short facts the repository has learned about the code being touched. Everything else is the project's own `AGENTS.md`, which is a map of the project, not a manual of ways.
+ways does not tell the agent how to work. It tells it, at the moment it matters, what state it is working in: what is active, what "done" means for it, what fails, what is waiting on whom, and the short facts the repository has learned about the code being touched. Everything else is the project's own `AGENTS.md` and `MAP.md`, which describe the project, not ways.
+
+## The three layers of a repository
+
+What a repository has after `ways bootstrap` and its first session, and why only this is generated ([decision 0012](decisions/0012-three-layers-of-the-first-session.md)): context files an LLM writes that repeat what the agent can read from the code make agents slower and costlier, so ways generates only what is deterministic, what the code does not say (with sources), and commands it ran.
+
+| Layer | Files | Written by |
+| --- | --- | --- |
+| Baseline | `AGENTS.md` (what it is, commands, five lines on ways; under 100 lines), `MAP.md` (folders, entry points, stack, commands, tests, CI), `CLAUDE.md`, the roles (reviewer, documentalist, onboarder), skills and hooks | bootstrap, from the repository; `ways map` regenerates `MAP.md`; the onboarder proposes `AGENTS.md` additions in a marked block and folder purposes in `.ways/map-notes.json` |
+| Memory | `.ways/knowledge/` | people and agents with `ways remember`; `ways onboard` seeds 8 to 15 facts with `sources`, hashed by ways and *unverified* until `ways memory confirm` |
+| Verification | `commands` in `.ways/config.json` (the contract) and `.ways/checks.json` (what ways observed) | bootstrap and `ways onboard` detect candidates and run each once; `ways check add`; the onboarder can only propose |
+
+The first session: `.ways/onboarding.json` is `pending` after bootstrap, and the SessionStart hook says so in at most 600 characters (what it generates, which agent, how many files it may read, that it spends the human's quota, and the command). With `"onboarding": "ask"` (default) the agent asks the human (`ways ask`) and runs `ways onboard --yes` on a yes; `auto` runs it; `off` silences it.
 
 ## Three channels
 
 | Channel | When the agent gets it | What |
 | --- | --- | --- |
-| `AGENTS.md` (imported by `CLAUDE.md`) | Always, at session start, by the agent itself | The project map: what it is, where things live, commands, conventions, five lines on ways |
+| `AGENTS.md` (imported by `CLAUDE.md`) | Always, at session start, by the agent itself | What the project is, its commands as `ways run <check>`, five lines on ways, a link to `MAP.md` |
 | Path rules (`.claude/rules/ways-*.md`) | Claude Code, when it reads or edits a matching file | One memory fact per rule, generated from `.ways/knowledge` |
 | Hooks (`ways hook <event>`) | Session start, each prompt, around tool calls, at stop | The brief and its changes, the guard, one reminder of a blocker |
 
@@ -35,6 +47,7 @@ Memory for the code in play (short facts from .ways/knowledge; fix a concept in 
 - **Failing**: every failing check, setup, service or criterion of the last `ways done`, each with only the last lines of its output.
 - **Waiting on**: a required review, a human approval.
 - **Next**: one exact command or action.
+- **Onboarding** (while `.ways/onboarding.json` is pending and the policy is not `off`) and **MAP.md** (when it drifted from the repository: a top-level folder added or gone, the stack, commands, entry points, CI or notes changed): one line each, said once per session.
 - **Memory**: up to five concepts covering the files in play: those the session touched (newest first), then uncommitted ones, then those the work changed; the more specific glob first, fresh before possibly stale. A possibly stale concept is marked, not hidden: the agent should check it still holds and fix it in the same commit if not.
 
 Without `--brief` nothing is capped; `--json` gives the same data to an orchestrator; `--session=<id>` ranks memory by what that agent session touched. With nothing in play the brief is empty and the hooks say nothing.
@@ -45,8 +58,8 @@ Without `--brief` nothing is capped; `--json` gives the same data to an orchestr
 | --- | --- | --- | --- |
 | Session start | `SessionStart` | `session_start` | The whole brief (nothing if empty), after any inbox answers or instructions waiting for this session or worktree. Prunes the event log; exports `WAYS_SESSION` to the agent's shell. |
 | Each prompt | `UserPromptSubmit` | `before_agent_start` | Inbox answers and instructions not yet delivered, then only the sections that changed since this session last heard them, a one-line note for a section that went away, and memory not yet given. Usually nothing. |
-| Before a tool call | `PreToolUse` | `tool_call` | Refuses a write, move or delete of `.ways/work/**` (every mode), and in `enforce` mode a command that switches the commit hooks off. In a session launched as the documentalist (`WAYS_ROLE`, [WIKI.md](WIKI.md)) it also refuses any write outside `docs/wiki/`. Otherwise nothing. |
-| After a tool call | `PostToolUse` (in the background) | `tool_result` | Logs the paths. In pi, appends the memory of a newly touched area to the tool result (Claude Code gets it from the rules). |
+| Before a tool call | `PreToolUse` | `tool_call` | Refuses a write, move or delete of `.ways/work/**` (every mode), and in `enforce` mode a command that switches the commit hooks off. In a session launched as the documentalist or the onboarder (`WAYS_ROLE`, [WIKI.md](WIKI.md)) it also refuses any write outside the role's paths. When a shell call runs a configured check by hand (`pytest`, `npm test`, `npx eslint .`), Claude Code gets, once per session, a one-line hint to use `ways run <check>` instead; nothing is ever blocked for it. Otherwise nothing. |
+| After a tool call | `PostToolUse` (in the background) | `tool_result` | Logs the paths. In pi, appends the memory of a newly touched area to the tool result (Claude Code gets it from the rules), and the one `ways run` hint (pi's `tool_call` cannot add context). |
 | Stop | `Stop` | `agent_end` | An inbox answer or instruction keeps the agent going with it (each delivered once, see [CONTROL_PLANE.md](CONTROL_PLANE.md)). Once per blocker and session: if the last `ways done` failed on HEAD or a review is required, the agent is told and keeps going; a pending human approval or a `ways block` is shown to the human only. |
 | Session end | `SessionEnd` | `session_shutdown` | Logs it. |
 | Reviewer starts | `SubagentStart` (matcher `ways-reviewer`) | — | Hands the subagent the review prompt ways builds (criteria, evidence, diff of the evaluated commit). |
@@ -78,7 +91,7 @@ ways memory (pitfall): Billing amounts are integer cents; never floats
 Source: .ways/knowledge/pitfalls/billing-amounts-are-integer-cents.md
 ```
 
-`ways remember` and `ways memory index` keep them in sync (commit them with the memory); `ways memory check` warns when one drifts. Rules without the marker are yours and are never touched.
+`ways remember` and `ways memory index` keep them in sync (commit them with the memory); `ways memory check` warns when one drifts. Rules without the marker are yours and are never touched. A fact seeded by `ways onboard` and not confirmed yet says so in its rule and in the brief (`unverified: seeded by onboarding, not confirmed by a person yet`); one whose source file changed is marked possibly stale.
 
 ## Installing and wiring
 

@@ -11,11 +11,11 @@ sources:
 reviewed: 2026-10-29
 source_hashes:
   src/knowledge/okf.ts: d1a844070e37
-  src/memory/memory.ts: 0702906b59c4
-  src/context/brief.ts: 3734c2012bbb
-  src/hooks/guard.ts: 4d3ff1f5e49b
-  src/hooks/hook.ts: fd41f9993c45
-  src/domain/constants.ts: c77b27ca061a
+  src/memory/memory.ts: 719076c4a26d
+  src/context/brief.ts: cb0e9bc31f07
+  src/hooks/guard.ts: f8e9a4f25f25
+  src/hooks/hook.ts: 86cbc37c6c53
+  src/domain/constants.ts: 5c9038c616a6
 ---
 
 # Memory and wiki
@@ -26,7 +26,7 @@ A ways project has two places where knowledge about it is written down, and they
 | --- | --- | --- |
 | For | coding agents | people |
 | Shape | one short fact per file, about fifteen lines at most | pages: tutorials, guides, reference, explanation |
-| Written | at the moment something is learned: `ways remember "<fact>" --path=<glob>`, or an edit in the same commit | by a person, or by the documentalist agent from the code |
+| Written | at the moment something is learned: `ways remember "<fact>" --path=<glob>`, or an edit in the same commit; in the first session, 8 to 15 facts seeded by `ways onboard` from the history and docs, each with its `sources`, *unverified* until a person runs `ways memory confirm <id>` | by a person, or by the documentalist agent from the code |
 | Tied to code by | `paths:` globs | `sources:` files and their hashes |
 | Reaches the reader | injected when the agent touches the code it is about | read on GitHub |
 | When the code changes | the concept is flagged *possibly stale* in the brief and by `ways memory check`; nothing fails | `ways wiki check` fails until the page is caught up |
@@ -38,7 +38,7 @@ Memory is a source of truth for agents, so it has to stay short and relevant to 
 The separation is mechanical, not a convention:
 
 1. **Reading.** The memory index, search, `ways context` and the hooks read only `.ways/knowledge`. Touching or changing a wiki page never brings up the memory of the code it describes, and never makes a concept *possibly stale*.
-2. **Writing.** A session that `ways wiki update` started carries the role `documentalist`. The agent guard refuses its writes outside `docs/wiki/`, `.ways/knowledge` included, and so does the commit hook for its commits.
+2. **Writing.** A session that `ways wiki update` started carries the role `documentalist`. The agent guard refuses its writes outside `docs/wiki/`, `.ways/knowledge` included, and so does the commit hook for its commits. The onboarder that `ways onboard` starts is confined the other way: the memory, the map notes, proposed checks and an `AGENTS.md` proposal, never the wiki.
 3. **History.** The commit hook adds a `Harness-Role: documentalist` trailer to those commits, and `ways check --history` (so CI) refuses one that touches anything outside the wiki, even if the hook was skipped.
 4. **Direction.** The wiki may cite the memory in its `sources`. A memory may not cite the wiki: `ways memory check` fails a concept whose `sources`, `paths` or links point into `docs/wiki/`.
 

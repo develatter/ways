@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.3.0-dev.1 (unreleased pre-release)
+
+The three layers of a repository, generated in its first session instead of filled in by hand ([0012](docs/decisions/0012-three-layers-of-the-first-session.md)).
+
+### Added
+
+- **`ways run [<check>]`**: runs a configured check and prints a summary instead of its output (counts, each failure on one line with its first error lines, new vs already failing at the base, at most 40 lines and 2,000 characters; one line when it passes), keeping the full log under `.git/ways/runs/` (`ways run --show <id> --grep=… --tail=…`). Parsers for vitest, jest, pytest, cargo test, go test, tsc, eslint, ruff and mypy, and a generic reading for anything else. `ways check`, `ways done` and `ways verify` use the same wrapper: the evidence of each check and verifier keeps its summary, run id and log path. `ways check` prints one line per area.
+- **Checks detected and validated by running them**: `ways bootstrap` without `--test-command` reads manifests, CI, Makefile, tox/nox and pre-commit (Node/TypeScript, Python, Rust, Go, Java), runs each candidate once and keeps only what works, with its line base, in `commands` and in the new `.ways/checks.json`. `ways check add <name> -- <command>` does it by hand.
+- **`MAP.md`**, apart from `AGENTS.md` again: generated from the repository by `ways map`, with folder purposes from `.ways/map-notes.json`; `ways map --check` fails on drift, and the brief and `ways status` mention it.
+- **`ways onboard`**: in the first session (announced by the SessionStart hook while `.ways/onboarding.json` is pending), the deterministic part plus an onboarder agent (Claude Code or pi, a new role confined to its paths) that writes folder purposes, 8 to 15 facts with sources, proposed checks and `AGENTS.md` additions; ways validates all of it and marks onboarding done. Never without the human's yes under the default `"onboarding": "ask"`.
+- **Seeded facts are unverified** until `ways memory confirm <id>` (a person at a terminal); `ways memory check` refuses one without sources or whose sources or paths name nothing; a changed source marks it stale.
+- A one-time hint to use `ways run` when an agent runs a configured check by hand (Claude Code PreToolUse, pi tool result); it never blocks.
+
+### Changed
+
+- `AGENTS.md` is written once from what was detected and validated (commands as `npx ways run <check>`, a link to `MAP.md`, five lines on ways): no placeholders and no table of paths.
+- Adding a check to the configuration no longer needs an approval (like adding a test); changing or dropping one still does.
+- Bootstrap writes 28 files by default (was 23); the CLI has 44 actions (was 37).
+
+### Upgrading from 0.3.0-dev.0
+
+`ways upgrade --apply` moves the `## Map` table of `AGENTS.md` into `MAP.md` (the purposes you wrote become `.ways/map-notes.json`), removes the template's placeholders and leaves every other line as you wrote it, lists your checks in `.ways/checks.json`, installs the onboarder and leaves onboarding pending (`"onboarding": "off"` to skip it).
+
 ## 0.3.0-dev.0 (unreleased pre-release)
 
 ways lean: less ceremony, context through the agents' own hooks, evidence the harness produces, and a local board. Design notes are in [docs/decisions](docs/decisions/README.md) (0003–0010).

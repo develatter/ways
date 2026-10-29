@@ -11,7 +11,7 @@ source_hashes:
   src/work/review.ts: 283fd8bf61d5
   src/work/policy.ts: 08dda9672054
   src/work/signature.ts: 6ee11de63cd0
-  src/commands.ts: ed6b4c0f3337
+  src/commands.ts: 1e705fb54baf
 ---
 
 # Get a review, and an approval

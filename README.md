@@ -10,13 +10,23 @@ Requires Git and Node.js 22+ on Linux or macOS.
 
 ```bash
 npm install --save-dev @develatter/ways --registry=https://npm.pkg.github.com
-npx ways bootstrap --test-command='["npm","test"]'
+npx ways bootstrap
 git add -A && git commit -m "chore: install ways"
 ```
 
-Then open `AGENTS.md` and describe your project (what it is, where things live, the commands): that is the only part you write. Start Claude Code or pi as usual; you do not have to tell the agent about ways.
+Bootstrap reads your manifests and CI (Node/TypeScript, Python, Rust, Go, Java), finds the commands for your checks (test, lint, type check, build, end-to-end) and **runs each once**: only the ones that work are kept, with what they already fail on. It writes a short `AGENTS.md` with those commands and `MAP.md`, a map of the repository generated from it. You fill in nothing. (`--test-command='["npm","test"]'` skips the detection.)
 
-Bootstrap writes 23 files: `.ways/config.json`, two Git hooks and the agent-hook wrapper, `scripts/check.sh`, a CI job (`.github/workflows/ways.yml`), `AGENTS.md`, a `CLAUDE.md` that imports it, the memory index, and the Claude Code and pi adapters (hooks, three skills, a reviewer and a documentalist agent). Add Codex or Cursor with `--agents=claude,pi,codex,cursor`.
+Then start Claude Code or pi as usual. In the first session the agent is told that the repository is not onboarded yet and proposes `npx ways onboard`: with your yes, an agent reads the code and its history and adds what the code does not say (what each folder is for, 8 to 15 short facts with their sources, check commands it saw used), and ways validates all of it. It never starts without your yes, because it spends your agent quota.
+
+Bootstrap writes 28 files: `.ways/config.json`, `.ways/checks.json` (what ways learned running your checks), `.ways/onboarding.json`, two Git hooks and the agent-hook wrapper, `scripts/check.sh`, a CI job (`.github/workflows/ways.yml`), `AGENTS.md`, `MAP.md`, a `CLAUDE.md` that imports `AGENTS.md`, the memory index, and the Claude Code and pi adapters (hooks, three skills, a reviewer, a documentalist and an onboarder agent). Add Codex or Cursor with `--agents=claude,pi,codex,cursor`.
+
+## Your checks, without the noise
+
+```bash
+npx ways run test        # or lint, typecheck, build, e2e; `npx ways run` runs them all
+```
+
+`ways run` runs your real command and prints a summary instead of the output: one line when it passes; otherwise the counts, each failure on one line with its first error lines, which failures are **new** and which **already failed before your change**, and where the full log is (`npx ways run --show <id> --grep=<regex>`). Thousands of lines become a few hundred characters (vitest, jest, pytest, cargo, go, tsc, eslint, ruff and mypy are read; anything else gets a generic summary). Agents are pointed to it once when they run a check by hand. `npx ways check add lint -- npx eslint .` adds a check after running it once.
 
 ## The two ways to work
 
@@ -55,7 +65,9 @@ npx ways block "AC2 needs the payments sandbox key; set PAYMENTS_KEY in .env.tes
 npx ways remember "Tokens refresh 60 s before expiry; never on revoked tokens" --path='src/auth/**'
 ```
 
-One short file under `.ways/knowledge/`, committed with the change. When that code changes later, the memory is shown again and marked *possibly stale*.
+One short file under `.ways/knowledge/`, committed with the change. When that code changes later, the memory is shown again and marked *possibly stale*. Facts the onboarder seeded are marked *unverified* until you check one and run `npx ways memory confirm <id>`.
+
+**The map.** `MAP.md` is regenerated with `npx ways map`; what a folder is for goes in `.ways/map-notes.json` (one line per path). The agent is told when the map is out of date, and `npx ways map --check` fails in CI.
 
 **Where am I?** `npx ways status` shows the active work, its criteria, what is missing and the exact next command; `npx ways cancel` drops it. Every command works from any directory of the repository.
 
@@ -105,7 +117,7 @@ Each page lists the files it documents with a hash of each, so `check` fails (in
 <!-- commands:start (generated from src/commands.ts; run `UPDATE_README=1 npx vitest run tests/commands.test.ts`) -->
 | Command | What it does | Example |
 | --- | --- | --- |
-| `ways bootstrap` | Install ways in a Git repository: config, commit hooks, memory and the Claude Code and pi adapters | `ways bootstrap --test-command='["npm","test"]'` |
+| `ways bootstrap` | Install ways in a Git repository: checks detected and validated by running them, AGENTS.md, MAP.md, commit hooks, memory and the Claude Code and pi adapters | `ways bootstrap` |
 | `ways status` | What is active, what done means for it, what is missing and the next command | `ways status` |
 | `ways context` | The facts an agent needs now: active work, its criteria, what fails, what waits on whom, the next command, memory of the code in play | `ways context --brief` |
 | `ways start` | Start a small change (optional in observe mode: the first commit starts one from the branch) | `ways start fix-button-padding` |
@@ -118,10 +130,13 @@ Each page lists the files it documents with a hash of each, so `check` fails (in
 | `ways review` | Launch an independent read-only reviewer of the evaluated commit and record its verdict; closes the work when nothing else is missing | `ways review` |
 | `ways approve` | Human approval (a real terminal, signed with the human's SSH key when configured); closes the work when nothing else is missing | `ways approve` |
 | `ways cancel` | Drop the active work; commits stay, an open record is marked cancelled | `ways cancel` |
-| `ways check` | Run integrity and the configured checks (what CI runs); --history audits work records and trailers | `ways check` |
+| `ways run` | Run a configured check (test, lint, typecheck, build, e2e) and get a short summary instead of its output: counts, each failure on a line, new vs already failing at the base, and the full log kept | `ways run test` |
+| `ways check` | Integrity and every configured check (what CI runs), one line per area; add a check, validated by running it; --history audits work records and trailers | `ways check` |
+| `ways onboard` | The first session: MAP.md and the checks ways can detect (each run once), then an onboarder agent for folder purposes, a few verified-by-source facts, proposed checks and AGENTS.md additions; ways validates all of it | `ways onboard --dry-run` |
+| `ways map` | Write MAP.md from the repository (stack, commands, folders, entry points, tests, CI) with the folder purposes in .ways/map-notes.json; --check fails when it drifted | `ways map` |
 | `ways verify` | The CI's judgement of a range: re-run the base's checks and every criterion's verifier clean, require changed tests to be approved, audit the records | `ways verify --base=origin/main` |
 | `ways remember` | Write one short memory (a convention, decision, pitfall or how-to), tied to the code it is about | `ways remember "Tokens refresh 60 s before expiry" --path=src/auth/**` |
-| `ways memory` | Validate the OKF memory under .ways/knowledge (and flag possibly stale concepts), or rebuild its search index | `ways memory check` |
+| `ways memory` | Validate the OKF memory under .ways/knowledge (flag stale and unverified facts), rebuild its index, or confirm seeded facts (a person at a terminal) | `ways memory check` |
 | `ways query` | Search the memory; read-only | `ways query token refresh` |
 | `ways adapter` | List or (re)install agent adapters: claude and pi by default, codex and cursor best effort | `ways adapter list` |
 | `ways upgrade` | Move a repository to this version of ways (including 0.2.x); never overwrites edits silently | `ways upgrade` |
@@ -135,7 +150,9 @@ Each page lists the files it documents with a hash of each, so `check` fails (in
 | Setting | Where | What it does |
 | --- | --- | --- |
 | `enforcement` | `.ways/config.json` | `observe` (default): the commit hook only refuses commits that hand-edit a work record, and adds the `Harness-Work` trailer. `enforce`: it also refuses commits outside an active work |
-| `commands` | `.ways/config.json` (`bootstrap --commands=<json>`) | Your checks: `test`, `lint`, `typecheck`, `build`, `e2e`; only names in `required` run, in that order. Plus `setup` (e.g. `["npm","ci"]`, how the clean checkout gets its dependencies) and `services` (started around the checks) |
+| `commands` | `.ways/config.json` (`bootstrap` detects them; `ways check add`) | Your checks: `test`, `lint`, `typecheck`, `build`, `e2e`; only names in `required` run, in that order. Plus `setup` (e.g. `["npm","ci"]`, how the clean checkout gets its dependencies) and `services` (started around the checks). Adding a check is free; changing or dropping one needs your approval |
+| `output`, `slowMs` | `.ways/checks.json` | How much `ways run` says (default 40 lines, 2,000 characters) and when a check is slow (default 60 s; a bare `ways run` skips slow ones, `--all` includes them) |
+| `onboarding`, `onboarder` | `.ways/config.json` | `ask` (default): the agent asks you before `ways onboard` starts an agent; `auto`; `off`. Which agent (`claude`, `pi` or a `command`) and `model` |
 | `evaluation` | `.ways/config.json` | `clean` (default) or `fast`: run `ways done` in your working tree and leave the clean run to CI (`ways done --fast` for once) |
 | `review`, `approvals`, `reviewer` | `.ways/config.json` | Default review policy of new outcomes; `approvals.signature: required` for SSH-signed approvals only; which agent or command reviews |
 | `verifierPaths`, `testMarkers` | `.ways/config.json` | The globs of tests and check configuration whose weakening needs approval, and extra regular expressions for lines that disable tests (both read from the base) |
@@ -160,6 +177,9 @@ Services are `{"name", "command", "ready", "timeoutMs"}`, where `ready` is `{"co
 | `.ways/allowed_signers` | Optional: the SSH keys whose signatures count as your approval | yes |
 | `.ways/work/<id>.json` | One record per outcome (and per change that needed an approval or was blocked): criteria, evidence, review, approval; written only by ways | yes |
 | `.ways/knowledge/` | Memory: one short fact per file | yes |
+| `AGENTS.md`, `MAP.md`, `.ways/map-notes.json` | What the project is and its commands (yours, written once); the generated map and the folder purposes it merges in | yes |
+| `.ways/checks.json`, `.ways/onboarding.json` | What ways observed running your checks (source, duration, line base); whether the first session's onboarding ran | yes |
+| `.git/ways/runs/` | The full log of each `ways run`, `ways check` and `ways done` run (the newest 100) | no |
 | `.github/workflows/ways.yml` | The CI job running `ways verify` and `ways wiki check` (written once; yours to adapt) | yes |
 | `docs/wiki/`, `.ways/wiki.json` | The wiki for people, and its settings | yes |
 | `.ways/hooks/`, `scripts/check.sh` | Managed Git hooks, agent-hook wrapper and check script (hashed in `.ways/manifest.json`) | yes |
@@ -176,13 +196,16 @@ npx ways upgrade --apply    # applies it; commit the result
 
 Your checks and memory carry over, and an active quick work becomes the active change. SDD, plan, tasks, attempts, discovery and reconciliation are gone: old `.ways/outcomes/`, `.ways/sdd/` and `.ways/plans/` directories are ignored and can be deleted. See [CHANGELOG.md](CHANGELOG.md) and [decision 0003](docs/decisions/0003-what-stays-and-what-goes.md).
 
+From `0.3.0-dev.0`, the same command moves the `## Map` table out of `AGENTS.md` into `MAP.md` (the purposes you wrote become `.ways/map-notes.json`; every other line of yours stays), removes the template's placeholders, lists your checks in `.ways/checks.json` and leaves onboarding pending ([decision 0012](docs/decisions/0012-three-layers-of-the-first-session.md)).
+
 ## Limitations and status
 
-This is `0.3.0-dev.0`, a pre-release. What to expect:
+This is `0.3.0-dev.1`, a pre-release. What to expect:
 
 - **Mature** (carried from 0.2 and reworked, with the longest test history): the check contract, work records and their history audit, clean-checkout evaluation, memory files and their staleness, upgrades from 0.2.
 - **New in 0.3, tested but not yet used in anger**: the agent hooks and brief, `ways verify` in CI, red-to-green verifiers, independent review by configuration, signed approvals, `ways block`, the board and inbox, the wiki and the documentalist.
-- **Not measured yet.** The hooks are tested against recorded Claude Code and pi payloads, and the reviewer and documentalist launches against stand-in agents, not against the real binaries in a live session. The evals that would show whether ways makes agents better or cheaper (`ways evals`, [docs/EVALS.md](docs/EVALS.md)) have only run with a fake agent: runs with real models are pending a budget.
+- **New in 0.3.0-dev.1**: `ways run` and its parsers, check detection and validation, `MAP.md`, `ways onboard` and seeded facts. The parsers are tested on output written to each tool's format, not yet on a wide set of real projects.
+- **Not measured yet.** The hooks are tested against recorded Claude Code and pi payloads, and the reviewer, documentalist and onboarder launches against stand-in agents, not against the real binaries in a live session. The evals that would show whether ways makes agents better or cheaper (`ways evals`, [docs/EVALS.md](docs/EVALS.md)) have only run with a fake agent: runs with real models are pending a budget.
 - **Known gaps.** The agent hook's p95 latency is above the 100 ms target on slow hosts; a long shell command can make an agent look stalled on the board after 10 minutes; the test-count ratchet only reads common runners' summaries. The full list is in [docs/ROADMAP.md](docs/ROADMAP.md).
 - Linux and macOS only; Windows is untested.
 
@@ -191,7 +214,7 @@ This is `0.3.0-dev.0`, a pre-release. What to expect:
 ```bash
 npm ci
 npm run check        # typecheck, build and the whole test suite (what CI runs on Node 22 and 24)
-npm run test:e2e     # only the packed-tarball smoke test and the memory end-to-end test
+npm run test:e2e     # only the packed-tarball tests (the first day, and the three layers on a Node and a Python project) and the memory end-to-end test
 node dist/cli.js wiki check   # the wiki in docs/wiki, which CI also runs
 ```
 

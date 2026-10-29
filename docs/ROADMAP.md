@@ -12,7 +12,7 @@ Still open from it: an eval run with real models comparing the lean E with the 0
 
 ## Done: context at the right moment
 
-`ways hook <event>` for Claude Code and pi (the brief at session start, only changes afterwards, the guard on record writes, one stop reminder), `ways context --brief`, Claude Code path rules generated from memory, `AGENTS.md` as a project map, and the JSONL event bus. See [decision 0006](decisions/0006-context-at-the-right-moment.md), [docs/CONTEXT.md](CONTEXT.md) and [docs/EVENTS.md](EVENTS.md).
+`ways hook <event>` for Claude Code and pi (the brief at session start, only changes afterwards, the guard on record writes, one stop reminder), `ways context --brief`, Claude Code path rules generated from memory, `AGENTS.md` as a project map (since 0.3.0-dev.1 the map is `MAP.md`, generated), and the JSONL event bus. See [decision 0006](decisions/0006-context-at-the-right-moment.md), [docs/CONTEXT.md](CONTEXT.md) and [docs/EVENTS.md](EVENTS.md).
 
 Still open from it: the hook's p95 is above 100 ms on a slow host (about 25–30 ms over a bare Node start; bundling the hook path is the next step); the `memory-convention` eval (inject vs not) has not been run with a real model; lifecycle events from the CLI and inbox items are not in the bus yet.
 
@@ -37,6 +37,12 @@ Still open from it: the `claude -p` and `pi -p` invocations are tested with fake
 ## Done: ready for the first day (0.3.0-dev.0)
 
 An end-to-end smoke test of the packed tarball in `npm test` (bootstrap, the brief in Claude Code and pi, a change, a delivery, a block, a question answered on the board and delivered by the hooks, the wiki, `ways verify`); a tarball with only what `src/` compiles to; every command usable from any directory of the repository; the README, CHANGELOG with migration notes from 0.2.x, and the ADR index. See [decision 0010](decisions/0010-first-day-release.md).
+
+## Done: the three layers of the first session (0.3.0-dev.1)
+
+The baseline (`AGENTS.md` written once from what was detected and validated, `MAP.md` generated apart from it, the roles, skills and hooks), the memory (facts seeded by `ways onboard` with sources hashed by ways, unverified until `ways memory confirm`) and the verification layer (`ways run`: the real command, a summary with new vs already-failing failures, the full log kept; checks detected from manifests and CI and kept only when they ran; `ways check`, `ways done` and `ways verify` on the same wrapper). See [decision 0012](decisions/0012-three-layers-of-the-first-session.md).
+
+Still open from it: the onboarder and the PreToolUse `additionalContext` hint are exercised with stand-in agents and recorded payloads, not live; the parsers' fixtures are written to each tool's format (only Node is on the development host), so the next step is recorded output from real projects per tool; confirmation of a seeded fact by use (a `done` that touched its area without contradicting it) is not done, only by a person; a check whose validation run times out is kept as slow with an unknown line base; `ways run` compares only with runs of the same command on the base commit, and in CI only with the committed line base.
 
 ## Pending, in the order we would do them
 

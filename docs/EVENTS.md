@@ -27,7 +27,7 @@ One JSON object per line:
 | `work` | string \| null | The active ways work, if any. |
 | `tool` | string? | Tool name as the agent reports it (`Edit`, `Bash`, `write`, ...). |
 | `agentId`, `agentType` | string? | Claude Code: the subagent the event happened in. The review provenance reads them: a ways-reviewer must have no write events. |
-| `role` | string? | The job ways launched the session for: `documentalist` (`ways wiki update`, [WIKI.md](WIKI.md)). Set on the events of that run and on the hook events of its session; the board shows it as a badge. |
+| `role` | string? | The job ways launched the session for: `documentalist` (`ways wiki update`, [WIKI.md](WIKI.md)) or `onboarder` (`ways onboard`, [CONTEXT.md](CONTEXT.md#the-three-layers-of-a-repository)). Set on the events of that run and on the hook events of its session; the board shows it as a badge. |
 | `paths` | string[]? | Repository-relative paths the tool call names (normalized, confined to the worktree). |
 | `result` | string | `ok`, `injected` (context was added), `silent` (nothing new to say), `denied` (the guard refused the call), `reminded` (a Stop reminder or a note to the human), `recorded` / `refused` (a reviewer's verdict was recorded or not, and why in `detail`), `error` (internal error; the hook still answered nothing). |
 | `detail` | string? | A short code: the SessionStart source, the SessionEnd reason, the denial code (`record-write`, `hooks-bypass`, `role-scope`) or the error message. At most 300 characters. |

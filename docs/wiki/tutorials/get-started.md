@@ -8,27 +8,35 @@ sources:
   - src/config/config.ts
 reviewed: 2026-10-29
 source_hashes:
-  src/commands.ts: ed6b4c0f3337
-  src/bootstrap/bootstrap.ts: 58308a42e94c
-  src/hooks/hook.ts: fd41f9993c45
+  src/commands.ts: 1e705fb54baf
+  src/bootstrap/bootstrap.ts: 228910f67914
+  src/hooks/hook.ts: 86cbc37c6c53
   src/config/config.ts: 4cbe2b4bb94f
 ---
 
 # Get started in five minutes
 
-You will install ways in a Git repository, make a small change that ways checks, and deliver something whose "done" is written down and verified. You need Git, Node.js 22 or newer, and a project with a test command.
+You will install ways in a Git repository, make a small change that ways checks, and deliver something whose "done" is written down and verified. You need Git, Node.js 22 or newer, and a project with tests.
 
 ## 1. Install
 
 ```sh
 npm install --save-dev @develatter/ways --registry=https://npm.pkg.github.com
-npx ways bootstrap --test-command='["npm","test"]'
+npx ways bootstrap
 git add -A && git commit -m "chore: install ways"
 ```
 
-`--test-command` is the command ways runs as your check; it is a JSON array, one word per item. Bootstrap writes `.ways/config.json`, two Git hooks and a wrapper for the agent hooks, a CI job that runs `ways verify` and `ways wiki check`, an `AGENTS.md` for you to fill in, a `CLAUDE.md` that imports it, the memory index, and the adapters for Claude Code and pi. Add `--agents=claude,pi,codex,cursor` if you also use Codex or Cursor (best effort: they work, but get less testing). The CI job runs the `ways` of your `package.json`, so keep the dev dependency the first line installs; bootstrap warns, with the command, when it is missing.
+Bootstrap reads your manifests and CI to find the commands of your checks (test, lint, type check, build, end-to-end), runs each one once and keeps only those that work, with the failures they already have. It prints what it kept and what it rejected, and why. It writes `.ways/config.json` (the checks), `.ways/checks.json` (what it saw running them), an `AGENTS.md` with those commands, a `MAP.md` of the repository, a `CLAUDE.md` that imports `AGENTS.md`, two Git hooks and a wrapper for the agent hooks, a CI job that runs `ways verify` and `ways wiki check`, the memory index, and the adapters for Claude Code and pi. `--test-command='["npm","test"]'` gives the test command yourself instead. Add `--agents=claude,pi,codex,cursor` if you also use Codex or Cursor (best effort: they work, but get less testing). The CI job runs the `ways` of your `package.json`, so keep the dev dependency the first line installs; bootstrap warns, with the command, when it is missing.
 
-Open `AGENTS.md` and replace the placeholders: what the project is, where things live, the commands. This is the one part only you can write, and it is what an agent reads first.
+There is nothing to fill in. In your first agent session the agent is told the repository is not onboarded and asks you whether to run `npx ways onboard`, which starts an agent to add what the code does not say: what each folder is for, a few facts with their sources, check commands it saw used. ways validates all of it. Say no and nothing starts; it would spend your agent quota.
+
+Run a check the way the agent will:
+
+```sh ways-check
+npx ways run test
+```
+
+You get one line if it passes; if not, each failure on one line, which ones are new, and the command that shows the full log.
 
 ## 2. Make a small change
 
