@@ -124,7 +124,8 @@ async function judge(cwd: string, messagePath: string, stage: "prepare" | "final
     if (mode === "enforce") {
       return { accepted: false, message: "ways: refused: no active work (enforcement: enforce). Start one with `ways start <id>` or `ways outcome open <id> --goal=... --criterion=AC1:...`, then commit again." };
     }
-    if (stage === "final" || !splitComments(message).content.trim()) return { accepted: true };
+    // An empty message (the editor is still to come) is left alone; commit-msg traces it once written.
+    if (!splitComments(message).content.trim()) return { accepted: true };
     const head = git(dirs.top, ["rev-parse", "-q", "--verify", "HEAD"]);
     if (!head.ok) return { accepted: true };
     active = { schemaVersion: 1, id: autoStartId(dirs.top, message), kind: "change", base: head.out, startedAt: new Date().toISOString(), origin: "commit" };
