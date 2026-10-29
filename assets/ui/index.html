@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>ways</title>
+<style>
+:root{--bg:#f6f7f9;--panel:#fff;--line:#e3e6eb;--text:#1b1f24;--muted:#596273;--accent:#2457d6;--focus:#2457d6;
+--c-preparing:#6b7280;--c-working:#2457d6;--c-verifying:#7a3fc9;--c-blocked:#c4302b;--c-waiting:#a15c00;--c-done:#1d7a3a;
+--ok:#1d7a3a;--bad:#c4302b;--rev:#7a3fc9;--pend:#9aa3b2;--chip:#eef1f5;--shadow:0 1px 2px rgba(16,24,40,.06),0 1px 3px rgba(16,24,40,.08)}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1216;--panel:#171b21;--line:#2a313b;--text:#e7eaee;--muted:#a3adbb;--accent:#7aa2ff;--focus:#9db9ff;
+--c-preparing:#a3adbb;--c-working:#7aa2ff;--c-verifying:#c39bff;--c-blocked:#ff7b72;--c-waiting:#f2b45b;--c-done:#5fd08a;
+--ok:#5fd08a;--bad:#ff7b72;--rev:#c39bff;--pend:#4b5563;--chip:#222833;--shadow:none}}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,sans-serif;background:var(--bg);color:var(--text);display:flex;flex-direction:column}
+button,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.mono,code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+header.top{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+.brand{font-weight:700;font-size:16px;letter-spacing:.2px}
+.brand small{font-weight:500;color:var(--muted);margin-left:6px;font-size:12px}
+.spacer{flex:1}
+select,.btn{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:5px 10px;cursor:pointer}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+@media (prefers-color-scheme:dark){.btn.primary{color:#0b0f14}}
+.btn.ghost{border-color:transparent;color:var(--muted)}
+.btn:disabled{opacity:.5;cursor:default}
+.live{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:13px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--pend)}
+.live.on .dot{background:var(--ok);animation:pulse 2s infinite}
+.live.off .dot{background:var(--bad)}
+@keyframes pulse{50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.live.on .dot{animation:none}}
+.count{display:inline-block;min-width:20px;padding:0 6px;border-radius:10px;background:var(--chip);color:var(--muted);font-size:12px;text-align:center;font-weight:600}
+.count.hot{background:var(--c-waiting);color:#fff}
+@media (prefers-color-scheme:dark){.count.hot{color:#1b1200}}
+.banner{margin:8px 16px 0;padding:8px 12px;border-radius:8px;background:var(--chip);border-left:3px solid var(--c-waiting)}
+.banner.err{border-left-color:var(--bad)}
+main.layout{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:0;min-height:0}
+.board{overflow:auto;padding:14px 16px}
+.columns{display:grid;grid-template-columns:repeat(6,minmax(220px,1fr));gap:12px;align-items:start;min-width:max-content}
+.col{background:transparent;min-width:220px}
+.col h2{display:flex;align-items:center;gap:8px;margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
+.col h2::before{content:"";width:8px;height:8px;border-radius:2px;background:var(--cc)}
+.col .empty{color:var(--muted);font-size:12px;padding:10px;border:1px dashed var(--line);border-radius:10px;text-align:center}
+.col-preparing{--cc:var(--c-preparing)}.col-working{--cc:var(--c-working)}.col-verifying{--cc:var(--c-verifying)}.col-blocked{--cc:var(--c-blocked)}.col-waiting{--cc:var(--c-waiting)}.col-done{--cc:var(--c-done)}
+.card{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--cc);border-radius:10px;margin-bottom:10px;box-shadow:var(--shadow)}
+.card>button{display:block;width:100%;text-align:left;background:none;border:0;padding:10px 12px;cursor:pointer;border-radius:10px}
+.card .row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.work{font-weight:650;word-break:break-word}
+.goal{margin:2px 0 6px;color:var(--muted);font-size:13px}
+.badge{display:inline-block;padding:0 7px;border-radius:999px;font-size:11px;line-height:18px;background:var(--chip);color:var(--muted);font-weight:600;white-space:nowrap}
+.agent-claude{background:#f6e3d3;color:#7a3a0c}.agent-pi{background:#e6e0fb;color:#4b2a9e}
+@media (prefers-color-scheme:dark){.agent-claude{background:#3a2616;color:#ffc89a}.agent-pi{background:#2a2245;color:#cdbcff}}
+.meta{color:var(--muted);font-size:12px;margin-top:4px;word-break:break-all}
+.last{display:flex;align-items:center;gap:6px;font-size:12px;margin-top:6px;color:var(--muted)}
+.last .dot{width:6px;height:6px}
+.last.on .dot{background:var(--ok)}
+.crit{display:flex;gap:3px;margin-top:8px;align-items:center}
+.crit i{flex:1;height:5px;border-radius:3px;background:var(--pend);max-width:40px}
+.crit i.passed{background:var(--ok)}.crit i.failed{background:var(--bad)}.crit i.review{background:var(--rev)}
+.crit span{font-size:11px;color:var(--muted);margin-left:4px}
+.why{margin:6px 0 0;font-size:12px;color:var(--cc);font-weight:600}
+.fail{margin:6px 0 0;padding:0;list-style:none}
+.fail li{font-size:11px;color:var(--bad);font-family:ui-monospace,Menlo,monospace;word-break:break-word}
+.details{padding:0 12px 12px;border-top:1px solid var(--line);font-size:13px}
+.details ul{padding-left:16px;margin:8px 0}
+.details li{margin:2px 0}
+.st-passed{color:var(--ok)}.st-failed{color:var(--bad)}.st-review{color:var(--rev)}.st-pending{color:var(--muted)}
+.cmd{display:flex;gap:6px;align-items:center;margin:6px 0}
+.cmd code{flex:1;padding:6px 8px;background:var(--chip);border-radius:6px;word-break:break-all}
+textarea{width:100%;min-height:54px;resize:vertical;border:1px solid var(--line);border-radius:8px;padding:6px 8px;background:var(--bg)}
+.actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;align-items:center}
+aside.inbox{border-left:1px solid var(--line);background:var(--panel);overflow:auto;padding:14px 16px}
+aside h2{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:15px}
+.item{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:10px;background:var(--bg)}
+.item.prio-high{border-left:3px solid var(--c-waiting)}
+.item h3{margin:6px 0 4px;font-size:14px;font-weight:600;word-break:break-word}
+.item .body{white-space:pre-wrap;margin:0 0 6px;color:var(--muted);font-size:13px;word-break:break-word}
+.item .from,.item .note{font-size:12px;color:var(--muted);margin:2px 0;word-break:break-all}
+.item .answer{font-size:13px;margin:6px 0 0;padding:6px 8px;border-radius:6px;background:var(--chip)}
+.t-ask,.t-decision{background:#dde8ff;color:#1d3f99}.t-approval{background:#fde7c8;color:#7a4300}.t-block{background:#fbd9d6;color:#8f1d17}.t-instruction{background:#d8f1e0;color:#155c2c}
+@media (prefers-color-scheme:dark){.t-ask,.t-decision{background:#1d2a4a;color:#a9c1ff}.t-approval{background:#3d2a10;color:#ffcf8a}.t-block{background:#43201d;color:#ffb3ad}.t-instruction{background:#16351f;color:#9be3b3}}
+details summary{cursor:pointer;color:var(--muted);font-size:13px;margin:6px 0}
+.none{color:var(--muted);font-size:13px}
+@media (max-width:1000px){main.layout{grid-template-columns:1fr}aside.inbox{border-left:0;border-top:1px solid var(--line)}.board{overflow-x:auto}}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">ways <small id="subtitle"></small></div>
+  <label><span class="sr-only" id="repo-label"></span><select id="repo" aria-labelledby="repo-label"></select></label>
+  <div class="spacer"></div>
+  <span id="live" class="live" role="status"><span class="dot"></span><span id="live-text"></span></span>
+  <span id="head-count" class="count" title=""></span>
+  <button id="lang" class="btn" type="button"></button>
+</header>
+<div id="banner" class="banner" role="alert" hidden></div>
+<main class="layout">
+  <section class="board" aria-labelledby="board-title"><h2 id="board-title" class="sr-only"></h2><div id="columns" class="columns"></div></section>
+  <aside class="inbox" aria-labelledby="inbox-title">
+    <h2 id="inbox-title"><span id="inbox-label"></span> <span id="pending" class="count"></span></h2>
+    <div id="items"></div>
+    <details id="recent"><summary id="recent-label"></summary><div id="recent-items"></div></details>
+  </aside>
+</main>
+<div id="sr" class="sr-only" aria-live="polite"></div>
+<script>
+"use strict";
+const I18N = {
+  en: {
+    board: "Board", inbox: "Inbox", allRepos: "All repositories", repo: "Repository", live: "Live", connecting: "Connecting…", offline: "Reconnecting…", demo: "demo",
+    preparing: "Preparing", working: "Working", verifying: "Verifying", blocked: "Blocked", waiting: "Waiting for you", done: "Done",
+    empty: "Nothing here", noWork: "no ways work", ago: "{0} ago", in: "in {0}", criteria: "{0} of {1} criteria passed",
+    "r.closed": "closed", "r.inbox": "{0} inbox item(s) for you", "r.blocked": "blocked on purpose: {1}", "r.approval": "needs your approval", "r.approval-signed": "needs your SSH-signed approval",
+    "r.problem": "problem: {1}", "r.stalled": "no hook event for {0} min", "r.failing-idle": "last ways done failed; no agent on it", "r.review": "review pending: {1}",
+    "r.no-work": "no ways work yet", "r.turn-ended-no-work": "turn ended, no ways work", "r.ended-no-work": "session ended, no ways work", "r.fixing": "fixing what failed",
+    "r.no-commits": "no commits yet", "r.turn-ended": "the agent finished its turn", "r.session-ended": "the agent's session ended", "r.no-agent": "no agent on it",
+    worktree: "Worktree", session: "Session", failing: "Failing", approveCmd: "In a terminal:", copy: "Copy", copied: "Copied",
+    tell: "Tell the agent", tellHint: "An instruction for the agent in this worktree; it gets it once, at its next prompt, stop or session start.", send: "Send", sent: "Sent",
+    answer: "Your answer", close: "Close", reason: "Why (optional)", approve: "Approve", confirmApprove: "Approve {0}? ways records it as your approval, via the board.",
+    signed: "This repository requires an SSH-signed approval: the board cannot sign. Run this in a terminal:",
+    "t.ask": "Question", "t.decision": "Decision", "t.approval": "Approval", "t.block": "Block", "t.instruction": "Instruction",
+    "s.open": "open", "s.answered": "answered", "s.delivered": "delivered", "s.closed": "closed", "s.expired": "expired",
+    expires: "expires {0}", def: "default: {0}", pickedUp: "Waiting for the agent to pick it up; you can still change it.", toAgent: "For", from: "From",
+    recent: "Recent ({0})", nothing: "Nothing waits for you.", newItems: "{0} item(s) wait for you", by: "by {0}", other: "Other answer…", error: "Error: {0}"
+  },
+  es: {
+    board: "Tablero", inbox: "Bandeja", allRepos: "Todos los repositorios", repo: "Repositorio", live: "En vivo", connecting: "Conectando…", offline: "Reconectando…", demo: "demo",
+    preparing: "Preparando", working: "En curso", verifying: "Verificando", blocked: "Bloqueado", waiting: "Esperando a ti", done: "Hecho",
+    empty: "Nada aquí", noWork: "sin trabajo ways", ago: "hace {0}", in: "en {0}", criteria: "{0} de {1} criterios en verde",
+    "r.closed": "cerrado", "r.inbox": "{0} elemento(s) de la bandeja para ti", "r.blocked": "bloqueado a propósito: {1}", "r.approval": "necesita tu aprobación", "r.approval-signed": "necesita tu aprobación firmada (SSH)",
+    "r.problem": "problema: {1}", "r.stalled": "sin eventos de hooks desde hace {0} min", "r.failing-idle": "el último ways done falló y ningún agente sigue", "r.review": "falta revisión: {1}",
+    "r.no-work": "aún sin trabajo ways", "r.turn-ended-no-work": "turno terminado, sin trabajo ways", "r.ended-no-work": "sesión terminada, sin trabajo ways", "r.fixing": "arreglando lo que falló",
+    "r.no-commits": "aún sin commits", "r.turn-ended": "el agente terminó su turno", "r.session-ended": "la sesión del agente terminó", "r.no-agent": "ningún agente trabaja en ello",
+    worktree: "Worktree", session: "Sesión", failing: "Falla", approveCmd: "En una terminal:", copy: "Copiar", copied: "Copiado",
+    tell: "Decir al agente", tellHint: "Una instrucción para el agente de este worktree; la recibe una vez, en su próximo prompt, parada o inicio de sesión.", send: "Enviar", sent: "Enviado",
+    answer: "Tu respuesta", close: "Cerrar", reason: "Motivo (opcional)", approve: "Aprobar", confirmApprove: "¿Aprobar {0}? ways lo registra como tu aprobación, desde el tablero.",
+    signed: "Este repositorio exige una aprobación firmada con SSH: el tablero no puede firmar. Ejecuta esto en una terminal:",
+    "t.ask": "Pregunta", "t.decision": "Decisión", "t.approval": "Aprobación", "t.block": "Bloqueo", "t.instruction": "Instrucción",
+    "s.open": "abierta", "s.answered": "respondida", "s.delivered": "entregada", "s.closed": "cerrada", "s.expired": "caducada",
+    expires: "caduca {0}", def: "por defecto: {0}", pickedUp: "Esperando a que el agente la recoja; aún puedes cambiarla.", toAgent: "Para", from: "De",
+    recent: "Recientes ({0})", nothing: "Nada te espera.", newItems: "{0} elemento(s) te esperan", by: "por {0}", other: "Otra respuesta…", error: "Error: {0}"
+  }
+};
+const COLUMNS = ["preparing", "working", "verifying", "blocked", "waiting", "done"];
+const $ = (id) => document.getElementById(id);
+let state = null;
+let lang = localStorage.getItem("ways.lang");
+let repoFilter = localStorage.getItem("ways.repo") || "";
+const expanded = new Set();
+const drafts = new Map();
+let lastPending = -1;
+
+function t(key, ...args) {
+  const dict = I18N[lang] || I18N.en;
+  let text = dict[key] ?? I18N.en[key] ?? key;
+  args.forEach((value, index) => { text = text.split(`{${index}}`).join(String(value)); });
+  return text;
+}
+
+/** Builds elements; text always goes in as text nodes, never as HTML. */
+function h(tag, attrs, ...children) {
+  const el = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs || {})) {
+    if (value === undefined || value === null || value === false) continue;
+    if (key === "class") el.className = value;
+    else if (key.startsWith("on")) el.addEventListener(key.slice(2), value);
+    else el.setAttribute(key, value === true ? "" : String(value));
+  }
+  for (const child of children.flat(Infinity)) {
+    if (child === undefined || child === null || child === false) continue;
+    el.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  }
+  return el;
+}
+
+function span(seconds) {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s} s`;
+  if (s < 3600) return `${Math.round(s / 60)} min`;
+  if (s < 172800) return `${Math.round(s / 3600)} h`;
+  return `${Math.round(s / 86400)} d`;
+}
+function ago(iso) { return iso ? t("ago", span((Date.now() - Date.parse(iso)) / 1000)) : ""; }
+function until(iso) { const s = (Date.parse(iso) - Date.now()) / 1000; return s > 0 ? t("in", span(s)) : t("ago", span(-s)); }
+function short(value, n = 8) { return value ? String(value).slice(0, n) : ""; }
+function base(path) { return path ? path.split("/").filter(Boolean).pop() : ""; }
+
+function banner(message, error) {
+  const el = $("banner");
+  el.hidden = !message;
+  el.textContent = message || "";
+  el.className = error ? "banner err" : "banner";
+}
+
+async function post(path, body) {
+  const response = await fetch(path, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || response.statusText);
+  banner("");
+  return data;
+}
+function act(promise) { return promise.catch((error) => banner(t("error", error.message), true)); }
+
+function visible(list) { return repoFilter ? list.filter((entry) => entry.repo === repoFilter) : list; }
+
+function reasonText(reason) { return t(`r.${reason.code}`, reason.n ?? "", reason.text ?? ""); }
+
+function card(c) {
+  const open = expanded.has(c.key);
+  const passed = c.criteria.filter((entry) => entry.state === "passed").length;
+  const live = c.phase === "live";
+  const head = h("button", { type: "button", "aria-expanded": String(open), "data-focus": `card:${c.key}`, onclick: () => { open ? expanded.delete(c.key) : expanded.add(c.key); render(); } },
+    h("div", { class: "row" }, h("span", { class: "work" }, c.work ? c.work.id : t("noWork")), c.work && h("span", { class: "badge" }, c.work.kind), state.repos.length > 1 && h("span", { class: "badge" }, c.repoName)),
+    c.work && c.work.goal && h("p", { class: "goal" }, c.work.goal),
+    h("div", { class: "row" }, c.agent && h("span", { class: `badge agent-${c.agent}` }, c.agent), c.session && h("span", { class: "mono", title: c.session }, short(c.session)), h("span", { class: "meta", title: c.worktree }, `⎇ ${c.branch || short(c.head, 12)}`)),
+    c.last && h("div", { class: live ? "last on" : "last" }, h("span", { class: "dot", "aria-hidden": "true" }), `${c.last.tool || c.last.type}`, " · ", h("span", { "data-ts": c.last.ts }, ago(c.last.ts))),
+    c.criteria.length > 0 && h("div", { class: "crit", role: "img", "aria-label": t("criteria", passed, c.criteria.length) }, c.criteria.map((entry) => h("i", { class: entry.state, title: `${entry.id}: ${entry.state}` })), h("span", null, `${passed}/${c.criteria.length}`)),
+    c.failing.length > 0 && h("ul", { class: "fail", "aria-label": t("failing") }, c.failing.slice(0, 3).map((line) => h("li", null, line))),
+    c.reasons.map((reason) => h("p", { class: "why" }, reasonText(reason))));
+  const body = open && h("div", { class: "details" },
+    c.criteria.length > 0 && h("ul", null, c.criteria.map((entry) => h("li", null, h("strong", null, entry.id), " ", entry.text, " ", h("span", { class: `st-${entry.state}` }, `[${entry.strength} · ${entry.state}]`)))),
+    h("p", { class: "meta" }, `${t("worktree")}: ${c.worktree}`),
+    c.session && h("p", { class: "meta" }, `${t("session")}: ${c.session}${c.liveSessions > 1 ? ` (+${c.liveSessions - 1})` : ""}`),
+    c.approval && c.approval.signature && commandBox(t("signed"), c.approval.command),
+    tellBox(c));
+  return h("article", { class: `card col-${c.column}` }, head, body);
+}
+
+function commandBox(label, command) {
+  return h("div", null, h("p", { class: "note" }, label), h("div", { class: "cmd" }, h("code", null, command),
+    h("button", { type: "button", class: "btn", onclick: (event) => { navigator.clipboard?.writeText(command).then(() => { event.target.textContent = t("copied"); }); } }, t("copy"))));
+}
+
+function draft(key) {
+  return h("textarea", { "data-focus": key, "aria-label": key.startsWith("tell:") ? t("tell") : t("answer"), placeholder: key.startsWith("tell:") ? t("tellHint") : t("answer"), oninput: (event) => drafts.set(key, event.target.value) }, drafts.get(key) || "");
+}
+
+function tellBox(c) {
+  const key = `tell:${c.key}`;
+  const send = () => {
+    const text = (drafts.get(key) || "").trim();
+    if (!text) return;
+    act(post("/api/tell", { repo: c.repo, text, worktree: c.worktree, ...(c.work ? { work: c.work.id } : {}) }).then(() => { drafts.delete(key); render(); banner(t("sent")); }));
+  };
+  if (c.column === "done") return null;
+  return h("div", null, h("p", { class: "note" }, h("strong", null, t("tell"))), draft(key), h("div", { class: "actions" }, h("button", { type: "button", class: "btn primary", onclick: send }, t("send"))));
+}
+
+function item(entry) {
+  const key = `answer:${entry.id}`;
+  const answerable = entry.type !== "instruction" && !entry.binding && (entry.status === "open" || entry.status === "answered");
+  const answer = (choice) => {
+    const text = (drafts.get(key) || "").trim();
+    if (!choice && !text) return;
+    act(post(`/api/inbox/${encodeURIComponent(entry.id)}/answer`, { ...(choice ? { choice } : {}), ...(text ? { text } : {}) }).then(() => drafts.delete(key)));
+  };
+  const from = [entry.from.agent, short(entry.from.session), entry.work, state.repos.length > 1 ? entry.repoName : "", entry.from.worktree && !entry.work ? base(entry.from.worktree) : ""].filter(Boolean).join(" · ");
+  const to = entry.type === "instruction" ? [entry.to.work, entry.to.worktree && base(entry.to.worktree), short(entry.to.session)].filter(Boolean).join(" · ") : "";
+  return h("article", { class: `item prio-${entry.priority}` },
+    h("div", { class: "row" }, h("span", { class: `badge t-${entry.type}` }, t(`t.${entry.type}`)), entry.status !== "open" && h("span", { class: "badge" }, t(`s.${entry.status}`)), h("span", { class: "meta", "data-ts": entry.createdAt }, ago(entry.createdAt))),
+    h("h3", null, entry.title),
+    entry.body && h("p", { class: "body" }, entry.body),
+    from && h("p", { class: "from" }, `${t("from")}: ${from}`),
+    to && h("p", { class: "from" }, `${t("toAgent")}: ${to}`),
+    (entry.expiresAt || entry.default) && entry.status === "open" && h("p", { class: "note" }, [entry.expiresAt ? t("expires", until(entry.expiresAt)) : "", entry.default ? t("def", entry.default) : ""].filter(Boolean).join(" · ")),
+    entry.answer && h("p", { class: "answer" }, `→ ${[entry.answer.choice, entry.answer.text].filter(Boolean).join(" — ")} `, h("span", { class: "meta" }, t("by", entry.answer.by))),
+    entry.status === "answered" && entry.type !== "instruction" && h("p", { class: "note" }, t("pickedUp")),
+    entry.binding && approvalBox(entry),
+    answerable && h("div", null,
+      entry.options && entry.options.length > 0 && h("div", { class: "actions" }, entry.options.map((option) => h("button", { type: "button", class: entry.default === option ? "btn primary" : "btn", onclick: () => answer(option) }, option))),
+      draft(key),
+      h("div", { class: "actions" }, h("button", { type: "button", class: "btn primary", onclick: () => answer() }, t("send")), h("button", { type: "button", class: "btn ghost", onclick: () => act(post(`/api/inbox/${encodeURIComponent(entry.id)}/close`, {})) }, t("close")))),
+    entry.type === "instruction" && entry.status === "open" && h("div", { class: "actions" }, h("button", { type: "button", class: "btn ghost", onclick: () => act(post(`/api/inbox/${encodeURIComponent(entry.id)}/close`, {})) }, t("close"))));
+}
+
+function approvalBox(entry) {
+  if (entry.binding.signature) return commandBox(t("signed"), entry.binding.command);
+  return h("div", null, h("div", { class: "actions" }, h("button", { type: "button", class: "btn primary", onclick: () => { if (confirm(t("confirmApprove", entry.binding.work))) act(post(`/api/inbox/${encodeURIComponent(entry.id)}/answer`, { choice: "approve" })); } }, t("approve"))),
+    commandBox(t("approveCmd"), entry.binding.command));
+}
+
+function render() {
+  if (!state) return;
+  if (!lang) lang = state.lang || "en";
+  document.documentElement.lang = lang;
+  const focused = document.activeElement && document.activeElement.getAttribute("data-focus");
+  const selection = focused && document.activeElement.selectionStart;
+  $("subtitle").textContent = state.demo ? t("demo") : "";
+  $("board-title").textContent = t("board");
+  $("inbox-label").textContent = t("inbox");
+  $("repo-label").textContent = t("repo");
+  $("lang").textContent = lang === "es" ? "EN" : "ES";
+  $("lang").setAttribute("aria-label", lang === "es" ? "English" : "Español");
+  const select = $("repo");
+  select.replaceChildren(h("option", { value: "" }, t("allRepos")), ...state.repos.map((repo) => h("option", { value: repo.id, selected: repo.id === repoFilter }, repo.name)));
+  select.hidden = state.repos.length < 2;
+  const cards = visible(state.cards);
+  $("columns").replaceChildren(...COLUMNS.map((column) => {
+    const list = cards.filter((entry) => entry.column === column);
+    return h("section", { class: `col col-${column}`, "aria-labelledby": `h-${column}` }, h("h2", { id: `h-${column}` }, t(column), h("span", { class: "count" }, list.length)), list.length ? list.map(card) : h("div", { class: "empty" }, t("empty")));
+  }));
+  const inbox = visible(state.inbox);
+  const now = Date.now();
+  const current = inbox.filter((entry) => entry.status === "open" || entry.status === "answered" || (entry.status === "expired" && !entry.delivered));
+  const recent = inbox.filter((entry) => !current.includes(entry) && now - Date.parse(entry.updatedAt) < 86400000);
+  const pending = inbox.filter((entry) => entry.status === "open" && entry.type !== "instruction").length;
+  $("items").replaceChildren(...(current.length ? current.map(item) : [h("p", { class: "none" }, t("nothing"))]));
+  $("recent-items").replaceChildren(...recent.map(item));
+  $("recent-label").textContent = t("recent", recent.length);
+  $("recent").hidden = recent.length === 0;
+  for (const id of ["pending", "head-count"]) { $(id).textContent = pending; $(id).className = pending ? "count hot" : "count"; }
+  $("head-count").title = t("newItems", pending);
+  document.title = pending ? `(${pending}) ways` : "ways";
+  if (lastPending >= 0 && pending > lastPending) $("sr").textContent = t("newItems", pending);
+  lastPending = pending;
+  if (focused) {
+    const el = document.querySelector(`[data-focus="${CSS.escape(focused)}"]`);
+    if (el) { el.focus(); if (typeof selection === "number" && el.setSelectionRange) el.setSelectionRange(selection, selection); }
+  }
+}
+
+function setLive(mode) {
+  $("live").className = `live ${mode === "live" ? "on" : mode === "offline" ? "off" : ""}`;
+  $("live-text").textContent = t(mode);
+}
+
+$("repo").addEventListener("change", (event) => { repoFilter = event.target.value; localStorage.setItem("ways.repo", repoFilter); render(); });
+$("lang").addEventListener("click", () => { lang = lang === "es" ? "en" : "es"; localStorage.setItem("ways.lang", lang); render(); setLive($("live").classList.contains("on") ? "live" : "offline"); });
+setInterval(() => { for (const el of document.querySelectorAll("[data-ts]")) el.textContent = ago(el.getAttribute("data-ts")); }, 10000);
+if (location.search.includes("token=")) history.replaceState(null, "", location.pathname);
+setLive("connecting");
+const stream = new EventSource("/events");
+stream.addEventListener("state", (event) => { state = JSON.parse(event.data); render(); setLive("live"); });
+stream.addEventListener("open", () => setLive("live"));
+stream.addEventListener("error", () => setLive("offline"));
+</script>
+</body>
+</html>

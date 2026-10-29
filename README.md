@@ -117,6 +117,7 @@ The contract can add a `setup` command and `services` (`{"name", "command", "rea
 | `ways block` | Stop on purpose when the task cannot be done as asked: record what is missing and what would unblock it, for the human | `ways block "AC2 needs the payments sandbox key; set PAYMENTS_KEY in .env.test or drop AC2"` |
 | `ways ask` | Ask the human something (a question, a decision, an approval); the answer comes back through the hooks, or at once with --wait | `ways ask "Mock Stripe in CI, or will you add STRIPE_TEST_KEY?" --options=mock,key --wait=5m` |
 | `ways inbox` | What agents wait on from the human, and what the human tells them: list, show, answer, close, or tell an agent something | `ways inbox` |
+| `ways serve` | The local board: a kanban of every agent's work derived from hooks, records and worktrees, and the inbox, live on 127.0.0.1 | `ways serve --open` |
 | `ways review` | Launch an independent read-only reviewer of the evaluated commit and record its verdict; closes the work when nothing else is missing | `ways review` |
 | `ways approve` | Human approval (a real terminal, signed with the human's SSH key when configured); closes the work when nothing else is missing | `ways approve` |
 | `ways cancel` | Drop the active work; commits stay, an open record is marked cancelled | `ways cancel` |

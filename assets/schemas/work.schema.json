@@ -97,7 +97,7 @@
         "input": { "$ref": "#/$defs/sha" },
         "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "reasons": { "type": "array", "items": { "type": "string" } },
-        "via": { "enum": ["ssh-signature", "terminal"] },
+        "via": { "enum": ["ssh-signature", "terminal", "board"] },
         "signature": {
           "type": "object",
           "additionalProperties": false,

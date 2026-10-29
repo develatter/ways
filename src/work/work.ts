@@ -538,6 +538,26 @@ export async function approve(cwd: string, terminal: Terminal = processTerminal(
   return finishApproval(top, git, record, reasons, { by: await approverIdentity(git), via: "terminal" });
 }
 
+/**
+ * Approval from the board (`ways serve`), for exactly the work and evaluated
+ * commit the board showed. Refused where the base requires signed approvals:
+ * a local web page cannot sign, so the human runs `ways approve` there. The
+ * board's token keeps browsers and other sites out, not the user's own
+ * agents; repositories that need that guarantee require signatures.
+ */
+export async function approveFromBoard(cwd: string, expected: { id: string; input: string }): Promise<{ status: "closed" | "verifying"; pending: Pending; commit: string }> {
+  const { top, git, record } = await verifyingRecord(cwd, "approve");
+  if (record.id !== expected.id || record.evidence.input.commit !== expected.input) {
+    throw new Error(`Work ${expected.id} changed since the board showed it (now ${record.id} at ${record.evidence.input.commit.slice(0, 12)}); look at it again`);
+  }
+  const reasons = approvalReasons(record, record.evidence);
+  const before = pending(record);
+  if (reasons.length === 0 || !before.approval) throw new Error(`Work ${record.id} needs no approval now`);
+  if (before.review) throw new Error(`Approval comes last: ${before.review}`);
+  if (approvalsPolicy(record.evidence).signature === "required") throw new Error(`This repository requires SSH-signed approvals: run \`ways approve\` in ${top}`);
+  return finishApproval(top, git, record, reasons, { by: await approverIdentity(git), via: "board" });
+}
+
 async function finishApproval(top: string, git: GitRepository, record: WorkRecord & { evidence: Evidence }, reasons: string[], who: Pick<Approval, "by" | "via" | "signature">): Promise<{ status: "closed" | "verifying"; pending: Pending; commit: string; signedBy?: string }> {
   const next: WorkRecord = { ...record, approval: { ...who, at: new Date().toISOString(), input: record.evidence.input.commit, digest: approvalDigest(record), reasons } };
   const missing = pending(next);

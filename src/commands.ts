@@ -14,7 +14,7 @@ export interface CommandSpec {
 }
 
 /** The lean target: no more distinct CLI actions than this. */
-export const ACTION_BUDGET = 32;
+export const ACTION_BUDGET = 33;
 
 export const COMMANDS: readonly CommandSpec[] = [
   {
@@ -96,6 +96,16 @@ export const COMMANDS: readonly CommandSpec[] = [
     ],
     examples: ["ways inbox", "ways inbox answer i-mabc12-1a2b3c4d mock", "ways inbox tell \"Stream the export; it must stay under 2 s\" --work=billing-export"],
     actions: ["inbox", "inbox answer", "inbox close", "inbox tell"],
+  },
+  {
+    name: "serve",
+    summary: "The local board: a kanban of every agent's work derived from hooks, records and worktrees, and the inbox, live on 127.0.0.1",
+    usage: [
+      "ways serve [--port=<n>] [--open] [--repo=<path>]... [--lang=en|es] [--demo]",
+      "  prints a URL with a one-time token; --repo adds a repository to ~/.config/ways/registry.json; --demo shows made-up data",
+    ],
+    examples: ["ways serve --open", "ways serve --demo"],
+    actions: ["serve"],
   },
   {
     name: "review",

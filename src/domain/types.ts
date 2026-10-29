@@ -196,8 +196,8 @@ export interface Approval {
   /** Digest of the criteria, evidence and review the human saw. */
   digest: string;
   reasons: string[];
-  /** How the human was told apart from the agent: an SSH signature, or only an interactive terminal. */
-  via?: "ssh-signature" | "terminal";
+  /** How the human was told apart from the agent: an SSH signature, an interactive terminal, or the local board's token (`ways serve`). */
+  via?: "ssh-signature" | "terminal" | "board";
   signature?: ApprovalSignature;
 }
 

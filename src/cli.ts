@@ -269,6 +269,11 @@ async function dispatch(command: string, args: string[], cwd: string): Promise<n
     return runInbox(args, cwd, { option, options });
   }
 
+  if (command === "serve") {
+    const { runServe } = await import("./serve/command.js");
+    return runServe(args, cwd, { option, options });
+  }
+
   if (command === "cancel") {
     const { cancel } = await import("./work/work.js");
     const result = await cancel(cwd);
