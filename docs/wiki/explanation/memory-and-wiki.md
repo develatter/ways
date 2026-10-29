@@ -14,7 +14,7 @@ source_hashes:
   src/memory/memory.ts: 0702906b59c4
   src/context/brief.ts: 3734c2012bbb
   src/hooks/guard.ts: 4d3ff1f5e49b
-  src/hooks/hook.ts: bf698ab3883e
+  src/hooks/hook.ts: fd41f9993c45
   src/domain/constants.ts: dd9777c3e34c
 ---
 

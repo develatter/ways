@@ -195,7 +195,7 @@ export const COMMANDS: readonly CommandSpec[] = [
     usage: [
       "ways hook prepare-commit-msg <message-file> [source] [sha]",
       "ways hook commit-msg <message-file>",
-      "ways hook SessionStart|UserPromptSubmit|PreToolUse|PostToolUse|Stop|SessionEnd [--agent=claude|pi]   (agent's JSON payload on stdin)",
+      "ways hook SessionStart|UserPromptSubmit|PreToolUse|PostToolUse|Stop|SessionEnd [--agent=claude|pi|codex|cursor]   (agent's JSON payload on stdin)",
     ],
     examples: ["ways hook prepare-commit-msg .git/COMMIT_EDITMSG", "echo '{\"session_id\":\"s1\"}' | ways hook SessionStart --agent=claude"],
     actions: ["hook prepare-commit-msg", "hook commit-msg", "hook <agent event>"],
@@ -218,7 +218,8 @@ export const COMMANDS: readonly CommandSpec[] = [
     name: "evals",
     summary: "Run or compare the harness evaluation corpus",
     usage: [
-      "ways evals run [--adapter=fake|command] [--command=<executable>] [--harness=<label>] [--model=<name>] [--review=required|none] [--approval=required|none] [--output=<file>]",
+      "ways evals run [--adapter=fake|command --command=<executable> [--arg=<arg>]...] [--harness=<label>] [--model=<name>] [--corpus=<file>]",
+      "               [--review=required|none] [--approval=required|none] [--revision=<label>] [--seed=<n>] [--timeout-ms=<n>] [--max-output-bytes=<n>] [--output=<file>]",
       "ways evals compare --input=<result.json>... [--output=<report.json>] [--markdown=<report.md>]",
     ],
     examples: ["ways evals run --harness=outcome --output=result.json", "ways evals compare --input=result.json"],

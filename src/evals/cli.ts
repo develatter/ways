@@ -27,7 +27,7 @@ export async function runEvalsCommand(args: readonly string[], cwd: string, { op
     process.stdout.write(output);
     return report.runs.some((entry) => entry.status === "comparable") ? 0 : 1;
   }
-  if (action !== "run") throw new Error("Usage: ways evals run [--adapter=fake|command] [--command=<executable>] [--harness=<label>] [--review=required|none --approval=required|none with --harness=outcome] | compare --input=<result.json>...");
+  if (action !== "run") throw new Error("Usage: ways evals run [--adapter=fake|command --command=<executable> [--arg=<arg>]...] [--harness=<label>] [--corpus=<file>] [--model=<name>] [--output=<file>] | compare --input=<result.json>...");
   const adapterName = option(args, "--adapter") ?? "fake";
   const adapter = adapterName === "fake"
     ? fakeAdapter

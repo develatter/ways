@@ -8,10 +8,10 @@ sources:
   - src/hooks/hook.ts
 reviewed: 2026-10-29
 source_hashes:
-  src/cli.ts: 2e57fda30967
+  src/cli.ts: 6801ff123cbd
   src/work/work.ts: 6cf798d8e5c6
   src/work/evaluate.ts: 6abdbb69b336
-  src/hooks/hook.ts: bf698ab3883e
+  src/hooks/hook.ts: fd41f9993c45
 ---
 
 # Make a small change

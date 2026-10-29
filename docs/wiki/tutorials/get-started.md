@@ -8,9 +8,9 @@ sources:
   - src/config/config.ts
 reviewed: 2026-10-29
 source_hashes:
-  src/commands.ts: 86ff1624a949
+  src/commands.ts: ed6b4c0f3337
   src/bootstrap/bootstrap.ts: b479c5095f25
-  src/hooks/hook.ts: bf698ab3883e
+  src/hooks/hook.ts: fd41f9993c45
   src/config/config.ts: 073d361893c0
 ---
 

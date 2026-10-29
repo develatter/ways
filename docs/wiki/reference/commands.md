@@ -5,7 +5,7 @@ sources:
   - src/commands.ts
 reviewed: 2026-10-29
 source_hashes:
-  src/commands.ts: 86ff1624a949
+  src/commands.ts: ed6b4c0f3337
 ---
 
 # Commands
@@ -294,7 +294,7 @@ Entry point of the managed Git hooks and the coding-agent hooks (not called by h
 ```text
 ways hook prepare-commit-msg <message-file> [source] [sha]
 ways hook commit-msg <message-file>
-ways hook SessionStart|UserPromptSubmit|PreToolUse|PostToolUse|Stop|SessionEnd [--agent=claude|pi]   (agent's JSON payload on stdin)
+ways hook SessionStart|UserPromptSubmit|PreToolUse|PostToolUse|Stop|SessionEnd [--agent=claude|pi|codex|cursor]   (agent's JSON payload on stdin)
 ```
 
 ```sh ways-check
@@ -326,7 +326,8 @@ ways wiki update --stamp reference/commands.md
 Run or compare the harness evaluation corpus
 
 ```text
-ways evals run [--adapter=fake|command] [--command=<executable>] [--harness=<label>] [--model=<name>] [--review=required|none] [--approval=required|none] [--output=<file>]
+ways evals run [--adapter=fake|command --command=<executable> [--arg=<arg>]...] [--harness=<label>] [--model=<name>] [--corpus=<file>]
+               [--review=required|none] [--approval=required|none] [--revision=<label>] [--seed=<n>] [--timeout-ms=<n>] [--max-output-bytes=<n>] [--output=<file>]
 ways evals compare --input=<result.json>... [--output=<report.json>] [--markdown=<report.md>]
 ```
 

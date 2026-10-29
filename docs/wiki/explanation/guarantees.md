@@ -9,7 +9,7 @@ sources:
   - src/config/config.ts
 reviewed: 2026-10-29
 source_hashes:
-  src/hooks/hook.ts: bf698ab3883e
+  src/hooks/hook.ts: fd41f9993c45
   src/hooks/guard.ts: 4d3ff1f5e49b
   src/integrity/history.ts: 7dc05c41c7b6
   src/work/policy.ts: 5cdc82f1e53d

@@ -11,7 +11,7 @@ source_hashes:
   src/work/work.ts: 6cf798d8e5c6
   src/work/evaluate.ts: 6abdbb69b336
   src/work/policy.ts: 5cdc82f1e53d
-  src/commands.ts: 86ff1624a949
+  src/commands.ts: ed6b4c0f3337
 ---
 
 # Deliver something with criteria
