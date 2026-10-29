@@ -1,5 +1,5 @@
 import { WIKI_DIR } from "../domain/constants.js";
-import { renderIssue, staleMessage, type WikiReport } from "./check.js";
+import { renderIssue, stalePageMessage, type StaleEntry, type WikiReport } from "./check.js";
 import { readPages } from "./pages.js";
 
 const MAX_ITEMS = 40;
@@ -21,10 +21,10 @@ export interface WikiBrief {
  */
 export async function buildWikiBrief(cwd: string, report: WikiReport): Promise<WikiBrief> {
   const sections: string[] = [];
-  const staleByPage = new Map<string, string[]>();
-  for (const entry of report.stale) staleByPage.set(entry.page, [...(staleByPage.get(entry.page) ?? []), staleMessage(entry)]);
+  const staleByPage = new Map<string, StaleEntry[]>();
+  for (const entry of report.stale) staleByPage.set(entry.page, [...(staleByPage.get(entry.page) ?? []), entry]);
   if (staleByPage.size > 0) {
-    sections.push(["## Stale pages (a source changed since the page was stamped)", ...cap([...staleByPage].map(([page, reasons]) => `- ${page}: ${reasons.join("; ")}`))].join("\n"));
+    sections.push(["## Stale pages (a source changed since the page was stamped)", ...cap([...staleByPage].map(([page, entries]) => `- ${page}: ${stalePageMessage(entries)}`))].join("\n"));
   }
   const gaps = [...report.uncovered.modules.map((unit) => `- module ${unit}: no page cites it in \`sources\``), ...report.uncovered.commands.map((name) => `- command \`${name}\`: no page mentions it`)];
   if (gaps.length > 0) sections.push(["## Gaps (nothing documents them yet)", ...cap(gaps)].join("\n"));

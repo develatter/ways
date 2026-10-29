@@ -111,8 +111,9 @@ export default function (pi: ExtensionAPI) {
     return context ? { message: { customType: "ways", content: context, display: false } } : undefined;
   });
   on("tool_call", async (event, ctx) => {
-    // The guard only judges calls that could touch a work record or switch the commit hooks off.
-    if (!/\\.ways|WAYS_DISABLE|hookspath/i.test(JSON.stringify(event?.input ?? ""))) return undefined;
+    // The guard only judges calls that could touch a work record or switch the commit hooks off,
+    // and every call of a session ways launched for a job (WAYS_ROLE), whose writes it confines.
+    if (!process.env.WAYS_ROLE && !/\\.ways|WAYS_DISABLE|hookspath/i.test(JSON.stringify(event?.input ?? ""))) return undefined;
     const answer = await waysHook(cwdOf(ctx), "PreToolUse", { session_id: sessionOf(ctx), tool_name: event?.toolName, tool_input: event?.input, tool_use_id: event?.toolCallId });
     return answer.block ? { block: true, reason: answer.block } : undefined;
   });

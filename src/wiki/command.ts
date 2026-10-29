@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { gitDirs } from "../runtime/runtime.js";
-import { checkWiki, freshness, renderIssue, renderReport, staleMessage } from "./check.js";
+import { checkWiki, freshness, renderIssue, renderReport, stalePageMessage } from "./check.js";
 import { initWiki } from "./init.js";
 import { readPages } from "./pages.js";
 import { repositoryFiles } from "./sources.js";
@@ -58,7 +58,7 @@ export async function runWiki(args: readonly string[], cwd: string, { option }: 
     }
     if (pages.length === 0) console.log("No wiki in this repository; `ways wiki init` creates one.");
     else if (stale.length + missing.length === 0) console.log(`No stale pages: the sources of all ${pages.length} page(s) are as they were when the pages were stamped.`);
-    for (const entry of stale) console.log(renderIssue({ code: "stale", path: entry.page, message: staleMessage(entry) }));
+    for (const page of new Set(stale.map((entry) => entry.page))) console.log(renderIssue({ code: "stale", path: page, message: stalePageMessage(stale.filter((entry) => entry.page === page)) }));
     for (const entry of missing) console.log(renderIssue({ code: "missing-source", path: entry.page, message: `source ${entry.source} no longer exists` }));
     if (stale.length + missing.length > 0) console.log("\n`ways wiki update` has the documentalist agent catch them up; after checking a page by hand, `ways wiki update --stamp <page>` records that it is current.");
     return 0;

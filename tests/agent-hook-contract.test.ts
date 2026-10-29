@@ -225,6 +225,22 @@ describe("pi contract", () => {
     expect(log[5]).toMatchObject({ tool: "edit", paths: ["src/greeting.ts"] });
   });
 
+  it("confines a session ways launched as the documentalist to docs/wiki, for every write", async () => {
+    const { cwd } = await installed({ agents: ["pi"] });
+    const extension = await loadPiExtension(cwd);
+    const write = (path: string) => ({ type: "tool_call", toolCallId: "c9", toolName: "write", input: { path, content: "x" } });
+    // An ordinary session: a write to code is nobody's business.
+    expect(await extension.fire("tool_call", write("src/a.ts"))).toBeUndefined();
+    process.env.WAYS_ROLE = "documentalist";
+    try {
+      expect(await extension.fire("tool_call", write("src/a.ts"))).toEqual({ block: true, reason: expect.stringMatching(/outside docs\/wiki\/, and you are the documentalist/) });
+      expect(await extension.fire("tool_call", write(".ways/knowledge/conventions/x.md"))).toMatchObject({ block: true });
+      expect(await extension.fire("tool_call", write("docs/wiki/a.md"))).toBeUndefined();
+    } finally {
+      delete process.env.WAYS_ROLE;
+    }
+  });
+
   it("appends the memory of a newly touched area to the tool result", async () => {
     const { cwd, git } = await installed({ agents: ["pi"] });
     await remember(cwd, "Billing amounts are integer cents", { paths: ["billing/**"], type: "pitfall" });

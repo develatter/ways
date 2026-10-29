@@ -104,6 +104,14 @@ export function staleMessage(entry: StaleEntry): string {
     : `${entry.source} changed (${entry.recorded} → ${entry.current}) since the page was stamped`;
 }
 
+/** One line per page: the sources that changed, and those never stamped (which a stamp covers together). */
+export function stalePageMessage(entries: readonly StaleEntry[]): string {
+  const changed = entries.filter((entry) => entry.reason === "changed").map((entry) => staleMessage(entry));
+  const unstamped = entries.filter((entry) => entry.reason === "unstamped");
+  if (unstamped.length === 1 && changed.length === 0) return staleMessage(unstamped[0]!);
+  return [...changed, ...(unstamped.length > 0 ? [`no hash recorded for ${unstamped.map((entry) => entry.source).join(", ")}; verify the page against ${unstamped.length === 1 ? "it" : "them"} and stamp it`] : [])].join("; ");
+}
+
 interface Resolved {
   path?: string;
   anchor?: string;
@@ -268,7 +276,7 @@ export async function checkWiki(cwd: string): Promise<WikiReport> {
   const { stale, missing } = await freshness(cwd, pages, files);
   report.stale = stale;
   for (const entry of missing) issue("missing-source", entry.page, `source ${entry.source} does not exist; fix the path or remove it from \`sources\``);
-  for (const entry of stale) issue("stale", entry.page, staleMessage(entry));
+  for (const page of new Set(stale.map((entry) => entry.page))) issue("stale", page, stalePageMessage(stale.filter((entry) => entry.page === page)));
 
   const targets = new Targets(cwd, pages);
   for (const page of pages) {
