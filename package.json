@@ -1,7 +1,7 @@
 {
   "name": "@develatter/ways",
   "version": "0.3.0-dev.0",
-  "description": "A minimal, agent-agnostic development harness with Git-backed workflows and living OKF memory",
+  "description": "A lean harness for coding agents: one-line criteria with executable verifiers, evidence the harness records, short memory that travels with the change",
   "type": "module",
   "bin": {
     "ways": "dist/cli.js"
@@ -34,7 +34,7 @@
     "coding-agent",
     "development-harness",
     "okf",
-    "sdd"
+    "verification"
   ],
   "license": "MIT",
   "repository": {

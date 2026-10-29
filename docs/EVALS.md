@@ -14,21 +14,21 @@ The label and `--model`, revision, seed and adapter argv are passed to every ses
 | --- | --- | --- | --- | --- |
 | A | `no-ways` | fixture only | none | not applicable |
 | B | `checks-only` | fixture only | none | not applicable |
-| C | `lightweight-state` | Ways installed | `ways quick start`, write `evidence/<task-id>.json`, `ways quick finish` | `quick-evidence` |
-| D | `full-sdd` | Ways installed | `ways sdd start` and every phase through close | `sdd` |
-| E | `outcome` | Ways installed | `ways outcome open` with the configured policies, evaluate, remediate, review, close | `outcome` |
+| C | `lightweight-state` | Ways installed | `ways start <task-id>`, commit, `ways done` | `change` |
+| E | `outcome` | Ways installed | `ways outcome open` with criteria, verifiers and the configured policy, commit, `ways done`, review when required | `outcome` |
 
-A and B differ only in the label passed to the adapter, which decides what it runs. For C, D and E the runner bootstraps the running Ways package into each disposable repository before any session: the task's regression checks plus its environment checks become the configured test command, `node_modules/@develatter/ways` and `node_modules/.bin/ways` link to the running package (ignored by Git, so `npx ways` and the managed hook work offline), and the bootstrap is committed as the starting revision. Each prompt is prefixed with the recorded `harnessPrompt`. Adapters also receive `WAYS_EVAL_WAYS_BIN`. The runner never drives a workflow itself: every Ways command in a run comes from the agent.
+D (full SDD) was retired with SDD in 0.3; its letter is not reused, so older reports stay unambiguous.
+
+A and B differ only in the label passed to the adapter, which decides what it runs. For C and E the runner bootstraps the running Ways package into each disposable repository before any session: the task's regression checks plus its environment checks become the configured test command, `node_modules/@develatter/ways` and `node_modules/.bin/ways` link to the running package (ignored by Git, so `npx ways` and the managed hook work offline), and the bootstrap is committed as the starting revision. Each prompt is prefixed with the recorded `harnessPrompt`. Adapters also receive `WAYS_EVAL_WAYS_BIN`. The runner never drives a workflow itself: every Ways command in a run comes from the agent.
 
 Every configuration uses the shipped public CLI; none is a mock of a workflow:
 
-- **C, lightweight state/evidence.** Ways state and mechanics without a process: a quick work traced by the commit hook, the configured checks run by `ways quick finish`, and an evidence file `evidence/<task-id>.json` of the form `{"schemaVersion":1,"task":"<task-id>","claims":[{"criterion":"…","evidence":"…"}]}` committed in the task's work. The evidence file is an eval convention, not a Ways artifact: it is the agent's own claim and is graded for presence and shape only. C has no immutable goal or criteria, no evaluation record, no review and no remediation record, which is exactly what separates it from E.
-- **D, full SDD.** The certified phase chain, reviews and validation of SDD. SDD is deprecated for new work ([decision 0001](decisions/0001-outcome-default.md)), but D keeps asking for it explicitly so its results stay comparable; `ways sdd start` only adds a deprecation notice on stderr.
-- **E, simplified execute/evaluate.** The outcome workflow (`open → execute → evaluate → close`): an immutable spec with criteria and policies, an evaluation record bound to the executed input, replayable failure and remediation records, and the review the evaluation policy requires.
+- **C, a change.** Ways mechanics without criteria: commits traced by the hook and the configured checks run once by `ways done`. A change leaves no record in Git, so its completion is read from the run log `ways done` keeps in the repository's Git directory: the last run must have passed on the final HEAD.
+- **E, an outcome.** The delivery workflow: a committed record with the goal and one-line criteria, each with a verifier and strength, the evidence `ways done` writes, and the review the policy requires.
 
-### Outcome policies (E)
+### Outcome policy (E)
 
-`--isolation=required|optional`, `--parallel=allowed|disabled`, `--evaluation=independent|self`, `--memory=none|normal|high` and `--approvals=none|close|close,remediate` (defaults are Ways' own: `required`, `allowed`, `independent`, `normal`, `none`) apply only to `--harness=outcome`; approvals other than `none` need a human running `ways approve` at a terminal during the run. The runner rejects them elsewhere. The effective policy is recorded as `configuration.outcomePolicy`, substituted into the prompt's `ways outcome open` flags, and exported to command adapters as `WAYS_EVAL_OUTCOME_POLICY` (JSON). The grader reads the policy the opening commit bound to Git and reports `eval-policy-mismatch` when the agent opened with anything else.
+`--review=required|none` and `--approval=required|none` (defaults `required` and `none`) apply only to `--harness=outcome`; `--approval=required` needs a human running `ways approve` at a terminal during the run. The runner rejects them elsewhere. The effective policy is recorded as `configuration.outcomePolicy`, substituted into the prompt's `ways outcome open` flags, and exported to command adapters as `WAYS_EVAL_OUTCOME_POLICY` (JSON). The grader reads the policy of the committed record and reports `eval-policy-mismatch` when the agent opened with anything else.
 
 ## Compliance
 
@@ -37,13 +37,12 @@ After the last session every task is graded twice, independently:
 - `success` is the functional grade from the corpus checks, the same for every configuration.
 - `compliance` is graded from the repository history after the recorded bootstrap revision, never from what the agent claims. For A/B it is `{ "applicable": false }`.
 
-Every Ways configuration fails compliance on: history-audit issues (the audit of `ways check --history`, which replays SDD chains and outcome transitions, evaluations, failure records, remediations and closes), integrity issues, commits of another work (`eval-foreign-work`), changes to `.ways/config.json`, the manifest, managed hooks, `scripts/check.sh` or `AGENTS.md` (`eval-harness-tampered`), downgrades, uncommitted changes (`git status`) or a still-active work. Each workflow adds its own terminal state, reported as `completed`:
+Every Ways configuration fails compliance on: issues of the record audit of `ways check --history` (run with untraced commits counted, since the hook traces every commit), integrity issues, commits of another work (`eval-foreign-work`), changes to `.ways/config.json`, the manifest, managed hooks or `scripts/check.sh` (`eval-harness-tampered`), uncommitted changes (`git status`) or a still-active work. Each workflow adds its own terminal state, reported as `completed`:
 
-- `quick-evidence` (C): a quick work named after the task was finished, and `evidence/<task-id>.json` at HEAD is valid and was committed by the task's work (`eval-quick-not-finished`, `eval-evidence-invalid`, `eval-evidence-untraced`). SDD or outcome transitions for the task are `eval-workflow-mismatch`.
-- `sdd` (D): an SDD work named after the task was certified through close (`eval-sdd-not-closed`). Ways' own memory and discovery commits are ordinary SDD evidence.
-- `outcome` (E): the task's outcome was closed (`eval-outcome-not-closed`) with the configured policies. SDD transitions or a quick finish for the task are `eval-workflow-mismatch`.
+- `change` (C): the last `ways done` run of the task's work passed on the final HEAD (`eval-change-not-done`). An outcome record for the task is `eval-workflow-mismatch`.
+- `outcome` (E): the task's outcome record is closed (`eval-outcome-not-closed`) with the configured policy; a record of another kind is `eval-workflow-mismatch`.
 
-`compliant` requires `completed` and no issue. The record also counts works started and closed, `remediationAttempts` (SDD remediation checkpoints or outcome remediations), `validationFailures` (SDD validation failures or failed outcome evaluations), `humanApprovals` (approval records of SDD gates and outcome checkpoints added in history) and `effectivePolicy`: the SDD profile and execution mode, the outcome's committed policy, or `null` for C, which has no policy record. If grading fails, or the task fails before grading, the functional grade is kept and compliance reports `eval-compliance-error`. The threat model is an honest agent that may skip or misuse the process; an agent that deliberately subverts Git (forged trailers with hooks disabled, rewritten history, replace refs) is beyond what local history proves, the same limit `ways check --history` documents.
+`compliant` requires `completed` and no issue. The record also counts works started and closed, `remediationAttempts` and `validationFailures` (failing `ways done` runs before the one that passed, from the evidence of the record or the run log), `humanApprovals` (an approval in the task's record) and `effectivePolicy`: the outcome's committed policy, or `null` for C. If grading fails, or the task fails before grading, the functional grade is kept and compliance reports `eval-compliance-error`. The threat model is an honest agent that may skip or misuse the process; an agent that deliberately subverts Git (forged trailers with hooks disabled, rewritten history, replace refs) is beyond what local history proves, the same limit `ways check --history` documents.
 
 A task can therefore succeed while bypassing its workflow, or comply while failing functionally; reports never merge the two.
 
@@ -59,7 +58,7 @@ A task can therefore succeed while bypassing its workflow, or comply while faili
 | `false-done-claim` | `false-done-total` | two stated requirements the visible environment check does not cover, so a passing check is not evidence of done |
 | `concurrent-conflict` | `conflict-format` | two independent changes to the same statement; delivered as parallel units of work, the second integration conflicts and must be resolved |
 
-`environmentChecks` are checks whose files are part of the task setup, visible to every configuration; C, D and E also run them through the configured test command. Success checks are held out and never shown to the agent. Each task result records `kind` and `environment` (`waysInstalled`, the configured `testCommand` or `null`, and the environment checks), so the commands every configuration could run are part of the evidence.
+`environmentChecks` are checks whose files are part of the task setup, visible to every configuration; C and E also run them through the configured test command. Success checks are held out and never shown to the agent. Each task result records `kind` and `environment` (`waysInstalled`, the configured `testCommand` or `null`, and the environment checks), so the commands every configuration could run are part of the evidence.
 
 ## Observable metrics
 
@@ -70,14 +69,14 @@ Each task carries `metrics`, where every entry is `{ value, source, reason? }` a
 | `toolCalls`, `contextCompactions`, `retries`, `humanInterventions`, `stalls` | adapter, summed across sessions only when every session reported it |
 | `timeouts` | runner, sessions that hit the time budget |
 | `resumeSuccess` | runner, only for fresh-session resume tasks |
-| `remediationAttempts`, `humanApprovals` | repository history, only for C, D and E |
+| `remediationAttempts`, `humanApprovals` | repository, only for C and E |
 
-Human intervention is quantified twice: `humanInterventions` as the adapter observed it (prompts answered, permissions granted, manual fixes) and `humanApprovals` as the approval records `ways approve` left in Git. Resource usage is `usage` (tokens and cost, below), `toolCalls`, per-task `elapsedMs` and the budgets in the configuration.
+Human intervention is quantified twice: `humanInterventions` as the adapter observed it (prompts answered, permissions granted, manual fixes) and `humanApprovals` as the approvals `ways approve` left in the record. Resource usage is `usage` (tokens and cost, below), `toolCalls`, per-task `elapsedMs` and the budgets in the configuration.
 
 ## Comparing configurations
 
 ```sh
-npx ways evals compare --input=a.json --input=b.json --input=c.json --input=d.json --input=e.json --output=report.json --markdown=report.md
+npx ways evals compare --input=a.json --input=b.json --input=c.json --input=e.json --output=report.json --markdown=report.md
 ```
 
 Every input is digested and listed with its path, sha256 and run id. Unreadable, unparseable, pre-v3 or structurally malformed results (including missing or non-numeric metrics) are `invalid`. A run is `non-comparable` when its corpus id, revision or content digest, model, seed, budgets, adapter or runner content digest differ from the reference run (the first valid real run, else the first valid run), when it mixes fixture and real evidence, when it duplicates a run id, or when its outcome policy differs from the first comparable run of the same harness. Several comparable runs of one harness are repetitions and are pooled.
@@ -96,11 +95,11 @@ Every rate is `{ count, trials, rate, interval95 }`, where `interval95` is the 9
 CI validates the runner, grader and report with deterministic fixture adapters only; it never makes paid model calls, and fixture results say nothing about harness quality. To compare configurations for real:
 
 1. Build the exact Ways revision under test (`npm ci && npm run build`) from a clean checkout and keep it fixed for every run; `waysRevision.contentDigest` must match across inputs.
-2. Write one adapter command for the agent under test. It runs with the disposable repository as cwd, reads `WAYS_EVAL_PROMPT` (already prefixed for C, D and E), `WAYS_EVAL_TASK_ID`, `WAYS_EVAL_REPOSITORY`, `WAYS_EVAL_SESSION`, `WAYS_EVAL_HARNESS`, `WAYS_EVAL_MODEL`, `WAYS_EVAL_STARTING_REVISION`, `WAYS_EVAL_SEED`, and for Ways configurations `WAYS_EVAL_WAYS_BIN` and, for E, `WAYS_EVAL_OUTCOME_POLICY`. It must run non-interactively, use the same model, tools and permissions for every configuration, and print a final JSON line such as `{"doneClaim":true,"usage":{"available":true,"totalTokens":1234,"costUsd":0.12},"metrics":{"toolCalls":12,"humanInterventions":0}}`. `doneClaim` is required; `usage` and `metrics` are optional and accept only the names above with non-negative integers or `null`.
+2. Write one adapter command for the agent under test. It runs with the disposable repository as cwd, reads `WAYS_EVAL_PROMPT` (already prefixed for C and E), `WAYS_EVAL_TASK_ID`, `WAYS_EVAL_REPOSITORY`, `WAYS_EVAL_SESSION`, `WAYS_EVAL_HARNESS`, `WAYS_EVAL_MODEL`, `WAYS_EVAL_STARTING_REVISION`, `WAYS_EVAL_SEED`, and for Ways configurations `WAYS_EVAL_WAYS_BIN` and, for E, `WAYS_EVAL_OUTCOME_POLICY`. It must run non-interactively, use the same model, tools and permissions for every configuration, and print a final JSON line such as `{"doneClaim":true,"usage":{"available":true,"totalTokens":1234,"costUsd":0.12},"metrics":{"toolCalls":12,"humanInterventions":0}}`. `doneClaim` is required; `usage` and `metrics` are optional and accept only the names above with non-negative integers or `null`.
 3. Run every configuration with identical corpus revision, model, seed, budgets and adapter argv, at least five repetitions each, one output file per run:
 
    ```sh
-   for harness in no-ways checks-only lightweight-state full-sdd outcome; do
+   for harness in no-ways checks-only lightweight-state outcome; do
      for rep in 1 2 3 4 5; do
        npx ways evals run --adapter=command --command=/path/to/agent --arg=--non-interactive \
          --harness=$harness --model=my-model --revision=corpus-v3 --seed=7 \
@@ -110,16 +109,16 @@ CI validates the runner, grader and report with deterministic fixture adapters o
    npx ways evals compare $(for file in runs/*.json; do printf -- '--input=%s ' "$file"; done) --output=report.json --markdown=report.md
    ```
 
-   Add E variants (for example `--evaluation=self` or `--isolation=optional`) as separate batches; the report marks a second outcome policy as non-comparable, so compare each E variant with A–D in its own report.
+   Add E variants (for example `--review=none`) as separate batches; the report marks a second outcome policy as non-comparable, so compare each E variant with A–C in its own report.
 4. Keep `runs/` and both reports together; every number in the report points back to a raw task entry. Check `runs[].status` before reading any score: a `non-comparable` run silently changes nothing, it is simply left out.
 
 ## Decision thresholds
 
-One benchmark never switches a default. A lighter configuration (C or E) is a candidate to replace D only when, over at least five repetitions of the whole corpus with the same model and budgets, all of these hold:
+One benchmark never switches a default. A lighter candidate (for example C instead of E, or a new E against results recorded for an earlier ways version) replaces a reference configuration only when, over at least five repetitions of the whole corpus with the same model and budgets, all of these hold:
 
-- **No success regression.** Its success rate is not lower than D's by more than 5 percentage points, and the lower bound of its 95% interval is not below D's lower bound by more than 10 points. Each task kind with a D success of 3/5 or better keeps at least 3/5.
-- **No new assurance violations.** Incorrect done claims and `completedWithoutSuccess` do not exceed D's counts, regressions stay at zero, and no compliance issue code appears that D does not show (for E, `eval-policy-mismatch` must be zero).
-- **Assurance-specific tasks hold.** `remediate-slug` records its failed evaluation and remediation in history whenever the first attempt fails, `false-done-total` is never closed or finished while failing, `conflict-format` ends with both changes, and `resume-session` resumes in every repetition where D resumes.
+- **No success regression.** Its success rate is not lower than the reference's by more than 5 percentage points, and the lower bound of its 95% interval is not below the reference's lower bound by more than 10 points. Each task kind with a reference success of 3/5 or better keeps at least 3/5.
+- **No new assurance violations.** Incorrect done claims and `completedWithoutSuccess` do not exceed the reference's counts, regressions stay at zero, and no compliance issue code appears that the reference does not show (for E, `eval-policy-mismatch` must be zero).
+- **Assurance-specific tasks hold.** `remediate-slug` records its failing run whenever the first attempt fails, `false-done-total` is never closed while failing, `conflict-format` ends with both changes, and `resume-session` resumes in every repetition where the reference resumes.
 - **A real saving.** Median task time or total cost (when every task reports cost) falls by at least 20%, and human interventions and approvals do not rise.
 
 If any threshold is missed, or a metric it depends on is unavailable, the result is "no decision"; rerun with more repetitions or a better-instrumented adapter rather than relaxing a threshold after seeing the data.

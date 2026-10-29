@@ -6,8 +6,8 @@ import type { GitRepository } from "../git/git.js";
 
 /**
  * The command contract an execution boundary runs: the legacy test command
- * plus the optional named checks. SDD failure records and outcome evaluations
- * both bind to it, so a changed configuration invalidates what they certified.
+ * plus the optional named checks. The evidence `ways done` records binds to
+ * it, so the history audit can tell when other commands ran.
  */
 export function effectiveContract(config: HarnessConfig): CheckContract {
   return { testCommand: [...config.testCommand], ...(config.commands ? { commands: structuredClone(config.commands) } : {}) };

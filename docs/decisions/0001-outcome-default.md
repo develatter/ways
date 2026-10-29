@@ -1,6 +1,6 @@
 # 0001 — Outcome work is the default; SDD is deprecated
 
-- Status: accepted
+- Status: superseded by [0003](0003-what-stays-and-what-goes.md) (SDD and plan were removed in 0.3)
 - Date: 2026-09-23
 - Decided by: the human maintainer (explicit decision, not derived from a benchmark)
 - Issue: #17 (parent #2)

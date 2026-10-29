@@ -2,51 +2,15 @@
 
 This roadmap defines the next milestones for ways. It is the source of planned work; `README.md` remains a product overview.
 
-## 1. Transactional safety
+The product direction is minimal ceremony: the agent decides what to do, the harness supplies context, checks the result and blocks only what breaks a guarantee. Each phase is done when its criteria hold in the test suite and in a packed consumer project, not when its checklist is ticked.
 
-Make state updates, staging, and gate commits recoverable as one logical transaction.
+## Done: lean (0.3)
 
-- Add fault-injection coverage before and after writes, staging, commits, and cleanup.
-- Define explicit recovery states for failed cherry-picks and partial worktree cleanup.
-- Never infer progress silently or discard project changes.
+Two ways to work, a change (`ways done`) and an outcome (`ways outcome open` → `ways done`); SDD, plan, tasks, attempts, remediation, discovery and reconciliation are gone. The hook observes by default and refuses only hand-made record changes; verifier-surface changes need approval; memory travels with the change and goes stale by content hash. See [decision 0003](decisions/0003-what-stays-and-what-goes.md) and [docs/acceptance.md](acceptance.md).
 
-## 2. Trustworthy memory
-
-Make repository memory verifiable and maintainable over time.
-
-- Verify local sources against paths and Git revisions.
-- Add promotion, deprecation, freshness, and FAQ workflows.
-- Detect contradictory active concepts without inventing a winner.
-- Make `ways query` use the derived search index.
-
-## 3. Installation and CLI hardening
-
-Validate the package as a consumer would use it and make the CLI predictable.
-
-- Installation from `npm pack` as a consumer devDependency is tested (`npm run test:e2e`).
-- Command help comes from one registry (`ways --help`, `ways <command> --help`); still open: robust argument parsing, stable exit codes, and structured output.
-- Improve bootstrap repository detection and require confirmation for inferred configuration.
-- Add an idempotent migration and rollback fixture.
-
-## 4. Adapter validation and approval evolution
-
-Validate provider integrations in their real environments and strengthen human approval options.
-
-- Exercise the pi extension and Codex/Cursor hook payloads in live sessions.
-- Preserve the six-line role-prompt limit and fail-closed guard behavior.
-- Evaluate a remote or signed approval channel for humans without a local terminal.
+Still open from it: an eval run with real models comparing the lean E with the 0.2 E (the corpus and runner are ready; no real run has been recorded).
 
 ## Next phases and their exit criteria
-
-The product direction is minimal ceremony: the agent decides what to do, the harness supplies context, checks the result and blocks only what breaks a guarantee. The backlog above is picked up only where it serves these phases. Each phase is done when its criteria hold in the test suite and in a packed consumer project, not when its checklist is ticked.
-
-### Lean
-
-- Two ways to work, `quick` and `outcome`; the phased SDD flow and `plan` are gone from code, templates, schemas, evals and docs. Old SDD artifacts in a consumer repository are ignored, at most with a one-time notice.
-- The commit hook observes by default and rejects only commits that break a guarantee; trailers are added by the harness, not typed by the agent.
-- Worktree isolation is optional; independent review is configured, not declared by the agent, and only `critical` and `high` findings block.
-- Memory needs no discovery, reconciliation or progress records: a short sourced fact can be captured when it is learned and goes stale by the hash of its sources.
-- Changing or deleting existing tests, or the checks configuration, needs approval; adding tests does not.
 
 ### Context at the right moment
 
@@ -56,9 +20,11 @@ The product direction is minimal ceremony: the agent decides what to do, the har
 
 ### Verification v2
 
-- Every acceptance criterion is one line with an executable verifier and declares its strength (`proof`, `property`, `test`, `e2e` or `review-only`); a criterion without a strong verifier is marked and needs an independent review.
-- The evidence is produced by the harness (a verifier that goes from red to green on a clean tree), never typed by the agent; its strength is recorded in the evidence.
-- CI runs the same verification and is the final judge.
+Already in place since lean: one-line criteria with a verifier and a declared strength, review-only criteria forcing a review, evidence written by the harness with the strength recorded. Still to do:
+
+- Evaluate in a clean worktree with the base commit's check contract, and require verifiers to go from red on the base to green on the input.
+- Review provenance by session (fresh, read-only, attested by hooks) instead of a reviewer name; signed human approvals (SSH, FIDO key when available).
+- `ways verify` in CI re-running the recorded verifiers of the works a pull request closes.
 
 ### Control plane
 

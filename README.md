@@ -1,75 +1,90 @@
 # ways
 
-A minimal, agent-agnostic development harness with Git-backed workflows, outcome-driven delivery with verifiable evidence, and living OKF v0.2 memory.
+A lean harness for coding agents. The agent decides how to work; ways gives it context, checks the result once, records the evidence itself, and only blocks what would break a guarantee.
 
-> The core workflow, mechanical enforcement, human approvals and digest-bound reviews are implemented and tested. Version 0.3 is a work in progress towards a leaner harness; see the [roadmap](docs/ROADMAP.md) for what comes next.
+- **Done means something.** A delivery is a goal plus one-line criteria, each with an executable verifier. `ways done` runs them with your checks and writes the evidence; the agent never does.
+- **Ceremony stays out of the way.** Commit as usual: a hook adds the trailer. A small change is one command.
+- **Memory is short and travels with the change.** One fact per file, tied to the code it is about, flagged when that code moves on.
 
-## Why
+## Install (60 seconds)
 
-Long-running coding agents tend to lose state, skip process, perform unnecessary rituals, and preserve stale documentation as truth. ways separates those concerns:
-
-- **Git** is the immutable work log.
-- **OKF memory** describes the repository as it exists now.
-- **Explicit modes** let the engineer choose the required ceremony.
-- **Outcome evidence** constrains what must be true when work finishes, not how the agent reasons.
-- **Portable agent archetypes** keep the core independent of any provider.
-
-## Requirements
-
-- Linux or macOS
-- Node.js 22 or newer
-- Git
-
-## Installation
+Requires Git and Node.js 22+ on Linux or macOS.
 
 ```bash
 npm install --save-dev @develatter/ways --registry=https://npm.pkg.github.com
 npx ways bootstrap --test-command='["npm","test"]'
-scripts/check.sh
+git add -A && git commit -m "chore: install ways"
 ```
 
-Bootstrap creates the repository contract, including `AGENTS.md`, `MAP.md`, `.ways/`, `scripts/check.sh`, a `CLAUDE.md` that imports `AGENTS.md` (`@AGENTS.md`; an existing `CLAUDE.md` keeps its notes and just gains the import line), the managed `commit-msg` hook, and the adapter files for every supported agent (Claude Code, Codex, Cursor, pi). Commit the result; from then on the agent you talk to follows the harness.
+Bootstrap writes 19 files: `.ways/config.json`, two commit hooks, `scripts/check.sh`, an `AGENTS.md` for you to fill in as a map of your project, a `CLAUDE.md` that imports it, the memory index, and the Claude Code and pi adapters. Codex and Cursor are available with `--agents=claude,pi,codex,cursor`.
 
-To configure multiple reproducible environment checks, pass a JSON command contract. Each command is an argument array; only names listed in `required` execute, in the stable order `test`, `lint`, `typecheck`, `build`, `e2e`. A missing required command is reported as unavailable, while non-required checks are skipped. The legacy `testCommand` remains the fallback:
+## Use it
+
+**A small change.** Work and commit as you like (any number of commits), then:
+
+```bash
+npx ways done        # integrity + your checks, once; closes the change
+```
+
+In the default `observe` mode the first commit starts the change, named after the branch; `npx ways start <id>` names it yourself. If the checks fail, fix, commit and run `ways done` again.
+
+**A delivery with criteria.** Say what done means, in one line per criterion, with the strongest verifier you have:
+
+```bash
+npx ways outcome open auth-refresh --goal="Refresh tokens before they expire" \
+  --criterion="AC1:refreshes 60 s before expiry" --verify='AC1:npm test -- -t "refresh before expiry"' \
+  --criterion="AC2:never refreshes a revoked token" --verify='AC2:npm test -- -t "revoked"'
+# ... implement and commit ...
+npx ways done                      # runs checks and verifiers, records the evidence
+npx ways review submit review.json # only when a review is required (the default); closes the work
+```
+
+You review the criteria, not the diff. A criterion without `--verify` is `review-only` and makes the independent review mandatory; `--strength=AC1:property` (or `proof`, `e2e`) records how strong a verifier is. `--review=none` drops the review for criteria that all have verifiers, and `--approval=required` adds a human approval at the end.
+
+**Human approvals** are needed when you ask for them, and always when the work modifies or deletes an existing test or changes the check commands (adding tests never needs one). The human runs, in their own terminal:
+
+```bash
+npx ways approve
+```
+
+It refuses without a terminal, shows the criteria, the evidence and the review, asks for the work id and, if nothing else is missing, closes the work.
+
+**Memory.** When you learn something durable (a convention, a decision, a pitfall, how to verify something):
+
+```bash
+npx ways remember "Tokens refresh 60 s before expiry; never on revoked tokens" --path='src/auth/**'
+```
+
+It writes one short file under `.ways/knowledge/`; commit it with the change. `ways done` and `ways status` point at the memory of the code you are changing and mark it *possibly stale* when that code changed after the memory did.
+
+**Where am I?** `npx ways status` shows the active work, its criteria, what is missing and the exact next command. `npx ways cancel` drops the active work.
+
+Inside Claude Code or pi you can also type `/ways-outcome`, `/ways-remember` or `/ways-status`, and hand reviews to the `ways-reviewer` agent.
+
+## What ways guarantees, and what it does not
+
+| Guarantee | How |
+| --- | --- |
+| The definition of done does not move | The goal and criteria are committed when the outcome opens; the commit hook refuses any hand edit of `.ways/work/`, and `ways check --history` flags one that bypassed the hook |
+| Evidence is the harness's, bound to its input | `ways done` writes it (commands, exit codes, durations, output digests and tails) for the exact commit and tree it ran on; closing requires the closed tree to be that tree |
+| Tests are not weakened silently | Modifying or deleting an existing test or check command needs a human approval |
+| Reviews are of what is closed | A review names the evaluated commit; any later change needs a new `ways done` and a new review. Only `critical` and `high` findings block |
+| Approvals come from a human | `ways approve` needs a real terminal; the approval covers the criteria, evidence and review |
+
+Locally, an agent with a shell can bypass any hook (`WAYS_DISABLE=1`, or pointing `core.hooksPath` elsewhere; `--no-verify` alone does not skip the record check, which runs in `prepare-commit-msg`). The CI is the final judge: run `scripts/check.sh --history` on pull requests (see [docs/BRANCH_PROTECTION.md](docs/BRANCH_PROTECTION.md)).
+
+`enforcement` in `.ways/config.json` is `observe` by default: the hook only refuses commits that hand-edit a work record. With `enforce` it also refuses commits outside an active work.
+
+## Configure checks
+
+`--test-command` is the fallback; for several checks pass a contract. Only names in `required` run, in the order `test`, `lint`, `typecheck`, `build`, `e2e`:
 
 ```bash
 npx ways bootstrap --test-command='["npm","test"]' \
   --commands='{"test":["npm","test"],"lint":["npm","run","lint"],"required":["test","lint"],"timeoutMs":120000}'
 ```
 
-The same contract can opt in to an environment: a `setup` argument array and `services`, each `{"name", "command", "ready", "timeoutMs"}` where `ready` is exactly one bounded probe (`{"command": [...]}`, `{"tcp": {"port": 5432}}` or `{"http": "http://127.0.0.1:3000/health"}`; readiness defaults to 30000ms):
-
-```json
-"setup": ["npm", "ci"],
-"services": [{ "name": "api", "command": ["npm", "start"], "ready": { "http": "http://127.0.0.1:3000/health" }, "timeoutMs": 20000 }]
-```
-
-Setup and services run only at execution boundaries: `quick finish`, `plan finish`, `sdd advance` out of validate and close, `sdd validate` (and its replay), and `ways check --with-services`. Plain `ways check`, `ways status` and `ways repair diagnose` never run setup or start services. Services start in their own process groups after setup, before the checks; their output goes to `.ways/runtime/services/<name>.log` (ignored by Git). A failed or timed-out setup, a service that never becomes ready, or one that exits before readiness or while checks run skips the remaining checks and fails the evaluation, with the result under `environment` in the check output and validation records. Afterwards, and on timeout, failure, SIGINT or SIGTERM, the harness terminates only the process groups it started.
-
-## Using the harness day to day
-
-You never need the CLI: you talk to your coding agent and it drives `ways` for you. The commands below are the same in every agent, only the invocation prefix changes (see the provider table).
-
-| You want | Say or type | What happens |
-| --- | --- | --- |
-| Know where things stand | `/ways-status` | The agent reads `.ways/status.json` and reports mode, work, phase, gate |
-| Ask about the code or memory | `/ways-query token rotation` | Read-only search, no state, no commit |
-| A small change | `/ways-quick button-spacing fix the padding` | Opens quick work, implements, runs `scripts/check.sh`, commits once |
-| A change worth a proposal | `/ways-plan auth-refresh` | Writes and commits a plan; you decide execute, escalate or abandon |
-| A delivery (default) | `/ways-outcome auth-refresh refresh tokens before expiry` | Opens outcome work with fixed criteria, executes through tasks, evaluates checks and evidence, independent review, close |
-| Legacy phased delivery (deprecated) | `/ways-sdd auth-refresh --supervised --delegated` | Only to finish active SDD work or when you explicitly want SDD |
-
-Plain language works too: "fix the padding on the button" makes the agent open a quick work, because commits outside a work are rejected by the hook. During a work, ask the agent to advance, finish or cancel; those are agent actions, not commands you run.
-
-Outcome work opened with `--approvals=close` (or `close,remediate`), and legacy supervised SDD, stop at their gates until you approve in your own terminal:
-
-```bash
-npx ways approve
-```
-
-It shows the work, checkpoint or phase, gate and content digest, asks you to type its name, and writes an approval that dies if anything changes afterwards. Agents cannot run it: it refuses without a TTY.
-
-If something looks wrong, `npx ways status`, `npx ways check` and `npx ways repair diagnose` explain the state without changing it.
+The contract can add a `setup` command and `services` (`{"name", "command", "ready", "timeoutMs"}`, where `ready` is one of `{"command": [...]}`, `{"tcp": {"port": 5432}}` or `{"http": "http://127.0.0.1:3000/health"}`). `ways done` and `ways check --with-services` start them around the checks, log them under `.git/ways/services/` and stop only the processes they started.
 
 ## Commands
 
@@ -78,194 +93,56 @@ If something looks wrong, `npx ways status`, `npx ways check` and `npx ways repa
 <!-- commands:start (generated from src/commands.ts; run `UPDATE_README=1 npx vitest run tests/commands.test.ts`) -->
 | Command | What it does | Example |
 | --- | --- | --- |
-| `ways bootstrap` | Install the harness in a Git repository (config, hook, check script, memory, agent adapters) | `ways bootstrap --test-command='["npm","test"]'` |
-| `ways status` | Show the active work, if any | `ways status --json` |
-| `ways context` | Print a resumable packet for a fresh agent session | `ways context` |
-| `ways query` | Search the OKF memory; read-only | `ways query token rotation` |
-| `ways quick` | Small direct change: start, check, one commit | `ways quick start button-spacing` |
-| `ways outcome` | Delivery constrained by criteria, evidence, checks and review (default for new work) | `ways outcome open greeting --goal="Greet users" --criterion="AC1:greeting.txt says hi"` |
-| `ways task` | Isolated worktree tasks inside an outcome | `ways task add write --title="Write the greeting"` |
-| `ways review` | Independent review bound to the exact content under review | `ways review digest` |
-| `ways approve` | Human approval of a gated checkpoint (needs a real terminal; agents cannot run it) | `ways approve close` |
-| `ways check` | Run integrity, the configured checks and the history audit (what CI runs) | `ways check` |
-| `ways memory` | Validate and index the OKF memory under .ways/knowledge | `ways memory check` |
-| `ways adapter` | List or (re)install the agent adapters (Claude Code, Codex, Cursor, pi) | `ways adapter list` |
-| `ways upgrade` | Re-render managed files after updating the package; never overwrites edits silently | `ways upgrade` |
-| `ways repair` | Diagnose or restore state that diverged from Git | `ways repair diagnose` |
-| `ways hook` | Entry point for the managed Git hooks (not called by hand) | `ways hook commit-msg .git/COMMIT_EDITMSG` |
+| `ways bootstrap` | Install ways in a Git repository: config, commit hooks, memory and the Claude Code and pi adapters | `ways bootstrap --test-command='["npm","test"]'` |
+| `ways status` | What is active, what done means for it, what is missing and the next command | `ways status` |
+| `ways start` | Start a small change (optional in observe mode: the first commit starts one from the branch) | `ways start fix-button-padding` |
+| `ways outcome` | Open a delivery whose definition of done is one-line criteria, each with an executable verifier | `ways outcome open greeting --goal="Greet users" --criterion="AC1:greeting.txt says hi" --verify="AC1:grep -q hi greeting.txt"` |
+| `ways done` | Finish the active work: run integrity, checks and verifiers once, record the evidence, close when nothing is missing | `ways done` |
+| `ways review` | Record an independent review of the evaluated commit; closes the work when nothing else is missing | `ways review submit /tmp/review.json` |
+| `ways approve` | Human approval (needs a real terminal; agents cannot run it); closes the work when nothing else is missing | `ways approve` |
+| `ways cancel` | Drop the active work; commits stay, an open record is marked cancelled | `ways cancel` |
+| `ways check` | Run integrity and the configured checks (what CI runs); --history audits work records and trailers | `ways check` |
+| `ways remember` | Write one short memory (a convention, decision, pitfall or how-to), tied to the code it is about | `ways remember "Tokens refresh 60 s before expiry" --path=src/auth/**` |
+| `ways memory` | Validate the OKF memory under .ways/knowledge (and flag possibly stale concepts), or rebuild its search index | `ways memory check` |
+| `ways query` | Search the memory; read-only | `ways query token refresh` |
+| `ways adapter` | List or (re)install agent adapters: claude and pi by default, codex and cursor best effort | `ways adapter list` |
+| `ways upgrade` | Move a repository to this version of ways (including 0.2.x); never overwrites edits silently | `ways upgrade` |
+| `ways hook` | Entry point of the managed Git hooks (not called by hand) | `ways hook prepare-commit-msg .git/COMMIT_EDITMSG` |
 | `ways evals` | Run or compare the harness evaluation corpus | `ways evals run --harness=outcome --output=result.json` |
-| `ways plan` | Versioned proposal before executing (deprecated) | `ways plan start auth-refresh` |
-| `ways sdd` | Strict phased delivery, kept only to finish or audit existing work (deprecated) | `ways sdd advance` |
 <!-- commands:end -->
 
-## Work modes
+## Where things live
 
-| Mode | Purpose | Persistent ceremony |
+| Path | What | Committed |
 | --- | --- | --- |
-| `query` | Read-only exploration and memory search | None |
-| `quick` | Small direct change | State during work, checks, one final commit |
-| `plan` | Versioned proposal that can execute, promote, or be abandoned | Proposed plan until resolved |
-| `outcome` (default) | Delivery constrained by criteria, evidence and checks | Immutable spec, tasks, evaluation, review per policy |
-| `sdd` (deprecated) | Strict phased delivery, kept for existing work and audit | State, gates, tasks, review, validation |
+| `.ways/config.json` | Checks, enforcement, review default, verifier globs | yes |
+| `.ways/work/<id>.json` | One record per outcome: criteria, evidence, review, approval (written only by ways) | yes |
+| `.ways/knowledge/` | Memory: short OKF concepts | yes |
+| `.ways/hooks/`, `scripts/check.sh` | Managed hooks and check script (hashed in `.ways/manifest.json`) | yes |
+| `.git/ways/` | Active work, run log, search index, service logs | no |
+
+## Upgrading from 0.2
 
 ```bash
-npx ways query "token rotation"
-npx ways quick start button-spacing
-npx ways plan start auth-refresh
-npx ways outcome open auth-refresh --goal="Refresh tokens" --criterion="AC1:tokens refresh before expiry"
-npx ways status
+npx ways upgrade            # shows what will change
+npx ways upgrade --apply    # applies it; commit the result
 ```
 
-New work uses the outcome workflow; see [decision 0001](docs/decisions/0001-outcome-default.md) for the trade-offs and the evidence behind it.
-
-## SDD lifecycle (deprecated)
-
-SDD is deprecated for new work: `ways sdd start` and `ways plan promote` still work but print a notice pointing to `ways outcome open`. Active SDD work completes under its original workflow and assurance policies, and every SDD verifier below stays in place for historical audit.
-
-```text
-intake → explore → assess → specify → plan → decompose
-→ implement → review → validate → reconcile-memory → close
-```
-
-Each transition validates the previous certification in Git, updates JSON state, and creates an atomic commit with machine-readable trailers. `assess` can explicitly downgrade small work to `quick` or `plan`. Run `npx ways sdd validate` at the validate phase to run the configured checks against a clean committed tree. On failure it commits an attempt-scoped record containing the exact results, deterministic digest, and input commit/tree; then `npx ways sdd remediate <implement|decompose|plan|specify> --reason=<text>` links that committed record, starts a new attempt, and never rewrites the prior attempt. A passing `sdd validate` leaves the normal `sdd advance` path available.
-
-SDD runs `inline` (the agent may implement itself) or `--delegated` (the session is the orchestrator and never edits production code: implementation always arrives through subagent task worktrees, integrated in dependency order, in parallel when independent). The implement gate in delegated mode rejects any commit that was not integrated from a task. Provider guards block main-worktree production writes, including write-like shell commands, throughout delegated `implement`, `review`, and `validate`, while allowing phase artifacts, Ways orchestration, and task worktrees.
-
-Parallel tasks run in isolated worktrees. The core creates task packets and integrates traced commits, but deliberately does not launch agents. Review is delegated, read-only, severity-gated, and required even when implementation is inline. The review JSON carries the digest printed by `ways review digest`; submit and the gate recompute it, so a review dies with any later edit.
-
-Supervised profile (`--supervised`) opens the work with a traced commit that fixes the profile in Git, and adds human gates at intake, plan and close. The way through is `ways approve`, run by the human in a real terminal: it refuses without a TTY, shows the gate and digest, asks for the phase name to be typed, and writes `.ways/sdd/<id>/approvals/<phase>.json` bound to work, phase, gate commit and content digest. The gate, the commit-msg hook and the provider guard all verify that binding; there is no flag an agent can pass, flipping the profile on disk is rejected, and any edit after approval invalidates it. Validation failure records likewise bind an immutable input commit/tree and digest. Every verifier re-runs the recorded checks in a fresh detached worktree at that input and rejects a result that does not reproduce; it never switches the caller's worktree to historical content. What remains unverifiable locally is authorship: an actor with unrestricted shell access can fabricate a record only when it describes a failure that the replay also observes. These checks establish Git linkage and reproducible results, not the identity of a local author.
-
-## Outcome workflow (default)
-
-The default for new work: it constrains results instead of reasoning steps. Exploration, planning and decomposition are optional capabilities (`ways plan`, task dependencies, the explorer role), never mandatory states.
-
-```text
-open → execute → evaluate → close
-```
-
-```bash
-npx ways outcome open greeting --goal="Greet users" --criterion="AC1:greeting.txt says hi"
-npx ways task add write --title="Write the greeting" && npx ways task prepare write
-# implement and commit inside the task worktree, then:
-npx ways task integrate write --commits=<sha>
-# map every criterion in .ways/outcomes/greeting/attempts/0/evidence.json
-npx ways outcome evaluate        # runs the configured checks against the executed input
-npx ways outcome remediate --reason=<text>  # new attempt after a recorded failure or blocking review
-npx ways review digest           # an independent reviewer binds a review to this digest (skipped with --evaluation=self)
-npx ways review submit review.json
-npx ways outcome close
-```
-
-The goal and stable criterion identifiers are committed at open and cannot change afterwards. By default, production changes arrive only through integrated task worktrees; `evaluate` refuses missing criterion evidence or failing checks, and `close` enforces the evaluation policy described below. The commit hook, `ways check --history`, `ways status` and `ways repair diagnose` all understand the workflow and reject skipped transitions, direct commits and forged or tampered evidence.
-
-Execution policies are chosen at open and stored in the immutable spec, so the opening commit binds them to Git and later disk or commit edits cannot weaken them. Specs without these fields read as the defaults:
-
-- `--isolation=required` (default): production changes arrive only through integrated task worktrees; whoever implements, the main agent included, works there. `--isolation=optional` also accepts traced direct commits (`Harness-Work`, no task) during execute; a task trailer still has to be backed by an integrated task.
-- `--parallel=allowed` (default): several tasks may be prepared at once. `--parallel=disabled`: `ways task prepare` refuses while another task of the work is prepared but not integrated, and `ways repair diagnose` flags a state holding two.
-
-Tasks are scheduled as their dependencies complete; there is no decomposition phase or orchestrator-only role. The commit hook, `evaluate`, `close`, `ways check --history` and the provider guard (which blocks main-worktree writes during execute only when isolation is required) apply the same policy.
-
-`evaluate` runs the environment check contract of the executed input (the named `commands` of `.ways/config.json`, or the legacy `testCommand`) through the same runner as `ways check` and SDD validation, prints each named result, and writes to `attempts/<n>/evaluation.json` the contract it ran, every named result and a digest of the criterion evidence. Every required check must pass: a failing, timed-out or unavailable one blocks completion even when the evidence claims every criterion is met. Close, the commit hook and the history audit verify that the recorded contract is still the input tree's configuration, that its results satisfy it and that the evidence is unchanged; changed commands, implementation or evidence need a new evaluation.
-
-Remediation is additive. A failing `evaluate` commits a replayable check-failure record for the attempt; a blocking review stays pending. `ways outcome remediate --reason=<text>` then opens attempt n+1 from that evidence, and the attempt needs new tasks, its own evaluation and a fresh review. Artifacts of earlier attempts are immutable, and the hook and the history audit reject forged failures, remediations and rewrites.
-
-Evaluation assurance is chosen at open with `--evaluation=independent|self` (default `independent`) and stored in the immutable spec as `policy.independentEvaluation` (`required` or `optional`; specs without it read as `required`). Close, the commit hook and `ways check --history` read it from the committed spec, so editing the state or the spec after open cannot weaken it; a spec that changed after opening blocks close.
-
-- `independent`: close requires a review of this work and attempt whose digest binds the evaluated increment (its code, evidence, evaluation and the committed goal and criteria), with no blocking findings, by a reviewer who is not a known implementer. A review replayed from another attempt or input is stale.
-
-Only `critical` and `high` findings block, and they keep blocking until their disposition is `fixed`. `medium` and `low` findings are recorded in the review, printed by `ways review submit` and listed by `ways context`, but never block close, whatever their disposition; a reviewer who wants to stop the work records a `high` finding or a `fail` verdict.
-- `self`: close needs no review, but still requires the passing evaluation, complete criterion evidence and checks that pass again at close. A review that is recorded anyway must still bind and pass.
-
-Provenance is honest, not cryptographic. The known implementers are the Git author and committer names and emails of the increment's task commits (and direct commits under optional isolation); `review submit`, close, the hook and the history audit reject a reviewer string equal to one of them (case-insensitive, also written as `Name <email>`). Git identities and the reviewer field are self-asserted: the check catches an agent reviewing its own work under its configured identity, not an impostor who picks another name, and it never proves who wrote a review. Stronger identity channels are future work.
-
-Memory assurance is chosen at open with `--memory=none|normal|high` (default `normal`) and stored in the immutable spec; there is no blanket reconciliation phase:
-
-- `none`: the increment must not change `.ways/knowledge/`; evaluate and close refuse it.
-- `normal`: relevant sourced knowledge updates travel in task commits like any other change. The evaluation's integrity checks enforce OKF validity, sources and indexes; no separate memory review or commit is needed.
-- `high`: close also requires a passing memory review bound to `ways outcome memory-review digest` (the evaluated input plus its exact knowledge diff), recorded with `ways outcome memory-review submit review.json`. A missing, blocking or stale memory review blocks close, the hook and the history audit.
-
-Human approvals are chosen at open with `--approvals=none|close|close,remediate` (default `none`; specs without the field read as none) and stored in the immutable spec. There are no mandatory planning gates; the supported checkpoints are the externally meaningful transitions `close` and `remediate`. At a gated checkpoint the human runs `ways approve [close|remediate]` in their own terminal: like SDD approvals it refuses without a TTY and asks for the checkpoint name to be typed, then writes `.ways/outcomes/<id>/approvals/<attempt>/<checkpoint>.json` bound to work, checkpoint, attempt, the committed input and the reviews the transition records. The transition commits that approval; editing a review afterwards, moving HEAD, reusing an approval from another attempt or checkpoint, or editing the spec to drop the policy (the policy is always read from the opening commit) leaves the gate closed. `ways status` and `ways context` name the exact `ways approve` command still required, and the hook and history audit reject gated transitions without a matching approval. Tool writes under `approvals/` are blocked by the guard.
-
-Progress belongs in the outcome's evidence, never in knowledge. Legacy SDD reconcile-memory, `ways memory commit` and release reconciliation keep their original semantics.
-
-## Knowledge
-
-The current repository memory is an OKF v0.2 bundle under `.ways/knowledge/`. Supported core types are `system`, `component`, `convention`, `decision`, and `faq`; custom OKF types remain valid.
-
-Agent-authored knowledge starts as a sourced `draft`. Stable concepts require deterministic or human verification. Search, graph, and catalog indexes under `.ways/indexes/` are derived and reproducible:
-
-```bash
-npx ways memory check
-npx ways memory index
-npx ways query "authentication convention"
-```
-
-## Integrity and recovery
-
-```bash
-scripts/check.sh
-npx ways repair diagnose
-npx ways upgrade
-```
-
-The canonical check validates managed files, schemas, state/Git consistency, compact agent prompts, OKF, derived indexes, and the configured unit-test command. Divergence fails closed; repair and destructive rollback always require explicit commands.
-
-## Mechanical enforcement
-
-Compliance does not depend on the agent obeying its prompt:
-
-- Bootstrap installs a managed `commit-msg` hook under `.ways/hooks/` and sets `core.hooksPath`. Any commit not traced to the active work with a matching `Harness-Work` trailer is rejected. Small edits open `ways quick start <id>` first.
-- `ways check --history [--since=<ref>] [--to=<ref>]` audits every commit in the selected ancestry range (or after `historySince` in config) for trailers and unbroken SDD certification chains. CI sets `--to` to the pull-request head so GitHub's synthetic merge commit is not treated as authored history. `scripts/check.sh` runs the audit, so a `--no-verify` bypass still fails in CI.
-- With an active work, integrity also fails on any commit after its base that lacks the work trailer.
-- Certifying a supervised human gate requires a bound approval artifact in the same commit; the closing commit must delete the one committed for `close`. Tool writes under `approvals/` and `reviews/` are blocked by the guard.
-
-## Provider adapters
-
-`assets/adapters/` is the canonical source: seven commands (status, query, quick, plan, outcome, deprecated sdd, memory), five roles (explorer, implementer, reviewer, qa, sweeper) with prompts of at most six lines, a statusline script, and a commit guard. The orchestrator is not a subagent: it is the main agent the human talks to, instructed by `AGENTS.md`. Bootstrap renders every registered provider from that source; `ways adapter install <provider> [--force]` regenerates one. Rendered files are hashed in the manifest, verified by integrity, and re-rendered by `ways upgrade` after checklist approval.
-
-Each adapter follows the provider's current official documentation. Every one ships the same guard script fed with JSON on stdin: it blocks `git commit` without an active work and blocks main-worktree production writes during delegated implementation, review, and validation.
-
-| Provider | Commands | Roles | Guard | Status |
-| --- | --- | --- | --- | --- |
-| Claude Code | `.claude/commands/ways-*.md`, invoked `/ways-quick` | `.claude/agents/ways-*.md`, read roles get `tools` and `permissionMode: plan` | `PreToolUse` in `.claude/settings.json` (merged) | `statusLine` wrapped around yours |
-| Codex CLI | `.agents/skills/ways-*/SKILL.md`, invoked `$ways-quick` | `.codex/agents/ways-*.toml`, read roles get `sandbox_mode = "read-only"` | `PreToolUse` in `.codex/hooks.json` (merged) | not supported by Codex |
-| Cursor | `.cursor/skills/ways-*/SKILL.md`, invoked `/ways-quick` | `.cursor/agents/ways-*.md`, read roles get `readonly: true` | `beforeShellExecution` and `preToolUse` in `.cursor/hooks.json` (merged, fail closed) | not supported per project |
-| pi | `.pi/prompts/ways-*.md`, invoked `/ways-quick` | `.pi/agents/ways-*.md` for the subagent extension, read roles get `tools: read, grep, find, ls` | `.pi/extensions/ways/index.ts` on `tool_call` | same extension, `setStatus` in the footer |
-
-Provider notes: Codex and Cursor only load project hooks in trusted projects, and pi asks for project trust before loading `.pi/`; Codex has no project prompts, so commands are repository skills; pi has no built-in subagents, so the role files target its documented subagent extension. `AGENTS.md` is read natively by all four. Advancing, finishing and cancelling are done by the agent through the CLI when the human asks; they are not user commands.
-
-## Observable status
-
-`.ways/status.json` is a tracked, derived projection of the active state: `active`, `mode`, `id`, `status`, `phase`, `profile`, `humanGate`, `gateCommit`, `updatedAt`, and, for remediation attempts after attempt zero, `attempt` plus `remediation`. It is rewritten on every transition, verified by integrity, and cheap to read from any agent statusline. `ways status --json` prints the same object. Attempt-zero output keeps its original shape.
-
-`ways context [--json]` prints a resumable packet for a fresh session (`schemaVersion: 1`): HEAD, the active work (mode, stage or phase, attempt, profile, uncommitted paths, and the recorded remediation on later attempts), its tasks with the ones genuinely ready (every dependency completed and its commits reachable from HEAD), every outcome in the repository with its status (`open`, `closed`, `cancelled`, `incomplete`), and links (path and title) to relevant OKF concepts. For outcome work it adds the committed goal and criteria, per-criterion evidence (`missing`/`filled`) and evaluation (`absent`, `stale` when anything close would refuse changed since the evaluated input, including evidence edited after evaluation, `passed`, `failed`), the review status (`absent`, `invalid`, `stale` on digest mismatch, `pass`, `fail`) and the remaining blockers. An idle repository yields `active: null`. Context never writes anything, contains no wall-clock time, and reports `divergence` from the same checks as `ways repair diagnose` instead of failing.
-
-Upgrades compare managed-file hashes and never overwrite modified files without checklist approval. `ways upgrade` also reports the active work: an active SDD work is allowed to continue under its original workflow, while unreadable or Git-divergent state makes the plan exit 1 and `--apply` refuse until `ways repair diagnose` is resolved. Applying only re-renders managed files and adapters, never rewrites certifications, approvals, reviews or remediation history, and re-applying it changes nothing.
+The check contract and the memory carry over (coverage globs become `paths:` on their concepts), an active quick work becomes the active change, and an active outcome is reported with the command that reopens it. SDD, plan, tasks, attempts, discovery and reconciliation are gone; old `.ways/outcomes/`, `.ways/sdd/` and `.ways/plans/` directories are left in place and can be deleted. An `AGENTS.md` you edited is kept: replace its ways bullets with the short "Working here" section of the new template. See [decision 0003](docs/decisions/0003-what-stays-and-what-goes.md).
 
 ## Harness evals
 
-`ways evals run` grades a fixed task corpus in disposable repositories under the no-ways (A), checks-only (B), lightweight-state (C), full-sdd (D) or outcome (E) harness, and `ways evals compare` builds a matched report that links every number to its raw result files and keeps task success, assurance violations, harness compliance and cost apart, with 95% intervals and no single score. See [docs/EVALS.md](docs/EVALS.md) for real-run instructions and decision thresholds.
+`ways evals run` grades a fixed corpus in disposable repositories without ways (A), with checks only (B), as a change with `ways done` (C) or as an outcome (E); `ways evals compare` builds a matched report with 95% intervals and no single score. See [docs/EVALS.md](docs/EVALS.md).
 
 ## Development
 
 ```bash
 npm ci
 npm run check        # typecheck, build and the whole test suite (what CI runs on Node 22 and 24)
-npm run test:e2e     # only the packed-tarball consumer test (installs the package from `npm pack`)
+npm run test:e2e     # only the packed-tarball consumer test
 ```
 
-The implementation lives in `src/`, bootstrap resources in `assets/`, and integration tests in `tests/`. Do not edit generated `dist/` files. This repository does not run the harness on itself: `scripts/check.sh` is what `ways bootstrap` writes into a consumer repository, not a script of this one.
-
-Tests drive the compiled CLI (`dist/`) for the Git hooks, so `npm test` builds first; if you run `npx vitest` directly, run `npm run build` before.
-
-Package versions on `master` are published by CI when the version in `package.json` is new; development versions (`0.x.0-dev.N`) live on branches.
-
-## Current test baseline
-
-- Contract, Git, bootstrap, integrity, mode, SDD, repair, upgrade, OKF, indexing, review, worktree, and baseline end-to-end coverage
-- End-to-end SDD lifecycle test
-- Packed-consumer bootstrap and canonical check coverage
-- GitHub Actions running `npm run check` on Node 22 and 24
+Tests drive the compiled CLI (`dist/`) for the Git hooks, so `npm test` builds first; if you run `npx vitest` directly, run `npm run build` before. This repository does not run ways on itself. Design decisions are in [docs/decisions/](docs/decisions/).
 
 ## License
 
