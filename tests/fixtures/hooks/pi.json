@@ -1,0 +1,10 @@
+{
+  "_source": "Event shapes from @earendil-works/pi-coding-agent 1.4.0 docs/extensions.md and dist/core/extensions/types.d.ts (read 2026-10-29). Paths are relative to the test repository.",
+  "session_start": { "type": "session_start", "reason": "startup" },
+  "before_agent_start": { "type": "before_agent_start", "messageType": "user", "prompt": "Make the greeting configurable", "systemPrompt": "You are pi." },
+  "tool_call.write.record": { "type": "tool_call", "toolCallId": "call_1", "toolName": "write", "input": { "path": ".ways/work/greeting.json", "content": "{}" } },
+  "tool_call.bash.read": { "type": "tool_call", "toolCallId": "call_2", "toolName": "bash", "input": { "command": "cat .ways/work/greeting.json 2>&1" } },
+  "tool_result.edit": { "type": "tool_result", "toolCallId": "call_3", "toolName": "edit", "input": { "path": "src/greeting.ts", "oldText": "hi", "newText": "hello" }, "content": [{ "type": "text", "text": "Edited src/greeting.ts" }], "isError": false },
+  "agent_end": { "type": "agent_end", "messages": [] },
+  "session_shutdown": { "type": "session_shutdown", "reason": "quit" }
+}

@@ -1,0 +1,86 @@
+{
+  "_source": "Payload shapes from https://code.claude.com/docs/en/hooks (read 2026-10-29). `cwd` is replaced by the test repository.",
+  "SessionStart": {
+    "session_id": "abc123-claude-session",
+    "transcript_path": "/home/user/.claude/projects/-home-user-project/abc123-claude-session.jsonl",
+    "cwd": "/home/user/project",
+    "permission_mode": "default",
+    "hook_event_name": "SessionStart",
+    "source": "startup",
+    "model": "claude-opus-5-5"
+  },
+  "UserPromptSubmit": {
+    "session_id": "abc123-claude-session",
+    "transcript_path": "/home/user/.claude/projects/-home-user-project/abc123-claude-session.jsonl",
+    "cwd": "/home/user/project",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Make the greeting configurable"
+  },
+  "PreToolUse.Write.record": {
+    "session_id": "abc123-claude-session",
+    "transcript_path": "/home/user/.claude/projects/-home-user-project/abc123-claude-session.jsonl",
+    "cwd": "/home/user/project",
+    "permission_mode": "acceptEdits",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Write",
+    "tool_input": { "file_path": "/home/user/project/.ways/work/greeting.json", "content": "{}" },
+    "tool_use_id": "toolu_01ABC"
+  },
+  "PreToolUse.Bash.record": {
+    "session_id": "abc123-claude-session",
+    "transcript_path": "/home/user/.claude/projects/-home-user-project/abc123-claude-session.jsonl",
+    "cwd": "/home/user/project",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Bash",
+    "tool_input": { "command": "jq '.closed = {}' .ways/work/greeting.json > /tmp/x && mv /tmp/x .ways/work/greeting.json", "description": "Close the record" },
+    "tool_use_id": "toolu_01ABD"
+  },
+  "PreToolUse.Bash.read": {
+    "session_id": "abc123-claude-session",
+    "transcript_path": "/home/user/.claude/projects/-home-user-project/abc123-claude-session.jsonl",
+    "cwd": "/home/user/project",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Bash",
+    "tool_input": { "command": "cat .ways/work/greeting.json 2>&1 | jq .criteria > /dev/null", "description": "Read the criteria" },
+    "tool_use_id": "toolu_01ABE"
+  },
+  "PostToolUse.Edit": {
+    "session_id": "abc123-claude-session",
+    "transcript_path": "/home/user/.claude/projects/-home-user-project/abc123-claude-session.jsonl",
+    "cwd": "/home/user/project",
+    "permission_mode": "acceptEdits",
+    "hook_event_name": "PostToolUse",
+    "tool_name": "Edit",
+    "tool_input": { "file_path": "/home/user/project/src/greeting.ts", "old_string": "hi", "new_string": "hello" },
+    "tool_response": { "filePath": "/home/user/project/src/greeting.ts", "success": true },
+    "tool_use_id": "toolu_01ABF"
+  },
+  "Stop": {
+    "session_id": "abc123-claude-session",
+    "transcript_path": "/home/user/.claude/projects/-home-user-project/abc123-claude-session.jsonl",
+    "cwd": "/home/user/project",
+    "permission_mode": "default",
+    "hook_event_name": "Stop",
+    "stop_hook_active": false,
+    "last_assistant_message": "The greeting is configurable now."
+  },
+  "Stop.active": {
+    "session_id": "abc123-claude-session",
+    "transcript_path": "/home/user/.claude/projects/-home-user-project/abc123-claude-session.jsonl",
+    "cwd": "/home/user/project",
+    "permission_mode": "default",
+    "hook_event_name": "Stop",
+    "stop_hook_active": true
+  },
+  "SessionEnd": {
+    "session_id": "abc123-claude-session",
+    "transcript_path": "/home/user/.claude/projects/-home-user-project/abc123-claude-session.jsonl",
+    "cwd": "/home/user/project",
+    "permission_mode": "default",
+    "hook_event_name": "SessionEnd",
+    "reason": "prompt_input_exit"
+  }
+}
