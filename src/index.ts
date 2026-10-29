@@ -2,6 +2,7 @@ export { HARNESS_NAME, HARNESS_VERSION } from "./version.js";
 
 export * from "./domain/types.js";
 export * from "./domain/validation.js";
+export * from "./events/bus.js";
 export * from "./git/git.js";
 export * from "./memory/glob.js";
 export * from "./memory/memory.js";

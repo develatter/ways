@@ -16,3 +16,9 @@ What a repository gets from `ways bootstrap`, written from the consumer's side. 
 12. Upgrades move a 0.2.x repository to this model without losing its checks, memory or active quick work, and never overwrite modified managed files without approval.
 13. The CLI offers at most 28 actions; `ways --help` lists every command and `ways <command> --help` shows its usage and examples.
 14. `ways hook` adds well under 100 ms to a commit beyond Node's start-up.
+15. In Claude Code and pi, the agent receives at session start a deterministic brief of at most 6,000 characters (active work, criteria results, failures, what waits on whom, the next command, up to five memory facts for the code in play, possibly stale ones marked); later prompts receive only what changed, or nothing.
+16. Agent hooks never break a session: bad input, no repository, no ways or an internal error answer nothing with exit 0. The only refusal is a tool call that writes `.ways/work/` (and, in `enforce` mode, one that switches the commit hooks off).
+17. A Stop reminds the agent of a blocker it can act on once per session, and tells the human (not the agent) about a pending approval.
+18. Every memory concept with `paths:` becomes a generated Claude Code path rule; `ways memory check` warns when the rules drift.
+19. Hook events go to `<git-common-dir>/ways/events/` as versioned JSONL, never into the working tree or history, without prompts or file contents.
+20. The bootstrapped `AGENTS.md` is a map of the project of at most 100 lines; ways takes five of them.

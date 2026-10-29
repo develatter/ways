@@ -10,13 +10,13 @@ Two ways to work, a change (`ways done`) and an outcome (`ways outcome open` →
 
 Still open from it: an eval run with real models comparing the lean E with the 0.2 E (the corpus and runner are ready; no real run has been recorded).
 
+## Done: context at the right moment
+
+`ways hook <event>` for Claude Code and pi (the brief at session start, only changes afterwards, the guard on record writes, one stop reminder), `ways context --brief`, Claude Code path rules generated from memory, `AGENTS.md` as a project map, and the JSONL event bus. See [decision 0006](decisions/0006-context-at-the-right-moment.md), [docs/CONTEXT.md](CONTEXT.md) and [docs/EVENTS.md](EVENTS.md).
+
+Still open from it: the hook's p95 is above 100 ms on a slow host (about 25–30 ms over a bare Node start; bundling the hook path is the next step); the `memory-convention` eval (inject vs not) has not been run with a real model; lifecycle events from the CLI and inbox items are not in the bus yet.
+
 ## Next phases and their exit criteria
-
-### Context at the right moment
-
-- Hooks inject a short packet relevant to what is being touched, including path-scoped rules drawn from memory.
-- `AGENTS.md` is a map of the project, not a manual of the harness.
-- `ways hook` stays fast enough for the hot path (p95 under 100 ms).
 
 ### Verification v2
 

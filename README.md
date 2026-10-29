@@ -16,7 +16,9 @@ npx ways bootstrap --test-command='["npm","test"]'
 git add -A && git commit -m "chore: install ways"
 ```
 
-Bootstrap writes 19 files: `.ways/config.json`, two commit hooks, `scripts/check.sh`, an `AGENTS.md` for you to fill in as a map of your project, a `CLAUDE.md` that imports it, the memory index, and the Claude Code and pi adapters. Codex and Cursor are available with `--agents=claude,pi,codex,cursor`.
+Bootstrap writes 18 files: `.ways/config.json`, two commit hooks and the agent-hook wrapper, `scripts/check.sh`, an `AGENTS.md` for you to fill in as a map of your project, a `CLAUDE.md` that imports it, the memory index, and the Claude Code and pi adapters (hooks, two skills, a reviewer agent). Codex and Cursor are available with `--agents=claude,pi,codex,cursor`.
+
+Fill in `AGENTS.md` (what the project is, where things live, the commands): that is the part only you can write.
 
 ## Use it
 
@@ -59,7 +61,9 @@ It writes one short file under `.ways/knowledge/`; commit it with the change. `w
 
 **Where am I?** `npx ways status` shows the active work, its criteria, what is missing and the exact next command. `npx ways cancel` drops the active work.
 
-Inside Claude Code or pi you can also type `/ways-outcome`, `/ways-remember` or `/ways-status`, and hand reviews to the `ways-reviewer` agent.
+**What the agent sees.** In Claude Code and pi you do not have to tell the agent about ways. Hooks hand it, at session start, a short brief (the active work and its criteria, what fails, what waits on whom, the next command, and the memory of the code in play), then only what changed, and say nothing when nothing did. Before a tool call they refuse hand edits of `.ways/work/`; at the end of a turn they remind the agent once of a failing run or a missing review, and tell you, not the agent, when your approval is pending. Claude Code also gets each memory as a path rule, loaded when it opens that code. `npx ways context --brief` prints the brief; [docs/CONTEXT.md](docs/CONTEXT.md) explains it.
+
+The skills `ways-outcome` and `ways-remember` and the `ways-reviewer` agent are there when you want them (`/ways-outcome` in Claude Code).
 
 ## What ways guarantees, and what it does not
 
@@ -119,8 +123,9 @@ The contract can add a `setup` command and `services` (`{"name", "command", "rea
 | `.ways/config.json` | Checks, enforcement, review default, verifier globs | yes |
 | `.ways/work/<id>.json` | One record per outcome: criteria, evidence, review, approval (written only by ways) | yes |
 | `.ways/knowledge/` | Memory: short OKF concepts | yes |
-| `.ways/hooks/`, `scripts/check.sh` | Managed hooks and check script (hashed in `.ways/manifest.json`) | yes |
-| `.git/ways/` | Active work, run log, search index, service logs | no |
+| `.ways/hooks/`, `scripts/check.sh` | Managed Git hooks, agent-hook wrapper and check script (hashed in `.ways/manifest.json`) | yes |
+| `.claude/rules/ways-*.md` | Memory as Claude Code path rules (generated; `ways memory index`) | yes |
+| `.git/ways/` | Active work, run log, search index, service logs, context caches, agent sessions and the [event log](docs/EVENTS.md) | no |
 
 ## Upgrading from 0.2
 
@@ -129,7 +134,7 @@ npx ways upgrade            # shows what will change
 npx ways upgrade --apply    # applies it; commit the result
 ```
 
-The check contract and the memory carry over (coverage globs become `paths:` on their concepts), an active quick work becomes the active change, and an active outcome is reported with the command that reopens it. SDD, plan, tasks, attempts, discovery and reconciliation are gone; old `.ways/outcomes/`, `.ways/sdd/` and `.ways/plans/` directories are left in place and can be deleted. An `AGENTS.md` you edited is kept: replace its ways bullets with the short "Working here" section of the new template. See [decision 0003](docs/decisions/0003-what-stays-and-what-goes.md).
+The check contract and the memory carry over (coverage globs become `paths:` on their concepts), an active quick work becomes the active change, and an active outcome is reported with the command that reopens it. SDD, plan, tasks, attempts, discovery and reconciliation are gone; old `.ways/outcomes/`, `.ways/sdd/` and `.ways/plans/` directories are left in place and can be deleted. An `AGENTS.md` you edited is kept: replace its ways bullets with the short "Working with ways" section of the new template. See [decision 0003](docs/decisions/0003-what-stays-and-what-goes.md).
 
 ## Harness evals
 
