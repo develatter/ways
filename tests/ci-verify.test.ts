@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { renderVerifyMarkdown, verifyRange } from "../src/work/verify.js";
-import { approve, done, openOutcome, startChange, type Terminal } from "../src/work/work.js";
+import { approve, cancel, done, openOutcome, startChange, type Terminal } from "../src/work/work.js";
 import { commitFile, installed } from "./helpers.js";
 
 const human = (answer: string): Terminal => ({ interactive: true, ask: async () => answer, say: () => undefined });
@@ -79,6 +79,41 @@ describe("ways verify", () => {
     await done(cwd);
     await approve(cwd, human("relax"));
     await commitFile(git, cwd, "tests/existing.test.js", "// renamed API\n// one more test\n", "test: one more");
+    const report = await verifyRange(cwd, { base });
+    expect(report).toMatchObject({ passed: true, verifierChanges: { changed: ["tests/existing.test.js"], uncovered: [] } });
+  });
+
+  /** A project whose existing test has two assertions, so one can go. */
+  async function twoAssertions(): Promise<Awaited<ReturnType<typeof project>>> {
+    const repo = await project();
+    await writeFile(join(repo.cwd, "tests/existing.test.js"), "assert(1);\nassert(2);\n");
+    await repo.git.run(["-c", "core.hooksPath=/dev/null", "commit", "-qam", "chore: two assertions"]);
+    return { ...repo, base: await repo.git.head() };
+  }
+
+  it("does not let an approval cover a weakening committed before the work started", async () => {
+    const { cwd, git, base } = await twoAssertions();
+    // A plain commit drops an assertion outside any work (observe mode lets it through)...
+    await commitFile(git, cwd, "tests/existing.test.js", "assert(1);\n", "test: drop one");
+    await cancel(cwd);
+    // ...then a work starting after it gets one legitimate edit of the same file approved: the human saw only that edit.
+    await startChange(cwd, "rename");
+    await commitFile(git, cwd, "tests/existing.test.js", "assert(1); // renamed\n", "test: rename");
+    expect((await done(cwd)).status).toBe("verifying");
+    expect((await approve(cwd, human("rename"))).status).toBe("closed");
+    const report = await verifyRange(cwd, { base });
+    expect(report.passed).toBe(false);
+    expect(report.verifierChanges.uncovered).toEqual(["tests/existing.test.js"]);
+  });
+
+  it("chains approvals: a second approved edit on top of a first one is covered", async () => {
+    const { cwd, git, base } = await twoAssertions();
+    for (const [id, content] of [["first", "assert(1);\n"], ["second", "assert(1); // renamed\n"]] as const) {
+      await startChange(cwd, id);
+      await commitFile(git, cwd, "tests/existing.test.js", content, `test: ${id}`);
+      expect((await done(cwd)).status).toBe("verifying");
+      expect((await approve(cwd, human(id))).status).toBe("closed");
+    }
     const report = await verifyRange(cwd, { base });
     expect(report).toMatchObject({ passed: true, verifierChanges: { changed: ["tests/existing.test.js"], uncovered: [] } });
   });

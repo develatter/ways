@@ -12,7 +12,7 @@ source_hashes:
   src/work/evaluate.ts: 07fc688ed0ce
   src/check/sandbox.ts: 52520ed18752
   src/work/policy.ts: 08dda9672054
-  src/work/verify.ts: 7b677ecf9c3e
+  src/work/verify.ts: 6bc3906b401e
   src/domain/constants.ts: c77b27ca061a
 ---
 
@@ -51,7 +51,7 @@ An independent review counts only if ways recorded where it came from: a process
 
 ## In CI
 
-`ways verify --base=<sha>` is the same judgement without trusting anyone's machine: it re-runs the base's checks on the head and every criterion's verifier of the works the range touched, requires every weakened test or check file in the range to be covered by a closed work that got that very content approved or accepted (which catches an agent that edited a test and never ran `ways done`, or edited it again after the approval), and audits the records. Locally an agent can bypass hooks; here it cannot. See [What ways guarantees](guarantees.md).
+`ways verify --base=<sha>` is the same judgement without trusting anyone's machine: it re-runs the base's checks on the head and every criterion's verifier of the works the range touched, requires every weakened test or check file in the range to be covered by a closed work that got that very content approved or accepted (which catches an agent that edited a test and never ran `ways done`, or weakened it outside a work before or after an approved edit of the same file), and audits the records. Locally an agent can bypass hooks; here it cannot. See [What ways guarantees](guarantees.md).
 
 ## Why it is built this way
 

@@ -109,7 +109,7 @@ export async function verifyRange(cwd: string, options: { base: string; head?: s
   }
   const surface = await baseVerifierPaths(git, base, verifierPaths(config ?? {}));
   const markers = await baseTestMarkers(git, base, config?.testMarkers ?? []);
-  for (const entry of changed) if (!await coveredAtHead(git, entry, covering, { head, ran: main.tests?.ran, surface, markers })) uncovered.push(entry);
+  for (const entry of changed) if (!await coveredAtHead(git, entry, covering, { base, head, ran: main.tests?.ran, surface, markers })) uncovered.push(entry);
   for (const entry of uncovered) {
     failures.push(entry === TESTS_RAN
       ? `fewer tests ran than on the base (${main.tests?.ran} < ${main.tests?.baseline?.ran}) and no closed work in the range had that approved`
@@ -138,22 +138,36 @@ export async function verifyRange(cwd: string, options: { base: string; head?: s
 }
 
 /**
- * A checkpoint entry is covered by what a closed work had approved or
- * accepted, not by its path: the head must hold that work's version of the
- * file, or one that only adds to it (by the same rule as the checkpoint
- * itself). A fewer-tests entry is covered when no fewer tests run now than
- * the work had approved.
+ * A checkpoint entry is covered by what closed works had approved or
+ * accepted, not by its path, and only all the way from the range's base: a
+ * chain of covering works where each one's approved edit starts from a
+ * version the range's base reaches without anything the checkpoint counts
+ * (or that an earlier work in the chain covers), and the head holds the last
+ * one's version or one that only adds to it. So an approval covers neither a
+ * later weakening of the same file nor one committed before the work started,
+ * which the human approving never saw. A fewer-tests entry is covered when no
+ * fewer tests run now than a work had approved.
  */
-async function coveredAtHead(git: GitRepository, entry: string, covering: readonly Evidence[], at: { head: string; ran: number | undefined; surface: readonly string[]; markers: readonly string[] }): Promise<boolean> {
-  for (const evidence of covering) {
-    if (!verifierCheckpoint(evidence).includes(entry)) continue;
-    if (entry === TESTS_RAN) {
-      if (at.ran !== undefined && evidence.tests !== undefined && at.ran >= evidence.tests.ran) return true;
-      continue;
+async function coveredAtHead(git: GitRepository, entry: string, covering: readonly Evidence[], at: { base: string; head: string; ran: number | undefined; surface: readonly string[]; markers: readonly string[] }): Promise<boolean> {
+  if (entry === TESTS_RAN) return covering.some((evidence) => verifierCheckpoint(evidence).includes(TESTS_RAN) && at.ran !== undefined && evidence.tests !== undefined && at.ran >= evidence.tests.ran);
+  const flagged = new Map<string, Promise<boolean>>();
+  const counts = (from: string, to: string): Promise<boolean> => {
+    const key = `${from}..${to}`;
+    if (!flagged.has(key)) flagged.set(key, verifierChanges(git, from, to, at.surface, [], at.markers).then((changes) => changes.includes(entry)));
+    return flagged.get(key)!;
+  };
+  // Whether the version at `commit` is accounted for from the range's base, using each work at most once (each step goes back in history).
+  const accounted = async (commit: string, unused: readonly Evidence[]): Promise<boolean> => {
+    if (!await counts(at.base, commit)) return true;
+    for (const evidence of unused) {
+      if (!verifierCheckpoint(evidence).includes(entry) || await counts(evidence.input.commit, commit)) continue;
+      // A work that started before the range's base: what it changed before the base is not the range's to judge.
+      if (await git.isAncestor(evidence.base, at.base)) return true;
+      if (await accounted(evidence.base, unused.filter((other) => other !== evidence))) return true;
     }
-    if (!(await verifierChanges(git, evidence.input.commit, at.head, at.surface, [], at.markers)).includes(entry)) return true;
-  }
-  return false;
+    return false;
+  };
+  return accounted(at.head, covering);
 }
 
 export function renderVerifyMarkdown(report: VerifyReport): string {
