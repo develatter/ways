@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { KNOWLEDGE_DIR, MANIFEST_PATH } from "../domain/constants.js";
 import { writeAtomic } from "../fs/files.js";
 import { conceptPaths, inspectOkf, isCurrentConcept, type OkfDocument } from "../knowledge/okf.js";
+import { isUnverified } from "../memory/verify.js";
 import { factOf, ordinal } from "./memory.js";
 
 /**
@@ -42,7 +43,7 @@ export function renderRule(document: OkfDocument): RuleFile {
     "---",
     `${MARKER}${source}; edit that concept, not this file, and run \`ways memory index\`. -->`,
     "",
-    `ways memory (${type}): ${body}`,
+    `ways memory (${type}${isUnverified(document) ? ", unverified: seeded by onboarding, not confirmed by a person yet" : ""}): ${body}`,
     "",
     `Source: ${source}`,
     "",

@@ -127,7 +127,9 @@ export interface MemoryCheck {
 
 export async function checkMemory(cwd: string): Promise<MemoryCheck> {
   const inspection = await inspectOkf(cwd);
-  const warnings = [...inspection.warnings, ...await staleConcepts(cwd, inspection.documents)];
+  const { seededIssues, seededWarnings } = await import("./verify.js");
+  inspection.issues.push(...await seededIssues(cwd, inspection.documents));
+  const warnings = [...inspection.warnings, ...await staleConcepts(cwd, inspection.documents), ...await seededWarnings(cwd, inspection.documents)];
   const { claudeInstalled, rulesDrift } = await import("../context/rules.js");
   if (await claudeInstalled(cwd)) {
     const drift = await rulesDrift(cwd, inspection.documents);

@@ -25,6 +25,8 @@ export interface MemoryFact {
   /** The concept body: a few non-empty lines. */
   fact: string;
   stale: boolean;
+  /** Seeded by `ways onboard` and not confirmed by a person yet. */
+  unverified?: boolean;
 }
 
 interface Snapshot {
@@ -141,7 +143,10 @@ async function rebuild(dirs: GitDirs): Promise<MemoryFact[]> {
       }
     }
     const title = typeof document.frontmatter.title === "string" ? document.frontmatter.title : document.id.split("/").at(-1) ?? document.id;
-    facts.push({ path, title, type: typeof document.frontmatter.type === "string" ? document.frontmatter.type : "concept", paths: globs, fact: factOf(document.body), stale });
+    const { changedSources, isSeeded, isUnverified } = await import("../memory/verify.js");
+    // A seeded fact also goes stale when a file it was read from changed (by its recorded hash).
+    if (!stale && isSeeded(document)) stale = (await changedSources(dirs.top, document).catch(() => [])).length > 0;
+    facts.push({ path, title, type: typeof document.frontmatter.type === "string" ? document.frontmatter.type : "concept", paths: globs, fact: factOf(document.body), stale, ...(isUnverified(document) ? { unverified: true } : {}) });
   }
   return facts;
 }
