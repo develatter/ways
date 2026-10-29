@@ -32,6 +32,47 @@ export function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
     try { child.kill(signal); } catch { /* Already exited. */ }
   }
 }
+export interface ProcessOutput {
+  code: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+/**
+ * Runs an argv without a shell, writes `input` to its stdin and collects its
+ * output (bounded, whole). It is killed, with its process group, after
+ * `timeoutMs`. `unavailable` turns a failure to start into the caller's error.
+ */
+export function runWithInput(command: readonly string[], cwd: string, input: string, options: { timeoutMs: number; env?: NodeJS.ProcessEnv; maxBytes?: number; unavailable: (error: Error, program: string) => Error }): Promise<ProcessOutput> {
+  return new Promise((resolve, reject) => {
+    const [program, ...args] = command;
+    const child = spawn(program!, args, { cwd, stdio: ["pipe", "pipe", "pipe"], shell: false, detached: process.platform !== "win32", ...(options.env ? { env: options.env } : {}) });
+    const maxBytes = options.maxBytes ?? 4 * 1024 * 1024;
+    let stdout = "";
+    let stderr = "";
+    let bytes = 0;
+    const timer = setTimeout(() => killTree(child, "SIGKILL"), options.timeoutMs);
+    const take = (target: "out" | "err") => (chunk: Buffer): void => {
+      bytes += chunk.length;
+      if (bytes > maxBytes) return;
+      if (target === "out") stdout += chunk.toString("utf8");
+      else stderr += chunk.toString("utf8");
+    };
+    child.stdout.on("data", take("out"));
+    child.stderr.on("data", take("err"));
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      reject(options.unavailable(error, program!));
+    });
+    child.once("close", (code) => {
+      clearTimeout(timer);
+      resolve({ code, stdout, stderr });
+    });
+    child.stdin.on("error", () => undefined);
+    child.stdin.end(input);
+  });
+}
+
 const TAIL_LINES = 20;
 const TAIL_BYTES = 16 * 1024;
 

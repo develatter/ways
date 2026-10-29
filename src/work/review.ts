@@ -1,9 +1,8 @@
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { CommandArgv, ReviewerConfig, ReviewProvenance, WorkRecord } from "../domain/types.js";
 import { sha256 } from "../fs/digest.js";
 import { GitRepository } from "../git/git.js";
-import { killTree } from "../check/process.js";
+import { runWithInput } from "../check/process.js";
 import { gitDirs } from "../runtime/runtime.js";
 import { formatCommandLine } from "./argv.js";
 import { baseConfig, strengthSummary } from "./evaluate.js";
@@ -155,31 +154,10 @@ export function completeReview(value: Record<string, unknown>, commit: string, r
 }
 
 function runReviewer(command: CommandArgv, cwd: string, prompt: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const [program, ...args] = command;
-    const child = spawn(program!, args, { cwd, stdio: ["pipe", "pipe", "pipe"], shell: false, detached: process.platform !== "win32" });
-    let stdout = "";
-    let stderr = "";
-    let bytes = 0;
-    const timer = setTimeout(() => killTree(child, "SIGKILL"), REVIEW_TIMEOUT_MS);
-    const take = (target: "out" | "err") => (chunk: Buffer): void => {
-      bytes += chunk.length;
-      if (bytes > MAX_OUTPUT_BYTES) return;
-      if (target === "out") stdout += chunk.toString("utf8");
-      else stderr += chunk.toString("utf8");
-    };
-    child.stdout.on("data", take("out"));
-    child.stderr.on("data", take("err"));
-    child.once("error", (error) => {
-      clearTimeout(timer);
-      reject(new Error(`Cannot start the reviewer \`${program}\`: ${error.message}. Install it, choose another with \`ways review --agent=claude|pi\`, or set "reviewer": {"command": [...]} in .ways/config.json`));
-    });
-    child.once("close", (code) => {
-      clearTimeout(timer);
-      resolve({ code, stdout, stderr });
-    });
-    child.stdin.on("error", () => undefined);
-    child.stdin.end(prompt);
+  return runWithInput(command, cwd, prompt, {
+    timeoutMs: REVIEW_TIMEOUT_MS,
+    maxBytes: MAX_OUTPUT_BYTES,
+    unavailable: (error, program) => new Error(`Cannot start the reviewer \`${program}\`: ${error.message}. Install it, choose another with \`ways review --agent=claude|pi\`, or set "reviewer": {"command": [...]} in .ways/config.json`),
   });
 }
 
