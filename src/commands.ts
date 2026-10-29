@@ -32,6 +32,13 @@ export const COMMANDS: readonly CommandSpec[] = [
     actions: ["status"],
   },
   {
+    name: "context",
+    summary: "The facts an agent needs now: active work, its criteria, what fails, what waits on whom, the next command, memory of the code in play",
+    usage: ["ways context [--brief] [--json] [--session=<agent-session-id>]"],
+    examples: ["ways context --brief"],
+    actions: ["context"],
+  },
+  {
     name: "start",
     summary: "Start a small change (optional in observe mode: the first commit starts one from the branch)",
     usage: ["ways start [<id>]"],
@@ -120,10 +127,14 @@ export const COMMANDS: readonly CommandSpec[] = [
   },
   {
     name: "hook",
-    summary: "Entry point of the managed Git hooks (not called by hand)",
-    usage: ["ways hook prepare-commit-msg <message-file> [source] [sha]", "ways hook commit-msg <message-file>"],
-    examples: ["ways hook prepare-commit-msg .git/COMMIT_EDITMSG"],
-    actions: ["hook prepare-commit-msg", "hook commit-msg"],
+    summary: "Entry point of the managed Git hooks and the coding-agent hooks (not called by hand)",
+    usage: [
+      "ways hook prepare-commit-msg <message-file> [source] [sha]",
+      "ways hook commit-msg <message-file>",
+      "ways hook SessionStart|UserPromptSubmit|PreToolUse|PostToolUse|Stop|SessionEnd [--agent=claude|pi]   (agent's JSON payload on stdin)",
+    ],
+    examples: ["ways hook prepare-commit-msg .git/COMMIT_EDITMSG", "echo '{\"session_id\":\"s1\"}' | ways hook SessionStart --agent=claude"],
+    actions: ["hook prepare-commit-msg", "hook commit-msg", "hook <agent event>"],
   },
   {
     name: "evals",

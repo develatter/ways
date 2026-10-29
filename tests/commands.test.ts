@@ -84,7 +84,8 @@ describe("command registry", () => {
   });
 
   it("no longer offers the removed workflows", async () => {
-    for (const removed of ["sdd", "plan", "quick", "task", "repair", "context"]) {
+    // `context` came back in 0.3 as the agent's bounded brief (ADR 0006), not as the 0.2 packet.
+    for (const removed of ["sdd", "plan", "quick", "task", "repair"]) {
       expect(COMMANDS.some((command) => command.name === removed), removed).toBe(false);
       expect(await run([removed])).toBe(1);
     }

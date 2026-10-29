@@ -95,6 +95,7 @@ The contract can add a `setup` command and `services` (`{"name", "command", "rea
 | --- | --- | --- |
 | `ways bootstrap` | Install ways in a Git repository: config, commit hooks, memory and the Claude Code and pi adapters | `ways bootstrap --test-command='["npm","test"]'` |
 | `ways status` | What is active, what done means for it, what is missing and the next command | `ways status` |
+| `ways context` | The facts an agent needs now: active work, its criteria, what fails, what waits on whom, the next command, memory of the code in play | `ways context --brief` |
 | `ways start` | Start a small change (optional in observe mode: the first commit starts one from the branch) | `ways start fix-button-padding` |
 | `ways outcome` | Open a delivery whose definition of done is one-line criteria, each with an executable verifier | `ways outcome open greeting --goal="Greet users" --criterion="AC1:greeting.txt says hi" --verify="AC1:grep -q hi greeting.txt"` |
 | `ways done` | Finish the active work: run integrity, checks and verifiers once, record the evidence, close when nothing is missing | `ways done` |
@@ -107,7 +108,7 @@ The contract can add a `setup` command and `services` (`{"name", "command", "rea
 | `ways query` | Search the memory; read-only | `ways query token refresh` |
 | `ways adapter` | List or (re)install agent adapters: claude and pi by default, codex and cursor best effort | `ways adapter list` |
 | `ways upgrade` | Move a repository to this version of ways (including 0.2.x); never overwrites edits silently | `ways upgrade` |
-| `ways hook` | Entry point of the managed Git hooks (not called by hand) | `ways hook prepare-commit-msg .git/COMMIT_EDITMSG` |
+| `ways hook` | Entry point of the managed Git hooks and the coding-agent hooks (not called by hand) | `ways hook prepare-commit-msg .git/COMMIT_EDITMSG` |
 | `ways evals` | Run or compare the harness evaluation corpus | `ways evals run --harness=outcome --output=result.json` |
 <!-- commands:end -->
 

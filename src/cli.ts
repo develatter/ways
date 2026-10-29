@@ -88,10 +88,28 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
   }
 }
 
+async function readStdin(): Promise<string> {
+  if (process.stdin.isTTY) return "";
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 async function dispatch(command: string, args: string[], cwd: string): Promise<number> {
   if (command === "hook") {
     const [name, messagePath] = args;
-    if ((name !== "prepare-commit-msg" && name !== "commit-msg") || !messagePath) throw new Error("Usage: ways hook prepare-commit-msg|commit-msg <message-file>");
+    const { AGENT_EVENTS, isAgentEvent, isAgentId } = await import("./hooks/providers.js");
+    if (name !== undefined && isAgentEvent(name)) {
+      const agent = option(args, "--agent") ?? "claude";
+      if (!isAgentId(agent)) throw new Error(`--agent must be claude, pi, codex or cursor, got "${agent}"`);
+      const { runAgentHook } = await import("./hooks/agent.js");
+      const result = await runAgentHook(name, agent, await readStdin(), cwd);
+      process.stdout.write(result.stdout);
+      return result.exitCode;
+    }
+    if ((name !== "prepare-commit-msg" && name !== "commit-msg") || !messagePath) {
+      throw new Error(`Usage: ways hook prepare-commit-msg|commit-msg <message-file> (Git hooks), or ways hook ${AGENT_EVENTS.join("|")} [--agent=claude|pi] with the agent's JSON payload on stdin`);
+    }
     const { commitMsg, prepareCommitMsg } = await import("./hooks/hook.js");
     const verdict = await (name === "prepare-commit-msg" ? prepareCommitMsg : commitMsg)(cwd, messagePath);
     if (verdict.message) console.error(verdict.message);
@@ -102,6 +120,27 @@ async function dispatch(command: string, args: string[], cwd: string): Promise<n
     const { buildStatus, renderStatus } = await import("./work/status.js");
     const packet = await buildStatus(cwd);
     process.stdout.write(args.includes("--json") ? `${JSON.stringify(packet, null, 2)}\n` : renderStatus(packet));
+    return 0;
+  }
+
+  if (command === "context") {
+    const { gitDirs } = await import("./runtime/runtime.js");
+    const { buildBrief, renderBrief } = await import("./context/brief.js");
+    const dirs = gitDirs(cwd);
+    const session = option(args, "--session");
+    let touched: string[] = [];
+    if (session) {
+      const { readSessionEvents } = await import("./events/bus.js");
+      touched = [...new Set(readSessionEvents(dirs, session).filter((event) => event.worktree === dirs.top).flatMap((event) => event.paths ?? []).reverse())];
+    }
+    const brief = await buildBrief(dirs, { touched, brief: args.includes("--brief") });
+    if (!brief.installed) throw new Error("ways is not installed in this repository (no .ways/config.json); run `ways bootstrap` first");
+    if (args.includes("--json")) {
+      process.stdout.write(`${JSON.stringify(brief, null, 2)}\n`);
+      return 0;
+    }
+    const text = renderBrief(brief, args.includes("--brief") ? undefined : Number.POSITIVE_INFINITY);
+    console.log(text || "Nothing in play: no active work, and no memory covers the files being changed.");
     return 0;
   }
 
@@ -194,7 +233,9 @@ async function dispatch(command: string, args: string[], cwd: string): Promise<n
     const type = choice(args, "--type", Object.keys(MEMORY_TYPES) as Array<keyof typeof MEMORY_TYPES>);
     const id = option(args, "--id");
     const result = await remember(cwd, fact, { paths: options(args, "--path", true), ...(type ? { type } : {}), ...(id ? { id } : {}) });
-    console.log(`Remembered in ${result.path}; commit it with the change that taught it.`);
+    const { syncRules } = await import("./context/rules.js");
+    const rules = await syncRules(cwd);
+    console.log(`Remembered in ${result.path}${rules.written.length > 0 ? ` (Claude Code rule: ${rules.written.join(", ")})` : ""}; commit it with the change that taught it.`);
     for (const warning of result.warnings) console.log(`  note: ${warning}`);
     return 0;
   }
@@ -204,7 +245,10 @@ async function dispatch(command: string, args: string[], cwd: string): Promise<n
     if (action === "index") {
       const { writeIndexes } = await import("./knowledge/indexes.js");
       const indexes = await writeIndexes(cwd);
-      console.log(`Indexed ${indexes.catalog.documents.length} concepts.`);
+      const { syncRules } = await import("./context/rules.js");
+      const rules = await syncRules(cwd);
+      const changed = rules.written.length + rules.removed.length;
+      console.log(`Indexed ${indexes.catalog.documents.length} concepts${changed > 0 ? `; Claude Code rules: ${rules.written.length} written, ${rules.removed.length} removed (commit them)` : ""}.`);
       return 0;
     }
     if (action === "check") {

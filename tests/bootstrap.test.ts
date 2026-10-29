@@ -28,11 +28,16 @@ describe("bootstrap", () => {
     expect(files.length).toBeLessThanOrEqual(30);
     expect(result.files).toEqual(files);
     expect(Object.keys(result.manifest.adapters ?? {}).sort()).toEqual(["claude", "pi"]);
-    expect(files.some((path) => path.startsWith(".codex/") || path.startsWith(".cursor/") || path.startsWith(".agents/"))).toBe(false);
+    expect(files.some((path) => path.startsWith(".codex/") || path.startsWith(".cursor/"))).toBe(false);
+    // pi reads the Agent Skills directory; Claude Code only its own.
+    expect(files.filter((path) => path.includes("/skills/")).sort()).toEqual([
+      ".agents/skills/ways-outcome/SKILL.md", ".agents/skills/ways-remember/SKILL.md",
+      ".claude/skills/ways-outcome/SKILL.md", ".claude/skills/ways-remember/SKILL.md",
+    ]);
     expect(await readFile(join(cwd, "CLAUDE.md"), "utf8")).toBe("@AGENTS.md\n");
     const config = JSON.parse(await readFile(join(cwd, ".ways/config.json"), "utf8"));
     expect(config).toMatchObject({ schemaVersion: 2, enforcement: "observe", testCommand: ["npm", "test"] });
-    expect(Object.keys(result.manifest.managedFiles).sort()).toEqual([".ways/hooks/commit-msg", ".ways/hooks/prepare-commit-msg", "scripts/check.sh"]);
+    expect(Object.keys(result.manifest.managedFiles).sort()).toEqual([".ways/hooks/agent-hook", ".ways/hooks/commit-msg", ".ways/hooks/prepare-commit-msg", "scripts/check.sh"]);
     expect(await checkIntegrity(cwd)).toEqual([]);
   });
 

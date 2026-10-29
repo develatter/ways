@@ -1,0 +1,18 @@
+#!/usr/bin/env sh
+# Managed by ways. Coding-agent hook entry point: agent-hook <agent> <event>, the agent's JSON payload on stdin.
+# Runs `ways hook <event> --agent=<agent>`. Never fails the agent session: without the CLI it says nothing.
+# WAYS_DISABLE=1 skips it for one command.
+[ "${WAYS_DISABLE:-}" = "1" ] && exit 0
+agent="$1"
+event="$2"
+if [ -n "${WAYS_CLI:-}" ]; then exec node "$WAYS_CLI" hook "$event" --agent="$agent"; fi
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+cli="$root/node_modules/@develatter/ways/dist/cli.js"
+if [ ! -f "$cli" ]; then
+  main="$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+  [ -n "$main" ] && cli="$(dirname "$main")/node_modules/@develatter/ways/dist/cli.js"
+fi
+if [ -f "$cli" ]; then exec node "$cli" hook "$event" --agent="$agent"; fi
+if command -v ways >/dev/null 2>&1; then exec ways hook "$event" --agent="$agent"; fi
+cat >/dev/null
+exit 0

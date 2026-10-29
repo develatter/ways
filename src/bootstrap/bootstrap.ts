@@ -2,7 +2,7 @@ import { chmod, lstat, readFile, readlink, realpath, rm } from "node:fs/promises
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HARNESS_VERSION } from "../version.js";
-import { CONFIG_PATH, HOOKS_DIR, KNOWLEDGE_DIR, MANIFEST_PATH } from "../domain/constants.js";
+import { AGENT_HOOK_PATH, CONFIG_PATH, HOOKS_DIR, KNOWLEDGE_DIR, MANIFEST_PATH } from "../domain/constants.js";
 import type { HarnessConfig, ManagedManifest, NamedChecksConfig } from "../domain/types.js";
 import { validateConfig, validationDetails } from "../domain/validation.js";
 import { sha256, stableJson, writeAtomic } from "../fs/files.js";
@@ -33,6 +33,7 @@ export const MANAGED_ASSETS: Array<[string, string, number?]> = [
   ["scripts/check.sh", "check.sh", 0o755],
   [`${HOOKS_DIR}/prepare-commit-msg`, "prepare-commit-msg", 0o755],
   [`${HOOKS_DIR}/commit-msg`, "commit-msg", 0o755],
+  [AGENT_HOOK_PATH, "agent-hook", 0o755],
 ];
 
 /** Files ways writes once when missing and then leaves to the project. */
