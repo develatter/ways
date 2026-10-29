@@ -36,8 +36,9 @@ export interface Checkout {
   release(): void;
 }
 
-function sandboxRoot(common: string): string {
-  return join(tmpdir(), "ways-eval", fastHash(common).slice(0, 16));
+/** One clean checkout per worktree, so works running in parallel worktrees never wait for each other. */
+function sandboxRoot(common: string, top: string): string {
+  return join(tmpdir(), "ways-eval", fastHash(`${common}\n${top}`).slice(0, 16));
 }
 
 function lock(path: string): () => void {
@@ -95,7 +96,7 @@ function isLink(path: string): boolean {
  */
 export async function cleanCheckout(git: GitRepository, commit: string, options: { setup?: readonly string[]; runSetup?: (dir: string) => Promise<boolean> }): Promise<Checkout & { setupCached: boolean }> {
   const dirs = gitDirs(git.cwd);
-  const root = sandboxRoot(dirs.common);
+  const root = sandboxRoot(dirs.common, dirs.top);
   const dir = join(root, "checkout");
   const release = lock(join(root, "lock"));
   try {
