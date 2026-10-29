@@ -6,6 +6,7 @@ import type { Enforcement } from "../domain/types.js";
 import { appendEvent, pruneEvents, readRecentSessionEvents, type EventResult, type EventType, type WaysEvent } from "../events/bus.js";
 import { currentBranchOf, gitDirs, readActive, type GitDirs } from "../runtime/runtime.js";
 import { guard, toolPaths } from "./guard.js";
+import { checkRunBy, runHintText } from "./run-hint.js";
 import { formatOutput, normalizePayload, type AgentEvent, type AgentId, type HookDecision, type HookPayload } from "./providers.js";
 import { digest, readSession, writeSession, type SessionState } from "./session.js";
 
@@ -58,6 +59,8 @@ function touchedPaths(dirs: GitDirs, session: string): string[] {
 
 const CLEARED: Record<string, string> = {
   problem: "Problem: resolved.",
+  onboarding: "Onboarding: done.",
+  map: "MAP.md: up to date again.",
   work: "Work: none active now (closed or cancelled).",
   failing: "Failing: nothing (the last `ways done` passed or the work changed).",
   waiting: "Waiting on: nothing.",
@@ -71,7 +74,7 @@ const CLEARED: Record<string, string> = {
 async function contextFor(dirs: GitDirs, payload: HookPayload, state: SessionState, full: boolean): Promise<string | undefined> {
   const { buildBrief, renderSections } = await import("../context/brief.js");
   mark("brief module loaded");
-  const brief = await buildBrief(dirs, { touched: touchedPaths(dirs, payload.session) });
+  const brief = await buildBrief(dirs, { touched: touchedPaths(dirs, payload.session), agent: state.agent });
   mark("brief built");
   if (!brief.installed) return undefined;
   const sections = brief.sections.filter((section) => {
@@ -101,6 +104,17 @@ async function memoryForTool(dirs: GitDirs, paths: readonly string[], state: Ses
   if (fresh.length === 0) return undefined;
   for (const concept of fresh) state.memory.push(concept.path);
   return [`ways memory for ${paths.join(", ")}:`, ...fresh.map(renderMemory)].join("\n");
+}
+
+/** The one `ways run` suggestion of a session, when a shell call runs a configured check by hand. */
+function runHintFor(dirs: GitDirs, payload: HookPayload, state: SessionState): string | undefined {
+  if (state.runHint || !/^bash$/i.test(payload.tool ?? "")) return undefined;
+  const command = (payload.toolInput as { command?: unknown } | undefined)?.command;
+  if (typeof command !== "string") return undefined;
+  const check = checkRunBy(dirs.top, command);
+  if (!check) return undefined;
+  state.runHint = true;
+  return runHintText(check);
 }
 
 /** Answers and instructions from the inbox for this session, each delivered once; nothing to read when there is no inbox. */
@@ -269,12 +283,20 @@ export async function runAgentHook(event: AgentEvent, agent: AgentId, stdin: str
         result = "denied";
         detail = verdict.code;
         base.type = "tool.denied";
+      } else if (agent !== "pi") {
+        // pi's tool_call cannot add context: its hint comes with the tool result (PostToolUse).
+        const hint = runHintFor(dirs, payload, state);
+        if (hint) {
+          decision.context = hint;
+          detail = "run hint";
+          save = true;
+        }
       }
     } else if (event === "PostToolUse") {
       paths = toolPaths(payload.toolInput, dirs.top, payload.cwd ?? cwd);
       if (payload.toolFailed) result = "error";
       if (!PATH_RULES.has(agent)) {
-        const context = await memoryForTool(dirs, paths, state);
+        const context = joined(await memoryForTool(dirs, paths, state), agent === "pi" ? runHintFor(dirs, payload, state) : undefined);
         if (context) {
           decision.context = context;
           save = true;

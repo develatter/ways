@@ -14,7 +14,8 @@ import type { AdapterSource, ProviderAdapter, RenderedFile } from "./types.js";
  *   session_start       → SessionStart      context kept for the first prompt
  *   before_agent_start  → UserPromptSubmit  returns { message } (hidden custom message)
  *   tool_call           → PreToolUse        returns { block: true, reason } when refused
- *   tool_result         → PostToolUse       appends the memory of the touched files
+ *   tool_result         → PostToolUse       appends the memory of the touched files, and the
+ *                                           one `ways run` hint for a check run by hand
  *   agent_end           → Stop              sendMessage(..., { triggerTurn: true }) once
  *   session_shutdown    → SessionEnd
  *
@@ -38,6 +39,7 @@ interface Ctx { cwd?: string; hasUI?: boolean; ui?: { setStatus?(key: string, te
 
 const roots = new Map<string, string | undefined>();
 const FILE_TOOLS = new Set(["read", "edit", "write"]);
+const RUNNERS = /(^|[;&|]\\s*)(npm|pnpm|yarn|bun|npx|pytest|python3?|uv|poetry|ruff|mypy|tox|cargo|go|make|mvn|\\.\\/mvnw|gradle|\\.\\/gradlew|vitest|jest|tsc|eslint)\\b/;
 
 function gitRoot(cwd: string): string | undefined {
   if (!roots.has(cwd)) {
@@ -119,8 +121,9 @@ export default function (pi: ExtensionAPI) {
   });
   on("tool_result", async (event, ctx) => {
     refresh(ctx);
-    // Memory and the event log are about files: other tools cost nothing.
-    if (!FILE_TOOLS.has(String(event?.toolName))) return undefined;
+    // Memory and the event log are about files, and the one \`ways run\` hint about a check run by hand: other tools cost nothing.
+    const runner = String(event?.toolName) === "bash" && RUNNERS.test(String(event?.input?.command ?? ""));
+    if (!FILE_TOOLS.has(String(event?.toolName)) && !runner) return undefined;
     const answer = await waysHook(cwdOf(ctx), "PostToolUse", { session_id: sessionOf(ctx), tool_name: event?.toolName, tool_input: event?.input, tool_use_id: event?.toolCallId, is_error: event?.isError === true });
     if (!answer.context || !Array.isArray(event?.content)) return undefined;
     return { content: [...event.content, { type: "text", text: answer.context }] };

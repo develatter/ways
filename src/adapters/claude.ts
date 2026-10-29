@@ -43,9 +43,22 @@ const HOOK_TIMEOUT_SECONDS = 10;
  * best-effort, and runs the hook when it cannot tell). Every other tool call
  * costs nothing. The commit hook stays the guarantee either way.
  */
+/**
+ * Common test, lint and type-check runners: when the agent runs a configured
+ * check by hand, the hook suggests `ways run <check>` once per session. The
+ * hook itself compares with the configured commands; these rules only keep
+ * every other shell call from starting it.
+ */
+export const RUNNER_IF: readonly string[] = [
+  "Bash(npm test*)", "Bash(npm run *)", "Bash(pnpm *)", "Bash(yarn *)", "Bash(bun *)", "Bash(npx *)",
+  "Bash(pytest*)", "Bash(python -m *)", "Bash(python3 -m *)", "Bash(uv run *)", "Bash(poetry run *)", "Bash(ruff *)", "Bash(mypy *)", "Bash(tox*)",
+  "Bash(cargo *)", "Bash(go test *)", "Bash(go vet *)", "Bash(make *)", "Bash(mvn *)", "Bash(./mvnw *)", "Bash(gradle *)", "Bash(./gradlew *)",
+  "Bash(vitest*)", "Bash(jest*)", "Bash(tsc*)", "Bash(eslint*)",
+];
+
 const GUARD_IF: Readonly<Record<string, readonly string[]>> = {
   [WRITE_TOOLS]: ["Edit(**/.ways/work/**)", "Write(**/.ways/work/**)"],
-  Bash: ["Bash(*.ways/work*)", "Bash(*WAYS_DISABLE*)", "Bash(git commit *)", "Bash(git -c *)", "Bash(git config *)"],
+  Bash: ["Bash(*.ways/work*)", "Bash(*WAYS_DISABLE*)", "Bash(git commit *)", "Bash(git -c *)", "Bash(git config *)", ...RUNNER_IF],
 };
 
 function handler(event: string, extra: Settings = {}): Settings {

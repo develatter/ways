@@ -10,7 +10,8 @@
  * `reason`; inside a subagent also `agent_id` and `agent_type`; SubagentStop
  * adds `last_assistant_message`). Exit 0 with JSON on stdout:
  * `hookSpecificOutput.additionalContext` (SessionStart, UserPromptSubmit,
- * PostToolUse, SubagentStart; capped by Claude Code at 10,000 characters),
+ * PreToolUse, PostToolUse, SubagentStart; capped by Claude Code at 10,000
+ * characters; on PreToolUse ways uses it only for the one `ways run` hint),
  * `hookSpecificOutput.permissionDecision: "deny"` with
  * `permissionDecisionReason` (PreToolUse), top-level `decision: "block"` with
  * `reason` (Stop and SubagentStop: the agent continues with the reason) and
@@ -117,7 +118,7 @@ export function formatOutput(agent: AgentId, event: AgentEvent, decision: HookDe
   const out: Record<string, unknown> = {};
   if (event === "PreToolUse" && decision.deny) {
     out.hookSpecificOutput = { hookEventName: event, permissionDecision: "deny", permissionDecisionReason: decision.deny };
-  } else if (decision.context && (event === "SessionStart" || event === "UserPromptSubmit" || event === "PostToolUse" || event === "SubagentStart")) {
+  } else if (decision.context && (event === "SessionStart" || event === "UserPromptSubmit" || event === "PreToolUse" || event === "PostToolUse" || event === "SubagentStart")) {
     out.hookSpecificOutput = { hookEventName: event, additionalContext: decision.context };
   }
   if ((event === "Stop" || event === "SubagentStop") && decision.remind) {

@@ -193,6 +193,65 @@ async function loadPiExtension(cwd: string): Promise<{ fire(event: string, paylo
   return { fire: async (event, payload) => await handlers.get(event)!(payload, ctx), sent, statuses, notes };
 }
 
+describe("the first session, in Claude Code and pi", () => {
+  const claudeStart = (cwd: string, session: string) => ({ session_id: session, cwd, hook_event_name: "SessionStart", source: "startup" });
+  const context = (stdout: string): string => (stdout ? (JSON.parse(stdout) as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput?.additionalContext ?? "" : "");
+
+  it("Claude Code: a pending onboarding is announced at session start, briefly and once; done or off is silence", async () => {
+    const { cwd } = await installed({ agents: ["claude"], layers: true });
+    const start = hook(cwd, "claude", "SessionStart", claudeStart(cwd, "c-onb-1"));
+    expect(start.status).toBe(0);
+    const notice = context(start.stdout).split("\n").find((line) => line.startsWith("Onboarding:"))!;
+    expect(notice).toBeDefined();
+    expect(notice.length).toBeLessThanOrEqual(600);
+    expect(notice).toMatch(/It starts Claude Code \(`claude -p`\), which may read the \d+ files/);
+    expect(notice).toContain("npx ways onboard --yes");
+    expect(notice).toContain("agent quota");
+    // Said once: the next prompt does not repeat it.
+    expect(context(hook(cwd, "claude", "UserPromptSubmit", { session_id: "c-onb-1", cwd, hook_event_name: "UserPromptSubmit", prompt: "hi" }).stdout)).not.toContain("Onboarding:");
+
+    const config = JSON.parse(await readFile(join(cwd, ".ways/config.json"), "utf8")) as Record<string, unknown>;
+    await writeFile(join(cwd, ".ways/config.json"), JSON.stringify({ ...config, onboarding: "off" }, null, 2));
+    expect(context(hook(cwd, "claude", "SessionStart", claudeStart(cwd, "c-onb-2")).stdout)).not.toContain("Onboarding:");
+    await writeFile(join(cwd, ".ways/config.json"), JSON.stringify(config, null, 2));
+    await writeFile(join(cwd, ".ways/onboarding.json"), JSON.stringify({ schemaVersion: 1, status: "done", at: new Date().toISOString() }));
+    expect(context(hook(cwd, "claude", "SessionStart", claudeStart(cwd, "c-onb-3")).stdout)).not.toContain("Onboarding:");
+  }, 60_000);
+
+  it("Claude Code: a configured check run by hand gets one `ways run` hint per session, and is never blocked", async () => {
+    const { cwd } = await installed({ agents: ["claude"], testCommand: ["python", "-m", "pytest"] });
+    const bash = (session: string, command: string) => hook(cwd, "claude", "PreToolUse", { session_id: session, cwd, hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command } });
+    const first = bash("c-run-1", "cd . && pytest -x tests");
+    expect(first.status).toBe(0);
+    const output = JSON.parse(first.stdout) as { hookSpecificOutput: Record<string, string> };
+    expect(output.hookSpecificOutput).toEqual({ hookEventName: "PreToolUse", additionalContext: expect.stringContaining("`npx ways run test` runs the same `python -m pytest`") });
+    expect(output.hookSpecificOutput.permissionDecision).toBeUndefined();
+    expect(bash("c-run-1", "python3 -m pytest").stdout).toBe("");
+    // Another command, or ways itself, says nothing.
+    expect(bash("c-run-2", "ls -la").stdout).toBe("");
+    expect(bash("c-run-2", "npx ways run test").stdout).toBe("");
+    const settings = JSON.parse(await readFile(join(cwd, ".claude/settings.json"), "utf8")) as { hooks: { PreToolUse: Array<{ matcher: string; hooks: Array<{ if?: string }> }> } };
+    const rules = settings.hooks.PreToolUse.find((group) => group.matcher === "Bash")!.hooks.map((entry) => entry.if);
+    expect(rules).toEqual(expect.arrayContaining(["Bash(pytest*)", "Bash(npm test*)", "Bash(python -m *)"]));
+  }, 60_000);
+
+  it("pi: the same notice before the first prompt, and the hint appended to the result of a check run by hand", async () => {
+    const { cwd } = await installed({ agents: ["pi"], layers: true, testCommand: ["npm", "test"] });
+    const extension = await loadPiExtension(cwd);
+    await extension.fire("session_start", { type: "session_start", reason: "startup" });
+    const first = await extension.fire("before_agent_start", { type: "before_agent_start", prompt: "hi" }) as { message: { content: string } };
+    const notice = first.message.content.split("\n").find((line) => line.startsWith("Onboarding:"))!;
+    expect(notice.length).toBeLessThanOrEqual(600);
+    expect(notice).toMatch(/It starts pi \(`pi -p`\)/);
+    const call = { type: "tool_call", toolCallId: "b1", toolName: "bash", input: { command: "npm test" } };
+    expect(await extension.fire("tool_call", call)).toBeUndefined();
+    const result = { type: "tool_result", toolCallId: "b1", toolName: "bash", input: { command: "npm test" }, content: [{ type: "text", text: "lots of output" }], isError: false };
+    const changed = await extension.fire("tool_result", result) as { content: Array<{ text: string }> };
+    expect(changed.content[1]!.text).toContain("`npx ways run test` runs the same `npm test`");
+    expect(await extension.fire("tool_result", result)).toBeUndefined();
+  }, 60_000);
+});
+
 describe("pi contract", () => {
   it("maps pi events onto ways hooks and applies the answers through the extension API", async () => {
     const cwd = await verifyingOutcome();
