@@ -104,7 +104,7 @@ The session shows on the [board](control-plane.md) with the badge `documentalist
 
 ## Run it in CI
 
-Add the step to the workflow of your repository, after the build:
+The job `ways bootstrap` writes (`.github/workflows/ways.yml`) already runs it after `ways verify`. For a workflow of your own, add the step after the build:
 
 ```yaml
 - run: npx --no-install ways wiki check

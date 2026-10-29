@@ -1,6 +1,6 @@
 # 0002 — Hygiene before the lean redesign
 
-- Status: accepted
+- Status: accepted; the 0.2 outcome directories it mentions and the open items about SDD and plan templates were made moot by [0003](0003-what-stays-and-what-goes.md), which removed them
 - Date: 2026-10-29
 - Decided by: the implementing agent, within the maintainer's brief (minimal ceremony; verifiable results)
 

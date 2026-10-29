@@ -23,7 +23,7 @@ One card per worktree with a ways work (or with an agent active in it), plus wor
 | --- | --- |
 | Done | the work closed in the last 7 days |
 | Waiting for you | an open inbox item about it, a `ways block`, a pending approval; or the agent's turn ended (or its session did) and the work is open |
-| Blocked | no hook event for 10 minutes while the agent had not stopped; the last `ways done` failed and no agent is on it |
+| Blocked | no hook event for 10 minutes while the agent had not stopped; the last `ways done` failed and no agent is on it; the repository has a problem (for example, its active work has no record) |
 | Verifying | the evidence certifies HEAD and an independent review is pending |
 | Working | an agent is active on it |
 | Preparing | no commits since the work started, or an agent active with no ways work yet |

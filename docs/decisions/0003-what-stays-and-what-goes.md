@@ -1,6 +1,6 @@
 # 0003 — What stays and what goes (ways lean)
 
-- Status: accepted
+- Status: accepted; amended by [0006](0006-context-at-the-right-moment.md) (a narrow guard on record writes is back) and [0007](0007-verification-v2.md) (agents run `ways review`, which launches the reviewer; `review submit` is for a human at a terminal). The file and action counts below are those of this step, not of 0.3.
 - Date: 2026-10-29
 - Decided by: the implementing agent, within the maintainer's brief (SDD and `plan` removed without legacy; minimal ceremony; results must stay verifiable)
 

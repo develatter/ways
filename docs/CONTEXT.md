@@ -84,8 +84,8 @@ Source: .ways/knowledge/pitfalls/billing-amounts-are-integer-cents.md
 
 `ways bootstrap` (or `ways adapter install claude|pi`) installs everything:
 
-- **Claude Code**: hook entries in `.claude/settings.json` running `"$CLAUDE_PROJECT_DIR"/.ways/hooks/agent-hook claude <event>`, kept next to your own hooks; skills in `.claude/skills/`; the reviewer agent; the status line.
-- **pi**: the extension `.pi/extensions/ways/index.ts` (pi loads it once the project is trusted), skills in `.agents/skills/`, the reviewer agent.
+- **Claude Code**: hook entries in `.claude/settings.json` running `"$CLAUDE_PROJECT_DIR"/.ways/hooks/agent-hook claude <event>`, kept next to your own hooks; skills in `.claude/skills/`; the reviewer and documentalist agents; the status line.
+- **pi**: the extension `.pi/extensions/ways/index.ts` (pi loads it once the project is trusted), skills in `.agents/skills/`, the reviewer and documentalist agents.
 - **Codex, Cursor** (best effort): `ways hook <event> --agent=codex` answers in the Claude-compatible format if you wire it yourself; Cursor runs Claude Code's project hooks.
 
 `.ways/hooks/agent-hook` finds the CLI like the Git hooks do (`$WAYS_CLI`, then `node_modules/@develatter/ways`, then `ways` on the `PATH`) and stays silent without it. `WAYS_DISABLE=1` skips it.

@@ -1,6 +1,6 @@
 # 0004 — Observe by default; what breaks a guarantee
 
-- Status: accepted
+- Status: accepted; amended by [0006](0006-context-at-the-right-moment.md) (a narrow PreToolUse guard on record writes is back) and [0007](0007-verification-v2.md) (the CI judge is `ways verify --base`, which also recomputes the verifier surface per pull request)
 - Date: 2026-10-29
 - Decided by: the implementing agent, within the maintainer's decisions (commit hook in `observe` by default; changing or deleting tests or the checks configuration needs approval, adding tests does not; CI is the final judge)
 

@@ -26,7 +26,7 @@ npx ways bootstrap --test-command='["npm","test"]'
 git add -A && git commit -m "chore: install ways"
 ```
 
-`--test-command` is the command ways runs as your check; it is a JSON array, one word per item. Bootstrap writes `.ways/config.json`, two Git hooks and a wrapper for the agent hooks, a CI job that runs `ways verify`, an `AGENTS.md` for you to fill in, a `CLAUDE.md` that imports it, the memory index, and the adapters for Claude Code and pi. Add `--agents=claude,pi,codex,cursor` if you also use Codex or Cursor.
+`--test-command` is the command ways runs as your check; it is a JSON array, one word per item. Bootstrap writes `.ways/config.json`, two Git hooks and a wrapper for the agent hooks, a CI job that runs `ways verify` and `ways wiki check`, an `AGENTS.md` for you to fill in, a `CLAUDE.md` that imports it, the memory index, and the adapters for Claude Code and pi. Add `--agents=claude,pi,codex,cursor` if you also use Codex or Cursor (best effort: they work, but get less testing).
 
 Open `AGENTS.md` and replace the placeholders: what the project is, where things live, the commands. This is the one part only you can write, and it is what an agent reads first.
 
