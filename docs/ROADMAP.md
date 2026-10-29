@@ -1,6 +1,6 @@
 # Roadmap
 
-This roadmap defines the next milestones for ways. It is the source of planned work; `README.md` remains a product overview.
+What is done and what is pending, in one page. `README.md` is the product overview; [CHANGELOG.md](../CHANGELOG.md) lists changes per version.
 
 The product direction is minimal ceremony: the agent decides what to do, the harness supplies context, checks the result and blocks only what breaks a guarantee. Each phase is done when its criteria hold in the test suite and in a packed consumer project, not when its checklist is ticked.
 
@@ -34,8 +34,20 @@ Still open from it: the round trip is tested with Claude Code and pi hook payloa
 
 Still open from it: the `claude -p` and `pi -p` invocations are tested with fake agents, not yet run against the real binaries; no `wiki.stale` nudge to the inbox when a work closes; example blocks are checked against the registry, not executed; external links are not checked.
 
-## Next phases and their exit criteria
+## Done: ready for the first day (0.3.0-dev.0)
 
-Nothing is committed beyond closing the "still open" items above.
+An end-to-end smoke test of the packed tarball in `npm test` (bootstrap, the brief in Claude Code and pi, a change, a delivery, a block, a question answered on the board and delivered by the hooks, the wiki, `ways verify`); a tarball with only what `src/` compiles to; every command usable from any directory of the repository; the README, CHANGELOG with migration notes from 0.2.x, and the ADR index. See [decision 0010](decisions/0010-first-day-release.md).
 
-Out of scope for now: a Symphony-style dispatcher, an MCP server, ACP/A2A clients, OTLP, SQLite, remote access, GitHub Issues sync, LLM-generated `AGENTS.md`, and mutation testing by default.
+## Pending, in the order we would do them
+
+Each item is done when its exit criterion holds, not when its checklist is ticked.
+
+1. **Evals with real models (F1), within a fixed budget.** Configurations B, C and E with Claude Code (and pi), five repetitions each, plus the adversarial corpus. Exit: a comparable report per agent in `docs/evals/` with tokens, cost, invocations and violations; no closed `tamper-test` or `tamper-config` shortcut in five runs per agent; the `memory-convention` comparison (brief vs. no brief). Until this runs, nothing here is measured against a real agent.
+2. **Light dogfooding.** The proposal in [DOGFOODING.md](DOGFOODING.md): a published, pinned version, `observe` mode, `AGENTS.md` as a map, `WAYS_DISABLE=1` as the switch, `ways verify` informative in CI for one month. Exit: a month of event metrics read, and no false refusal.
+3. **Live agents.** Run the hooks, `ways review` and `ways wiki update` against the real `claude` and `pi` binaries (today: recorded payloads and stand-in agents). Exit: the smoke test's session replayed by a live agent of each kind.
+4. **Hook latency.** Measured on 2026-10-29 on the development host (200 runs per event, nothing else running): agent hook p95 112–138 ms, against 89 ms for a bare `node -e 0`. Most of the cost is Node's own start; bundling the hook path into one file should take most of the remaining 25–50 ms. Exit: p95 under 100 ms where `node -e 0` is under 60 ms.
+5. **Attestations.** Sign the `ways verify` report as an in-toto attestation, so evidence can travel outside the repository.
+6. **Mutation testing, opt-in.** A run that checks a criterion's verifier fails on mutants of the code it covers, recorded in the evidence; never on by default.
+7. Smaller items listed as "still open" above (inbox transitions in the event bus, the `wiki.stale` nudge, external links in the wiki check).
+
+Not now, and why: a Symphony-style dispatcher, an MCP server and ACP/A2A clients (ways must first prove it helps one agent at a time; the hooks already reach the agents that matter), OTLP and SQLite (files in the Git directory are enough at this scale), remote access and GitHub Issues sync (the board is local on purpose), an LLM-generated `AGENTS.md` (the evidence is against it), and mutation testing by default (too slow for the loop).
