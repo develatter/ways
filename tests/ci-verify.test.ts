@@ -59,6 +59,30 @@ describe("ways verify", () => {
     expect(execFileSync(process.execPath, [process.env.WAYS_CLI!, "verify", `--base=${base}`, "--in-place"], { cwd, encoding: "utf8" })).toMatch(/^ways verify passed for [0-9a-f]{12}\.\.[0-9a-f]{12}: 1 check\(s\) passed, 1 work\(s\)/);
   });
 
+  it("does not let an approved edit of a test cover a later edit of the same file outside any work", async () => {
+    const { cwd, git, base } = await project();
+    await startChange(cwd, "relax");
+    await commitFile(git, cwd, "tests/existing.test.js", "// renamed API\n", "test: follow the rename");
+    await done(cwd);
+    expect((await approve(cwd, human("relax"))).status).toBe("closed");
+    // Observe mode lets a plain commit through; CI must not count the earlier approval for it.
+    await commitFile(git, cwd, "tests/existing.test.js", "// weakened further\n", "test: relax more");
+    const report = await verifyRange(cwd, { base });
+    expect(report.passed).toBe(false);
+    expect(report.verifierChanges).toEqual({ changed: ["tests/existing.test.js"], uncovered: ["tests/existing.test.js"] });
+  });
+
+  it("still counts the approval when a later commit only adds tests to the approved file", async () => {
+    const { cwd, git, base } = await project();
+    await startChange(cwd, "relax");
+    await commitFile(git, cwd, "tests/existing.test.js", "// renamed API\n", "test: follow the rename");
+    await done(cwd);
+    await approve(cwd, human("relax"));
+    await commitFile(git, cwd, "tests/existing.test.js", "// renamed API\n// one more test\n", "test: one more");
+    const report = await verifyRange(cwd, { base });
+    expect(report).toMatchObject({ passed: true, verifierChanges: { changed: ["tests/existing.test.js"], uncovered: [] } });
+  });
+
   it("fails when a closed work's verifier no longer passes on the head", async () => {
     const { cwd, git, base } = await project();
     await openOutcome(cwd, "greeting", { goal: "Greet", criteria: ["AC1:greeting says hi"], verify: ["AC1:grep -q hi greeting.txt"], strength: [], review: "none" });

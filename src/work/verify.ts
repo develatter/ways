@@ -1,10 +1,10 @@
-import { enforcementOf, loadConfig } from "../config/config.js";
+import { enforcementOf, loadConfig, verifierPaths } from "../config/config.js";
 import { WORK_DIR } from "../domain/constants.js";
-import type { Evidence, IntegrityIssue, Strength, WorkRecord } from "../domain/types.js";
+import type { Evidence, HarnessConfig, IntegrityIssue, Strength, WorkRecord } from "../domain/types.js";
 import { GitRepository } from "../git/git.js";
 import { auditHistory, commitsAfter } from "../integrity/history.js";
 import { gitDirs } from "../runtime/runtime.js";
-import { evaluate, evidenceFailures, strengthSummary } from "./evaluate.js";
+import { baseConfig, baseTestMarkers, baseVerifierPaths, evaluate, evidenceFailures, strengthSummary, TESTS_RAN, verifierChanges } from "./evaluate.js";
 import { pending, verifierCheckpoint } from "./policy.js";
 import { committedRecord } from "./record.js";
 
@@ -68,7 +68,7 @@ export async function verifyRange(cwd: string, options: { base: string; head?: s
   const main = await evaluate({ cwd: top, git, base, criteria: [], input: head, mode: inPlace ? "fast" : "clean" });
   const failures = evidenceFailures(main);
   const works: WorkReport[] = [];
-  const covered = new Set<string>();
+  const covering: Evidence[] = [];
   const counts: Partial<Record<Strength, number>> = {};
   const flaky = [...main.flaky ?? []];
   for (const id of await recordsChanged(git, base, head)) {
@@ -77,7 +77,7 @@ export async function verifyRange(cwd: string, options: { base: string; head?: s
     const state = stateOf(record);
     // A close covers its verifier changes only if, judged now, nothing was missing (a valid approval, or an acceptance that still counts).
     if (record.closed && record.evidence) {
-      if (Object.keys(pending(record)).length === 0) for (const entry of verifierCheckpoint(record.evidence)) covered.add(entry);
+      if (Object.keys(pending(record)).length === 0) covering.push(record.evidence);
       else failures.push(`${id} closed although ${Object.values(pending(record)).join("; ")}`);
     }
     const report: WorkReport = { id, kind: record.kind, state, criteria: [], reproduced: true, summary: "", ...(record.blocked ? { blocked: record.blocked.reason } : {}) };
@@ -100,18 +100,24 @@ export async function verifyRange(cwd: string, options: { base: string; head?: s
     works.push(report);
   }
   const changed = verifierCheckpoint(main);
-  const uncovered = changed.filter((entry) => !covered.has(entry));
-  for (const entry of uncovered) {
-    failures.push(entry === "tests-ran"
-      ? `fewer tests ran than on the base (${main.tests?.ran} < ${main.tests?.baseline?.ran}) and no closed work in the range had that approved`
-      : `${entry} is an existing test or check file the range modifies or deletes, and no closed work in the range had that approved or accepted by an independent review`);
-  }
-  let untraced = false;
+  const uncovered: string[] = [];
+  let config: HarnessConfig | undefined;
   try {
-    untraced = enforcementOf(await loadConfig(top)) === "enforce";
+    config = await loadConfig(top);
   } catch {
     // Integrity reports the configuration.
   }
+  const surface = await baseVerifierPaths(git, base, verifierPaths(config ?? {}));
+  const markers = await baseTestMarkers(git, base, config?.testMarkers ?? []);
+  for (const entry of changed) if (!await coveredAtHead(git, entry, covering, { head, ran: main.tests?.ran, surface, markers })) uncovered.push(entry);
+  for (const entry of uncovered) {
+    failures.push(entry === TESTS_RAN
+      ? `fewer tests ran than on the base (${main.tests?.ran} < ${main.tests?.baseline?.ran}) and no closed work in the range had that approved`
+      : `${entry} is an existing test or check file the range modifies or deletes, and no closed work in the range had that version approved or accepted by an independent review`);
+  }
+  // The base decides whether untraced commits fail, so a range cannot switch itself to observe.
+  const enforcement = (await baseConfig(git, base))?.enforcement ?? config?.enforcement;
+  const untraced = enforcementOf({ enforcement: enforcement === "enforce" ? "enforce" : "observe" }) === "enforce";
   const history = await auditHistory(git, await commitsAfter(git, base, head), { untraced });
   for (const issue of history) failures.push(`history ${issue.code}: ${issue.path}: ${issue.message}`);
   return {
@@ -129,6 +135,25 @@ export async function verifyRange(cwd: string, options: { base: string; head?: s
     history,
     flaky,
   };
+}
+
+/**
+ * A checkpoint entry is covered by what a closed work had approved or
+ * accepted, not by its path: the head must hold that work's version of the
+ * file, or one that only adds to it (by the same rule as the checkpoint
+ * itself). A fewer-tests entry is covered when no fewer tests run now than
+ * the work had approved.
+ */
+async function coveredAtHead(git: GitRepository, entry: string, covering: readonly Evidence[], at: { head: string; ran: number | undefined; surface: readonly string[]; markers: readonly string[] }): Promise<boolean> {
+  for (const evidence of covering) {
+    if (!verifierCheckpoint(evidence).includes(entry)) continue;
+    if (entry === TESTS_RAN) {
+      if (at.ran !== undefined && evidence.tests !== undefined && at.ran >= evidence.tests.ran) return true;
+      continue;
+    }
+    if (!(await verifierChanges(git, evidence.input.commit, at.head, at.surface, [], at.markers)).includes(entry)) return true;
+  }
+  return false;
 }
 
 export function renderVerifyMarkdown(report: VerifyReport): string {
