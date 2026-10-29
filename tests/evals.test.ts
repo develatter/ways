@@ -51,10 +51,10 @@ describe("reproducible eval runner", () => {
     }
   });
 
-  it("emits machine-readable CLI output and rejects labels outside A–E", async () => {
+  it("emits machine-readable CLI output and rejects unknown labels", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "ways-eval-cli-"));
     expect(await run(["evals", "run", "--adapter=fake", "--output=result.json"], cwd)).toBe(0);
     expect(JSON.parse(await readFile(join(cwd, "result.json"), "utf8"))).toMatchObject({ schemaVersion: 3, evidence: { kind: "fixture", architecturalBenchmark: false } });
-    await expect(run(["evals", "run", "--harness=unknown"], cwd)).rejects.toThrow("no-ways, checks-only, lightweight-state, full-sdd, outcome");
+    await expect(run(["evals", "run", "--harness=unknown"], cwd)).rejects.toThrow("no-ways, checks-only, lightweight-state, outcome");
   });
 });

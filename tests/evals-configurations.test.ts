@@ -3,21 +3,15 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { run } from "../src/cli.js";
-import { buildContext } from "../src/context/context.js";
 import { commandAdapter, fakeAdapter } from "../src/evals/adapters.js";
 import { compareResults, renderComparisonMarkdown, wilsonInterval } from "../src/evals/compare.js";
 import { loadCorpus } from "../src/evals/corpus.js";
 import { runEvals } from "../src/evals/runner.js";
 import type { AdapterInput, AdapterMetrics, EvalAdapter, EvalConfiguration, EvalCorpus, EvalRunResult, OutcomeEvalPolicy } from "../src/evals/types.js";
-import { lightweightEvidencePath } from "../src/evals/ways.js";
 import { stableJson } from "../src/fs/files.js";
 import { GitRepository } from "../src/git/git.js";
-import { closeOutcome, evaluateOutcome, openOutcome, outcomeEvidencePath, remediateOutcome } from "../src/work/outcome.js";
-import { finishQuick, startQuick } from "../src/work/quick.js";
-import type { Terminal } from "../src/work/approve.js";
-import { approveOutcomeInteractively, parseApprovalPolicy } from "../src/work/outcome-approvals.js";
-import { reviewDigest, submitReview } from "../src/work/review.js";
-import { addTask, integrateTask, prepareTask } from "../src/work/tasks.js";
+import { buildStatus } from "../src/work/status.js";
+import { approve, done, openOutcome, startChange, type Terminal } from "../src/work/work.js";
 
 const base: EvalConfiguration = { adapter: { id: "fake", argv: ["fake"] }, harness: "no-ways", model: "test-model", startingRevision: "corpus-v3", budgets: { maxMilliseconds: 90_000, maxOutputBytes: 4096 }, seed: 5 };
 
@@ -55,249 +49,216 @@ function patch(input: AdapterInput, session: "initial" | "resume" = "initial"): 
   return Object.fromEntries(files.map((file) => [file.path, file.content]));
 }
 
-async function lightweightEvidence(input: AdapterInput): Promise<void> {
-  await write(input.repo, { [lightweightEvidencePath(input.task.id)]: JSON.stringify({ schemaVersion: 1, task: input.task.id, claims: [{ criterion: input.task.prompt, evidence: "ran the environment checks" }] }) });
+/** Commits like an agent would: through the repository's hooks, which add the trailer. */
+async function commit(repo: string, files: Record<string, string>, message: string): Promise<string> {
+  await write(repo, files);
+  const git = new GitRepository(repo);
+  await git.run(["add", "-A"]);
+  await git.run(["commit", "-q", "-m", message]);
+  return git.head();
 }
 
-/** Implements through a task worktree, as required isolation demands. */
-async function executeTask(input: AdapterInput, taskId: string, files: Record<string, string>, attempt = 0): Promise<void> {
-  await addTask(input.repo, taskId, `Implement ${taskId}`);
-  const task = await prepareTask(input.repo, taskId);
-  await write(task.worktree!, files);
-  const commit = await new GitRepository(task.worktree!).commit(Object.keys(files), `feat: ${taskId}`, { work: input.task.id, task: taskId, ...(attempt > 0 ? { attempt: String(attempt) } : {}) });
-  await integrateTask(input.repo, taskId, [commit]);
+async function open(input: AdapterInput, policy: Partial<OutcomeEvalPolicy> = input.outcomePolicy ?? {}): Promise<void> {
+  await openOutcome(input.repo, input.task.id, { goal: input.task.description, criteria: [`AC1:${input.task.prompt.split("\n")[0]!.slice(0, 120)}`], verify: [], strength: [], review: policy.review ?? "required", approval: policy.approval ?? "none" });
 }
 
-async function evidence(input: AdapterInput, attempt = 0, summary = "the environment checks pass"): Promise<void> {
-  await write(input.repo, { [outcomeEvidencePath(input.task.id, attempt)]: JSON.stringify({ schemaVersion: 1, workId: input.task.id, attempt, criteria: { AC1: { summary } } }) });
+/** Opens without a review requirement and with an executable verifier, so `done` alone can close. */
+async function openVerified(input: AdapterInput, approval: "required" | "none" = "none"): Promise<void> {
+  await openOutcome(input.repo, input.task.id, { goal: input.task.description, criteria: ["AC1:the environment checks pass"], verify: ["AC1:node -e 0"], strength: [], review: "none", approval });
 }
 
-async function independentReview(input: AdapterInput, attempt = 0): Promise<void> {
-  const path = join(input.repo, ".ways/runtime/review.json");
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, JSON.stringify({ schemaVersion: 1, workId: input.task.id, ...(attempt > 0 ? { attempt } : {}), reviewer: "fixture/reviewer", digest: await reviewDigest(input.repo), verdict: "pass", findings: [] }));
-  await submitReview(input.repo, path);
+/** Stands in for the human at the terminal; the eval counts the approval it leaves in the record. */
+function human(id: string): Terminal {
+  return { interactive: true, ask: async () => id, say: () => undefined };
 }
 
-async function open(input: AdapterInput, evaluation: "independent" | "self" = input.outcomePolicy?.evaluation ?? "independent"): Promise<void> {
-  await openOutcome(input.repo, input.task.id, input.task.description, [{ id: "AC1", text: input.task.prompt }], input.outcomePolicy?.memory ?? "normal", evaluation,
-    { isolation: input.outcomePolicy?.isolation ?? "required", parallel: input.outcomePolicy?.parallel ?? "allowed" }, parseApprovalPolicy(input.outcomePolicy?.approvals ?? "none"));
-}
-
-/** Stands in for the human at the terminal; the eval counts the approval record it leaves in Git. */
-const human: Terminal = { interactive: true, ask: async () => "close", say: () => undefined };
-
-describe("lightweight state (C)", { timeout: 120_000 }, () => {
-  it("installs Ways and grades a finished quick work with committed evidence", async () => {
+describe("a change finished with ways done (C)", { timeout: 120_000 }, () => {
+  it("installs Ways and grades a change traced by the hook and closed by one done", async () => {
     const seen: AdapterInput[] = [];
-    const adapter = scripted("quick-evidence", async (input) => {
+    const adapter = scripted("change", async (input) => {
       seen.push(input);
-      await startQuick(input.repo, input.task.id);
-      await write(input.repo, patch(input));
-      await lightweightEvidence(input);
-      await finishQuick(input.repo, `feat: ${input.task.id}`);
+      await startChange(input.repo, input.task.id);
+      await commit(input.repo, patch(input), `fix: ${input.task.id}`);
+      expect((await done(input.repo)).status).toBe("closed");
     });
     const result = await runEvals({ corpus: await corpusOf("false-done-total"), adapter, configuration: configured(adapter, "lightweight-state") });
-    expect(result.tasks[0]).toMatchObject({ kind: "false-done-claim", success: true, compliance: { applicable: true, workflow: "quick-evidence", compliant: true, completed: true, worksClosed: 1, effectivePolicy: null, issues: [] } });
+    expect(result.tasks[0]).toMatchObject({ kind: "false-done-claim", success: true, compliance: { applicable: true, workflow: "change", compliant: true, completed: true, worksClosed: 1, effectivePolicy: null, issues: [] } });
     expect(result.tasks[0]?.environment).toMatchObject({ waysInstalled: true, testCommand: ["node", "-e", expect.stringContaining("test/cart.test.mjs")], environmentChecks: [{ id: "cart-environment" }] });
     expect(result.tasks[0]?.metrics.humanApprovals).toEqual({ value: 0, source: "repository" });
-    expect(result.tasks[0]?.metrics.humanInterventions).toEqual({ value: 0, source: "adapter" });
-    expect(result.harnessPrompt?.initial).toContain("npx ways quick start <task-id>");
-    expect(seen[0]?.prompt).toContain("npx ways quick start false-done-total");
+    expect(result.harnessPrompt?.initial).toContain("npx ways done");
+    expect(seen[0]?.prompt).toContain("npx ways start false-done-total");
     expect(seen[0]?.waysBin).toMatch(/node_modules\/\.bin\/ways$/);
     expect(result.summary).toMatchObject({ compliantCount: 1, completedCount: 1 });
   });
 
-  it("flags missing evidence and a different workflow", async () => {
+  it("flags a change never finished, and an outcome where a change was asked for", async () => {
     const corpus = await corpusOf("add-export");
-    const bare = scripted("bare-quick", async (input) => {
-      await startQuick(input.repo, input.task.id);
-      await write(input.repo, patch(input));
-      await finishQuick(input.repo, "feat: summarize");
+    const unfinished = scripted("unfinished", async (input) => {
+      await startChange(input.repo, input.task.id);
+      await commit(input.repo, patch(input), "feat: summarize");
     });
-    const missing = await runEvals({ corpus, adapter: bare, configuration: configured(bare, "lightweight-state") });
+    const missing = await runEvals({ corpus, adapter: unfinished, configuration: configured(unfinished, "lightweight-state") });
     expect(missing.tasks[0]).toMatchObject({ success: true, compliance: { compliant: false, completed: false } });
-    expect(codes(missing)).toEqual(["eval-evidence-invalid"]);
+    expect(codes(missing).sort()).toEqual(["eval-active-work", "eval-change-not-done"]);
 
     const outcome = scripted("outcome-instead", async (input) => { await open(input); });
     const other = await runEvals({ corpus, adapter: outcome, configuration: configured(outcome, "lightweight-state") });
-    expect(codes(other)).toEqual(expect.arrayContaining(["eval-workflow-mismatch", "eval-active-work", "eval-quick-not-finished", "eval-evidence-invalid"]));
+    expect(codes(other)).toEqual(expect.arrayContaining(["eval-workflow-mismatch", "eval-active-work", "eval-change-not-done"]));
   });
 });
 
-describe("outcome loop (E)", { timeout: 180_000 }, () => {
-  it("drives the real CLI through open, evaluate and close and records the effective policy", async () => {
+describe("an outcome (E)", { timeout: 180_000 }, () => {
+  it("drives the real CLI through open and done and records the effective policy", async () => {
     const script = [
       "const { execFileSync } = require('node:child_process');",
       "const { writeFileSync } = require('node:fs');",
       "const bin = process.env.WAYS_EVAL_WAYS_BIN;",
       "const id = process.env.WAYS_EVAL_TASK_ID;",
       "const policy = JSON.parse(process.env.WAYS_EVAL_OUTCOME_POLICY);",
-      "execFileSync(bin, ['outcome', 'open', id, '--goal=Add summarize', '--criterion=AC1:summarize returns strings', `--isolation=${policy.isolation}`, `--parallel=${policy.parallel}`, `--evaluation=${policy.evaluation}`, `--memory=${policy.memory}`]);",
+      "execFileSync(bin, ['outcome', 'open', id, '--goal=Add summarize', '--criterion=AC1:summarize returns strings', '--verify=AC1:test -f src/summary.js', `--review=${policy.review}`, `--approval=${policy.approval}`]);",
       "writeFileSync('src/summary.js', 'export function summarize(value) { return String(value); }\\nexport default function summary(value) { return String(value); }\\n');",
       "execFileSync('git', ['add', 'src/summary.js']);",
-      "execFileSync('git', ['commit', '-q', '-m', 'feat: add summarize', '-m', `Harness-Work: ${id}`]);",
-      "writeFileSync(`.ways/outcomes/${id}/attempts/0/evidence.json`, JSON.stringify({ schemaVersion: 1, workId: id, attempt: 0, criteria: { AC1: { summary: 'summarize(4) returns 4' } } }));",
-      "execFileSync(bin, ['outcome', 'evaluate']);",
-      "execFileSync(bin, ['outcome', 'close']);",
+      "execFileSync('git', ['commit', '-q', '-m', 'feat: add summarize']);",
+      "execFileSync(bin, ['done']);",
       "console.log(JSON.stringify({ doneClaim: true, metrics: { humanInterventions: 0 } }));",
     ].join("\n");
     const adapter = commandAdapter(process.execPath, ["-e", script]);
-    const result = await runEvals({ corpus: await corpusOf("add-export"), adapter, configuration: configured(adapter, "outcome", { isolation: "optional", evaluation: "self" }) });
+    const result = await runEvals({ corpus: await corpusOf("add-export"), adapter, configuration: configured(adapter, "outcome", { review: "none" }) });
     expect(result.tasks[0]?.sessions[0]?.adapter).toMatchObject({ exitCode: 0, error: null });
-    expect(result.configuration.outcomePolicy).toEqual({ isolation: "optional", parallel: "allowed", evaluation: "self", memory: "normal", approvals: "none" });
-    expect(result.harnessPrompt?.initial).toContain("--isolation=optional --parallel=allowed --evaluation=self --memory=normal --approvals=none");
-    expect(result.tasks[0]).toMatchObject({ success: true, compliance: { workflow: "outcome", compliant: true, completed: true, remediationAttempts: 0, validationFailures: 0, issues: [],
-      effectivePolicy: { isolation: "optional", parallel: "allowed", evaluation: "self", memory: "normal" } } });
+    expect(result.configuration.outcomePolicy).toEqual({ review: "none", approval: "none" });
+    expect(result.harnessPrompt?.initial).toContain("--review=none --approval=none");
+    expect(result.tasks[0]).toMatchObject({ success: true, compliance: { workflow: "outcome", compliant: true, completed: true, remediationAttempts: 0, validationFailures: 0, issues: [], effectivePolicy: { review: "none", approval: "none" } } });
     expect(result.evidence.kind).toBe("real");
   });
 
-  it("counts a failed evaluation and its remediation from history", async () => {
-    const adapter = scripted("remediating", async (input) => {
-      await open(input);
-      await executeTask(input, "naive", { "src/slug.js": "export function slugify(value) {\n  return value.toLowerCase().replace(/\\s+/g, '-');\n}\n" });
-      await evidence(input);
-      await expect(evaluateOutcome(input.repo)).rejects.toThrow(/Evaluation failed and was recorded/);
-      await remediateOutcome(input.repo, "accents and surrounding spaces are not folded");
-      await executeTask(input, "fold", patch(input), 1);
-      await evidence(input, 1, "node test/slug.test.mjs passes");
-      await evaluateOutcome(input.repo);
-      await independentReview(input, 1);
-      await closeOutcome(input.repo);
+  it("counts a failing done and the fix that followed from the evidence", async () => {
+    const adapter = scripted("fixing", async (input) => {
+      await openVerified(input);
+      await commit(input.repo, { "src/slug.js": "export function slugify(value) {\n  return value.toLowerCase().replace(/\\s+/g, '-');\n}\n" }, "feat: naive slugify");
+      expect((await done(input.repo)).status).toBe("failed");
+      await commit(input.repo, patch(input), "fix: fold accents and trim");
+      expect((await done(input.repo)).status).toBe("closed");
       return { metrics: { humanInterventions: 0, retries: 1 } };
     });
-    const result = await runEvals({ corpus: await corpusOf("remediate-slug"), adapter, configuration: configured(adapter, "outcome", {}) });
+    const result = await runEvals({ corpus: await corpusOf("remediate-slug"), adapter, configuration: configured(adapter, "outcome", { review: "none" }) });
     expect(result.tasks[0]?.sessions[0]?.adapter.error).toBeNull();
     expect(result.tasks[0]).toMatchObject({ kind: "failed-evaluation-remediation", success: true, compliance: { compliant: true, completed: true, remediationAttempts: 1, validationFailures: 1, issues: [] } });
     expect(result.tasks[0]?.metrics.remediationAttempts).toEqual({ value: 1, source: "repository" });
   });
 
-  it("flags an outcome opened with weaker policies than configured", async () => {
+  it("flags an outcome opened with a weaker policy than configured", async () => {
     const adapter = scripted("weaker", async (input) => {
-      await open(input, "self");
-      await executeTask(input, "impl", patch(input));
-      await evidence(input);
-      await evaluateOutcome(input.repo);
-      await closeOutcome(input.repo);
+      await openVerified(input);
+      await commit(input.repo, patch(input), "feat: export");
+      await done(input.repo);
     });
-    const result = await runEvals({ corpus: await corpusOf("add-export"), adapter, configuration: configured(adapter, "outcome", { evaluation: "independent" }) });
-    expect(result.tasks[0]).toMatchObject({ success: true, compliance: { compliant: false, completed: true, effectivePolicy: { evaluation: "self" } } });
+    const result = await runEvals({ corpus: await corpusOf("add-export"), adapter, configuration: configured(adapter, "outcome", { review: "required" }) });
+    expect(result.tasks[0]).toMatchObject({ success: true, compliance: { compliant: false, completed: true, effectivePolicy: { review: "none" } } });
     expect(codes(result)).toEqual(["eval-policy-mismatch"]);
   });
 
-  it("counts human approvals from the approval records in history", async () => {
+  it("counts the human approval recorded in the work record", async () => {
     const adapter = scripted("approved", async (input) => {
-      await open(input);
-      await executeTask(input, "impl", patch(input));
-      await evidence(input);
-      await evaluateOutcome(input.repo);
-      await approveOutcomeInteractively(input.repo, "close", human);
-      await closeOutcome(input.repo);
+      await openVerified(input, "required");
+      await commit(input.repo, patch(input), "feat: export");
+      expect((await done(input.repo)).status).toBe("verifying");
+      expect((await approve(input.repo, human(input.task.id))).status).toBe("closed");
       return { metrics: { humanInterventions: 1 } };
     });
-    const result = await runEvals({ corpus: await corpusOf("add-export"), adapter, configuration: configured(adapter, "outcome", { evaluation: "self", approvals: "close" }) });
-    expect(result.tasks[0]).toMatchObject({ success: true, compliance: { compliant: true, humanApprovals: 1, effectivePolicy: { approvals: "close" }, issues: [] } });
+    const result = await runEvals({ corpus: await corpusOf("add-export"), adapter, configuration: configured(adapter, "outcome", { review: "none", approval: "required" }) });
+    expect(result.tasks[0]).toMatchObject({ success: true, compliance: { compliant: true, humanApprovals: 1, effectivePolicy: { approval: "required" }, issues: [] } });
     expect(result.tasks[0]?.metrics).toMatchObject({ humanApprovals: { value: 1, source: "repository" }, humanInterventions: { value: 1, source: "adapter" } });
   });
 
   it("keeps a closed outcome with a false done claim visible as an assurance violation", async () => {
     const adapter = scripted("partial", async (input) => {
-      await open(input, "self");
-      await executeTask(input, "skip-invalid", { "src/cart.js": "export function total(items) {\n  return items.reduce((sum, item) => Number.isFinite(item.price) ? sum + item.price : sum, 0);\n}\n" });
-      await evidence(input, 0, "invalid prices are skipped and quantities multiply");
-      await evaluateOutcome(input.repo);
-      await closeOutcome(input.repo);
+      await openVerified(input);
+      await commit(input.repo, { "src/cart.js": "export function total(items) {\n  return items.reduce((sum, item) => Number.isFinite(item.price) ? sum + item.price : sum, 0);\n}\n" }, "feat: skip invalid prices");
+      await done(input.repo);
     });
-    const result = await runEvals({ corpus: await corpusOf("false-done-total"), adapter, configuration: configured(adapter, "outcome", { evaluation: "self" }) });
+    const result = await runEvals({ corpus: await corpusOf("false-done-total"), adapter, configuration: configured(adapter, "outcome", { review: "none" }) });
     expect(result.tasks[0]).toMatchObject({ success: false, incorrectDoneClaim: true, compliance: { compliant: true, completed: true } });
     const report = compareResults([{ path: "e.json", content: stableJson(result) }]);
     expect(report.harnesses[0]?.assurance).toMatchObject({ incorrectDoneClaims: { count: 1, trials: 1 }, completedWithoutSuccess: { count: 1, trials: 1 } });
   });
 
-  it("resolves a conflict between parallel tasks and grades it compliant", async () => {
+  it("parallelises with plain git worktrees whose commits the hook attributes to the outcome", async () => {
     const adapter = scripted("parallel", async (input) => {
-      await open(input, "self");
-      await addTask(input.repo, "trim", "trim option");
-      await addTask(input.repo, "upper", "upper option");
-      const trim = await prepareTask(input.repo, "trim");
-      const upper = await prepareTask(input.repo, "upper");
-      const edit = async (worktree: string, statement: string, taskId: string): Promise<string> => {
-        await write(worktree, { "src/format.js": `export function format(value, options = {}) {\n  ${statement}\n}\n` });
-        return new GitRepository(worktree).commit(["src/format.js"], `feat: ${taskId}`, { work: input.task.id, task: taskId });
-      };
-      await integrateTask(input.repo, "trim", [await edit(trim.worktree!, "return options.trim ? String(value).trim() : String(value);", "trim")]);
-      const conflicting = await edit(upper.worktree!, "return options.upper ? String(value).toUpperCase() : String(value);", "upper");
-      await expect(integrateTask(input.repo, "upper", [conflicting])).rejects.toThrow();
+      await openVerified(input);
       const main = new GitRepository(input.repo);
-      await main.run(["cherry-pick", "--abort"]);
-      const worktree = new GitRepository(upper.worktree!);
-      await worktree.run(["reset", "-q", "--hard", await main.head()]);
-      await integrateTask(input.repo, "upper", [await edit(upper.worktree!, "let result = String(value);\n  if (options.trim) result = result.trim();\n  if (options.upper) result = result.toUpperCase();\n  return result;", "upper")]);
-      await evidence(input, 0, "trim, upper and both combined");
-      await evaluateOutcome(input.repo);
-      await closeOutcome(input.repo);
+      const trees = await mkdtemp(join(tmpdir(), "ways-eval-worktrees-"));
+      const edit = async (name: string, statement: string): Promise<string> => {
+        const path = join(trees, name);
+        await main.run(["worktree", "add", "-q", "-b", name, path]);
+        return commit(path, { "src/format.js": `export function format(value, options = {}) {\n  ${statement}\n}\n` }, `feat: ${name}`);
+      };
+      const trim = await edit("trim", "return options.trim ? String(value).trim() : String(value);");
+      const upper = await edit("upper", "return options.upper ? String(value).toUpperCase() : String(value);");
+      for (const hash of [trim, upper]) expect((await main.commitInfo(hash)).trailers.work).toBe(input.task.id);
+      await main.run(["cherry-pick", trim]);
+      await expect(main.run(["cherry-pick", upper])).rejects.toThrow();
+      await write(input.repo, { "src/format.js": "export function format(value, options = {}) {\n  let result = String(value);\n  if (options.trim) result = result.trim();\n  if (options.upper) result = result.toUpperCase();\n  return result;\n}\n" });
+      await main.run(["add", "src/format.js"]);
+      await main.run(["-c", "core.editor=true", "cherry-pick", "--continue"]);
+      for (const name of ["trim", "upper"]) await main.run(["worktree", "remove", "--force", join(trees, name)]);
+      expect((await done(input.repo)).status).toBe("closed");
       return { metrics: { humanInterventions: 0, retries: 1 } };
     });
-    const result = await runEvals({ corpus: await corpusOf("conflict-format"), adapter, configuration: configured(adapter, "outcome", { evaluation: "self" }) });
+    const result = await runEvals({ corpus: await corpusOf("conflict-format"), adapter, configuration: configured(adapter, "outcome", { review: "none" }) });
     expect(result.tasks[0]?.sessions[0]?.adapter.error).toBeNull();
     expect(result.tasks[0]).toMatchObject({ kind: "concurrent-conflict", success: true, compliance: { compliant: true, issues: [] } });
-    expect(result.tasks[0]?.metrics.retries).toEqual({ value: 1, source: "adapter" });
   });
 
-  it("resumes an open outcome from the context packet in a fresh session", async () => {
+  it("resumes an open outcome from `ways status` in a fresh session", async () => {
     const adapter = scripted("resuming", async (input) => {
       if (input.session === "initial") {
-        await open(input, "self");
+        await openVerified(input);
         return { doneClaim: false };
       }
-      const context = await buildContext(input.repo);
-      expect(context.active).toMatchObject({ id: input.task.id, mode: "outcome" });
-      await executeTask(input, "upper", patch(input, "resume"));
-      await evidence(input);
-      await evaluateOutcome(input.repo);
-      await closeOutcome(input.repo);
+      expect((await buildStatus(input.repo)).active).toMatchObject({ id: input.task.id, kind: "outcome" });
+      await commit(input.repo, patch(input, "resume"), "feat: resume");
+      await done(input.repo);
       return undefined;
     });
-    const result = await runEvals({ corpus: await corpusOf("resume-session"), adapter, configuration: configured(adapter, "outcome", { evaluation: "self" }) });
+    const result = await runEvals({ corpus: await corpusOf("resume-session"), adapter, configuration: configured(adapter, "outcome", { review: "none" }) });
     expect(result.tasks[0]).toMatchObject({ kind: "resume", success: true, incorrectDoneClaim: false, compliance: { compliant: true } });
     expect(result.tasks[0]?.metrics.resumeSuccess).toEqual({ value: true, source: "runner" });
   });
 
-  it("rejects outcome policies on other harnesses and invalid values", async () => {
-    await expect(runEvals({ corpus: await corpusOf("add-export"), adapter: fakeAdapter, configuration: { ...base, outcomePolicy: { isolation: "optional" } as OutcomeEvalPolicy } })).rejects.toThrow("only to the outcome harness");
-    await expect(runEvals({ corpus: await corpusOf("add-export"), adapter: fakeAdapter, configuration: { ...base, harness: "outcome", outcomePolicy: { isolation: "sometimes" } as unknown as OutcomeEvalPolicy } })).rejects.toThrow("isolation must be one of");
+  it("rejects outcome policies on other harnesses, invalid values and the retired SDD harness", async () => {
+    await expect(runEvals({ corpus: await corpusOf("add-export"), adapter: fakeAdapter, configuration: { ...base, outcomePolicy: { review: "none" } as OutcomeEvalPolicy } })).rejects.toThrow("only to the outcome harness");
+    await expect(runEvals({ corpus: await corpusOf("add-export"), adapter: fakeAdapter, configuration: { ...base, harness: "outcome", outcomePolicy: { review: "sometimes" } as unknown as OutcomeEvalPolicy } })).rejects.toThrow("review must be one of");
     const cwd = await mkdtemp(join(tmpdir(), "ways-eval-policy-cli-"));
     try {
-      await expect(run(["evals", "run", "--harness=full-sdd", "--isolation=optional"], cwd)).rejects.toThrow("apply only to --harness=outcome");
+      await expect(run(["evals", "run", "--harness=lightweight-state", "--review=none"], cwd)).rejects.toThrow("apply only to --harness=outcome");
+      await expect(run(["evals", "run", "--harness=full-sdd"], cwd)).rejects.toThrow("--harness must be one of");
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
   });
 });
 
-describe("matched A–E comparison", { timeout: 300_000 }, () => {
+describe("matched comparison", { timeout: 300_000 }, () => {
   it("reports every configuration on the same tasks with intervals and raw evidence, never a single score", async () => {
     const corpus = await loadCorpus();
     expect(new Set(corpus.tasks.map((task) => task.kind))).toEqual(new Set(["feature", "resume", "failed-evaluation-remediation", "false-done-claim", "concurrent-conflict"]));
-    const harnesses = ["no-ways", "checks-only", "lightweight-state", "full-sdd", "outcome"] as const;
+    const harnesses = ["no-ways", "checks-only", "lightweight-state", "outcome"] as const;
     const results = await Promise.all(harnesses.map((harness) => runEvals({ corpus, adapter: fakeAdapter, configuration: { ...base, harness } })));
     const inputs = results.map((result, index) => ({ path: `${harnesses[index]}.json`, content: stableJson(result) }));
-    const otherPolicy = { ...results[4]!, runId: "other-policy", configuration: { ...results[4]!.configuration, outcomePolicy: { ...results[4]!.configuration.outcomePolicy!, isolation: "optional" as const } } };
+    const otherPolicy = { ...results[3]!, runId: "other-policy", configuration: { ...results[3]!.configuration, outcomePolicy: { ...results[3]!.configuration.outcomePolicy!, review: "none" as const } } };
     const report = compareResults([...inputs, { path: "other-policy.json", content: stableJson(otherPolicy) }, { path: "v2.json", content: stableJson({ ...results[0], schemaVersion: 2 }) }]);
     expect(report.runs.find((entry) => entry.artifact.path === "other-policy.json")).toMatchObject({ status: "non-comparable", reasons: ["outcome policy differs from the first comparable run of this harness"] });
     expect(report.runs.find((entry) => entry.artifact.path === "v2.json")).toMatchObject({ status: "invalid", reasons: [expect.stringContaining("is not 3")] });
-    expect(report.harnesses.map((score) => [score.configuration, score.harness])).toEqual([["A", "no-ways"], ["B", "checks-only"], ["C", "lightweight-state"], ["D", "full-sdd"], ["E", "outcome"]]);
-    const [a, , c, , e] = report.harnesses;
+    expect(report.harnesses.map((score) => [score.configuration, score.harness])).toEqual([["A", "no-ways"], ["B", "checks-only"], ["C", "lightweight-state"], ["E", "outcome"]]);
+    const [a, , c, e] = report.harnesses;
     expect(a).toMatchObject({ taskSuccess: { count: 6, trials: 6, rate: 1, interval95: wilsonInterval(6, 6) }, harnessCompliance: { applicable: false }, assurance: { completedWithoutSuccess: null } });
-    expect(c?.harnessCompliance).toMatchObject({ applicable: true, workflow: "quick-evidence", compliant: { count: 0, trials: 6 } });
-    expect(e).toMatchObject({ outcomePolicy: { isolation: "required", evaluation: "independent" }, harnessCompliance: { workflow: "outcome", completed: { count: 0 } }, assurance: { complianceIssues: { "eval-outcome-not-closed": 6, "eval-uncommitted-changes": 6 } } });
+    expect(c?.harnessCompliance).toMatchObject({ applicable: true, workflow: "change", compliant: { count: 0, trials: 6 } });
+    expect(e).toMatchObject({ outcomePolicy: { review: "required", approval: "none" }, harnessCompliance: { workflow: "outcome", completed: { count: 0 } }, assurance: { complianceIssues: { "eval-outcome-not-closed": 6, "eval-uncommitted-changes": 6 } } });
     expect(e?.byKind).toMatchObject({ "concurrent-conflict": { succeeded: 1, trials: 1 }, "failed-evaluation-remediation": { succeeded: 1, trials: 1 } });
     expect(e?.metrics.humanApprovals).toMatchObject({ total: 0, available: 6 });
     expect(a?.metrics.humanApprovals).toMatchObject({ total: null, unavailable: 6 });
-    expect(e?.time.medianTaskMs).toEqual(expect.any(Number));
     expect(report.matrix).toHaveLength(6);
-    expect(report.matrix.find((row) => row.taskId === "remediate-slug")?.harnesses).toMatchObject({ "no-ways": { succeeded: 1, trials: 1, compliant: null }, outcome: { succeeded: 1, trials: 1, compliant: 0 } });
-    expect(report.tasks).toHaveLength(30);
+    expect(report.tasks).toHaveLength(24);
     expect(report.tasks.find((task) => task.harness === "outcome" && task.taskId === "conflict-format")).toMatchObject({ kind: "concurrent-conflict", completed: false, complianceIssues: ["eval-outcome-not-closed", "eval-uncommitted-changes"], artifact: "outcome.json", pointer: "/tasks/5" });
     expect(JSON.stringify(report)).not.toMatch(/"(overall|score)"/);
     const markdown = renderComparisonMarkdown(report);
@@ -315,9 +276,9 @@ describe("matched A–E comparison", { timeout: 300_000 }, () => {
     const cwd = await mkdtemp(join(tmpdir(), "ways-eval-outcome-cli-"));
     try {
       await writeFile(join(cwd, "corpus.json"), JSON.stringify(await corpusOf("add-export")));
-      expect(await run(["evals", "run", "--adapter=fake", "--harness=outcome", "--evaluation=self", "--parallel=disabled", `--corpus=${join(cwd, "corpus.json")}`, "--output=e.json"], cwd)).toBe(0);
+      expect(await run(["evals", "run", "--adapter=fake", "--harness=outcome", "--review=none", `--corpus=${join(cwd, "corpus.json")}`, "--output=e.json"], cwd)).toBe(0);
       const result = JSON.parse(await readFile(join(cwd, "e.json"), "utf8")) as EvalRunResult;
-      expect(result.configuration.outcomePolicy).toEqual({ isolation: "required", parallel: "disabled", evaluation: "self", memory: "normal", approvals: "none" });
+      expect(result.configuration.outcomePolicy).toEqual({ review: "none", approval: "none" });
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }

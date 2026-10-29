@@ -20,8 +20,8 @@ const BIN_LINK = "node_modules/.bin/ways";
 const GUARDRAILS = "Do not bypass hooks or edit the ways configuration, the checks or `.ways/work/`.";
 
 export const CHANGE_PROMPT: HarnessPrompt = {
-  initial: `Deliver this task as a small ways change: make the change and commit as you go (the commit hook traces your commits), then run \`npx ways done\`, which runs the configured checks once and closes the work. If it fails, fix, commit and run it again. If the task asks you to stop early, leave the work open for the next session. ${GUARDRAILS}`,
-  resume: `Run \`npx ways status\`, continue the task's work, and finish it with \`npx ways done\`. ${GUARDRAILS}`,
+  initial: `Deliver this task as a small ways change: run \`npx ways start <task-id>\`, make the change and commit as you go (the commit hook traces your commits), then run \`npx ways done\`, which runs the configured checks once and closes the work. If it fails, fix, commit and run it again. If the task asks you to stop early, leave the work open for the next session. ${GUARDRAILS}`,
+  resume: `Run \`npx ways status\`, continue the task's work (starting it with \`npx ways start <task-id>\` if none is active), and finish it with \`npx ways done\`. ${GUARDRAILS}`,
 };
 
 const OUTCOME_FINISH = "implement and commit as you go, then run `npx ways done`; if it asks for an independent review, have a reviewer who did not implement the change review the commit it prints and record it with `npx ways review submit <file>`";
