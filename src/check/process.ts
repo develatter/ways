@@ -1,4 +1,6 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
+import type { RunOutput } from "../domain/types.js";
 
 export interface ExecutionResult {
   status: "passed" | "failed" | "timed-out" | "unavailable";
@@ -30,20 +32,50 @@ export function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
     try { child.kill(signal); } catch { /* Already exited. */ }
   }
 }
-export function execute(command: string[], cwd: string, timeoutMs?: number, strict = false, stdio: "inherit" | "ignore" = "inherit"): Promise<ExecutionResult> {
+const TAIL_LINES = 20;
+const TAIL_BYTES = 16 * 1024;
+
+/** Collects combined output: its sha256 and a bounded tail, never the whole stream in memory. */
+class OutputCapture {
+  private readonly hash = createHash("sha256");
+  private tail = Buffer.alloc(0);
+
+  add(chunk: Buffer): void {
+    this.hash.update(chunk);
+    this.tail = Buffer.concat([this.tail, chunk]);
+    if (this.tail.length > TAIL_BYTES) this.tail = this.tail.subarray(this.tail.length - TAIL_BYTES);
+  }
+
+  result(): RunOutput & { outputSha256: string; tail: string } {
+    const lines = this.tail.toString("utf8").replace(/\r\n/g, "\n").replace(/\n+$/, "").split("\n");
+    return { outputSha256: this.hash.digest("hex"), tail: lines.slice(-TAIL_LINES).join("\n") };
+  }
+}
+
+export type CapturedResult = ExecutionResult & RunOutput;
+
+/**
+ * Runs an argv without a shell. With `stdio: "capture"` the output is not
+ * shown; the result carries its duration, sha256 and last lines instead.
+ */
+export function execute(command: string[], cwd: string, timeoutMs?: number, strict = false, stdio: "inherit" | "ignore" | "capture" = "inherit"): Promise<CapturedResult> {
   const [program, ...args] = command;
   if (!program || (strict && command.some((part) => part.trim() === "" || part.includes("\0")))) {
     return Promise.resolve({ status: "unavailable", detail: "Configured command must contain non-empty arguments without NUL bytes" });
   }
+  const started = Date.now();
+  const capture = stdio === "capture" ? new OutputCapture() : undefined;
   return new Promise((resolve) => {
     let child: ChildProcess;
     try {
       child = spawn(program, args, {
         cwd,
-        stdio,
+        stdio: capture ? ["ignore", "pipe", "pipe"] : stdio as "inherit" | "ignore",
         shell: false,
         detached: process.platform !== "win32",
       });
+      child.stdout?.on("data", (chunk: Buffer) => capture?.add(chunk));
+      child.stderr?.on("data", (chunk: Buffer) => capture?.add(chunk));
     } catch (error) {
       resolve({ status: "unavailable", detail: `Unable to spawn command: ${error instanceof Error ? error.message : String(error)}` });
       return;
@@ -74,7 +106,7 @@ export function execute(command: string[], cwd: string, timeoutMs?: number, stri
       if (settled) return;
       settled = true;
       cleanup();
-      resolve(result);
+      resolve(capture ? { ...result, durationMs: Date.now() - started, ...capture.result() } : result);
     };
     process.once("SIGINT", onSigint);
     process.once("SIGTERM", onSigterm);

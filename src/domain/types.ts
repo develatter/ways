@@ -1,117 +1,10 @@
-export const MODES = ["query", "quick", "plan", "sdd", "outcome"] as const;
-export type Mode = (typeof MODES)[number];
-
-export type SddPhase =
-  | "intake"
-  | "explore"
-  | "assess"
-  | "specify"
-  | "plan"
-  | "decompose"
-  | "implement"
-  | "review"
-  | "validate"
-  | "reconcile-memory"
-  | "close";
-
-/** Externally meaningful stages of the outcome workflow; open and close are transitions, not stages. */
-export type OutcomeStage = "execute" | "evaluate";
-
-export interface OutcomeCriterion {
-  id: string;
-  text: string;
-}
-
-/**
- * Memory assurance of an outcome increment: none forbids knowledge changes,
- * normal lets sourced knowledge travel with the change, high requires a
- * digest-bound memory review before close.
- */
-export type MemoryTier = "none" | "normal" | "high";
-export const MEMORY_TIERS: readonly MemoryTier[] = ["none", "normal", "high"];
-
-/** Externally meaningful outcome transitions a human may gate. */
-export type OutcomeCheckpoint = "close" | "remediate";
-export const OUTCOME_CHECKPOINTS: readonly OutcomeCheckpoint[] = ["close", "remediate"];
-
-/** Whether production changes must arrive through integrated task worktrees. */
-export type IsolationPolicy = "required" | "optional";
-/** Whether several tasks of one work may be prepared at the same time. */
-export type ParallelPolicy = "allowed" | "disabled";
-
-/** The policy of an outcome work, fixed when it opens. */
-export interface OutcomePolicy {
-  isolation: IsolationPolicy;
-  /** required (`--evaluation=independent`, the default) or optional (`--evaluation=self`); absent reads as required. */
-  independentEvaluation?: "required" | "optional";
-  checks: "configured";
-  /** Absent in specs opened before memory tiers existed; read as normal. */
-  memory?: MemoryTier;
-  /** Absent in specs opened before parallelism policies existed; read as allowed. */
-  parallel?: ParallelPolicy;
-  /** Transitions that need interactive human approval; absent means none. */
-  approvals?: OutcomeCheckpoint[];
-}
-
-/** Immutable goal and acceptance criteria committed when an outcome work opens. */
-export interface OutcomeSpec {
-  schemaVersion: 1;
-  workId: string;
-  goal: string;
-  criteria: OutcomeCriterion[];
-  policy: OutcomePolicy;
-}
-
-/** Evidence the agent maps to every acceptance criterion before evaluation. */
-export interface OutcomeEvidence {
-  schemaVersion: 1;
-  workId: string;
-  attempt: number;
-  criteria: Record<string, { summary: string; checks?: CheckName[] }>;
-}
-
-/** Checks run by the harness against the immutable evaluated input. */
-export interface OutcomeEvaluation {
-  schemaVersion: 1;
-  workId: string;
-  attempt: number;
-  inputCommit: string;
-  inputTree: string;
-  /** The effective command contract the checks ran under: the input tree's configuration. */
-  contract: CheckContract;
-  /** Digest of the criterion evidence the evaluation certified; editing the evidence invalidates it. */
-  evidenceDigest: string;
-  checks: {
-    integrity: Array<{ code: string; path: string; message: string }>;
-    testExitCode?: number;
-    named?: NamedCheckEvidence[];
-    environment?: EnvironmentResult[];
-  };
-  passed: boolean;
-}
-
-/** The commands an execution boundary selected: legacy testCommand plus the optional named contract. */
-export interface CheckContract {
-  testCommand: CommandArgv;
-  commands?: NamedChecksConfig;
-}
-
-export type WorkStatus = "active" | "blocked" | "completed" | "cancelled";
-export type ApprovalProfile = "autonomous" | "supervised";
-export type ExecutionMode = "inline" | "delegated";
-export type TaskStatus = "pending" | "ready" | "active" | "review" | "completed" | "blocked";
-export type FindingSeverity = "critical" | "high" | "medium" | "low";
-export type FindingDisposition = "open" | "fixed" | "accepted" | "deferred";
-export type RemediationSource = "review" | "validate";
-export type RemediationTarget = "implement" | "decompose" | "plan" | "specify";
-
 export const CHECK_NAMES = ["test", "lint", "typecheck", "build", "e2e"] as const;
 export type CheckName = (typeof CHECK_NAMES)[number];
 export type CheckStatus = "passed" | "failed" | "timed-out" | "skipped" | "unavailable";
 
 export type CommandArgv = string[];
 
-/** Optional additive environment contract. Legacy testCommand remains the fallback. */
+/** Optional additive environment contract. `testCommand` remains the fallback. */
 export interface NamedChecksConfig {
   test?: CommandArgv;
   lint?: CommandArgv;
@@ -120,9 +13,9 @@ export interface NamedChecksConfig {
   e2e?: CommandArgv;
   required: CheckName[];
   timeoutMs?: number;
-  /** Opt-in environment preparation, run only at execution boundaries before services start. */
+  /** Opt-in environment preparation, run before services start. */
   setup?: CommandArgv;
-  /** Opt-in services started, probed for readiness and stopped around execution-boundary checks. */
+  /** Opt-in services started, probed for readiness and stopped around the checks. */
   services?: ServiceConfig[];
 }
 
@@ -145,11 +38,20 @@ export interface EnvironmentResult {
   command?: CommandArgv;
   exitCode?: number;
   detail?: string;
-  /** Repository-relative service log under the ignored runtime directory. */
+  /** Path of the service log under the runtime directory. */
   log?: string;
 }
 
-export interface NamedCheckResult {
+/** What the harness records about one command it ran. */
+export interface RunOutput {
+  durationMs?: number;
+  /** sha256 of the combined stdout and stderr. */
+  outputSha256?: string;
+  /** Last lines of the combined output. */
+  tail?: string;
+}
+
+export interface NamedCheckResult extends RunOutput {
   name: CheckName;
   status: CheckStatus;
   command?: CommandArgv;
@@ -157,61 +59,28 @@ export interface NamedCheckResult {
   detail?: string;
 }
 
-export type NamedCheckEvidence = NamedCheckResult;
-
-
-export interface TaskState {
-  id: string;
-  title: string;
-  /** Absent on v1 task records and therefore interpreted as attempt zero. */
-  attempt?: number;
-  status: TaskStatus;
-  dependsOn: string[];
-  commits: string[];
-  branch?: string;
-  worktree?: string;
+/** The commands an evaluation ran under: the test command plus the optional named contract. */
+export interface CheckContract {
+  testCommand: CommandArgv;
+  commands?: NamedChecksConfig;
 }
 
-export interface WorkState {
-  schemaVersion: 1;
-  harnessVersion: string;
-  id: string;
-  mode: Exclude<Mode, "query">;
-  status: WorkStatus;
-  baseCommit: string;
-  gateCommit: string;
-  createdAt: string;
-  updatedAt: string;
-  profile?: ApprovalProfile;
-  execution?: ExecutionMode;
-  /** Absent on legacy SDD state and therefore interpreted as workflow version one. */
-  workflowVersion?: number;
-  phase?: SddPhase;
-  lastCompletedPhase?: SddPhase;
-  /** Present only on outcome work. */
-  stage?: OutcomeStage;
-  planPath?: string;
-  /** Absent on v1 state files and therefore interpreted as attempt zero. */
-  attempt?: number;
-  remediation?: RemediationMetadata;
-  tasks: TaskState[];
-}
+/** observe: the commit hook only refuses commits that break a guarantee. enforce: also refuses commits outside an active work. */
+export type Enforcement = "observe" | "enforce";
+export const ENFORCEMENTS: readonly Enforcement[] = ["observe", "enforce"];
 
-export interface MemoryConfig {
-  releaseBranch: string;
-  integrationBranch?: string;
-  reconciliationBranchPattern: string;
-  relevantPaths: string[];
-  excludedPaths: string[];
-}
 export interface HarnessConfig {
-  schemaVersion: 1;
+  schemaVersion: 2;
   harnessVersion: string;
+  enforcement?: Enforcement;
   testCommand: string[];
   commands?: NamedChecksConfig;
-  defaultBranch?: string;
+  /** Default review policy of new outcomes; absent reads as required. */
+  review?: ReviewPolicy;
+  /** Globs of the verifier surface: modifying or deleting an existing file here needs human approval. */
+  verifierPaths?: string[];
+  /** Oldest commit the history audit looks at. */
   historySince?: string;
-  memory?: MemoryConfig;
 }
 
 export interface ManagedManifest {
@@ -222,98 +91,124 @@ export interface ManagedManifest {
   adapters?: Record<string, Record<string, string>>;
 }
 
+/** How strong the evidence a verifier gives is, strongest first. `review-only` has no verifier. */
+export const STRENGTHS = ["proof", "property", "test", "e2e", "review-only"] as const;
+export type Strength = (typeof STRENGTHS)[number];
+
+export interface Criterion {
+  id: string;
+  text: string;
+  /** Executable verifier, run without a shell. Absent exactly when strength is review-only. */
+  verify?: CommandArgv;
+  strength: Strength;
+}
+
+export type ReviewPolicy = "required" | "none";
+export type ApprovalPolicy = "required" | "none";
+
+export interface WorkPolicy {
+  review: ReviewPolicy;
+  approval: ApprovalPolicy;
+}
+
+export type FindingSeverity = "critical" | "high" | "medium" | "low";
+export type FindingDisposition = "open" | "fixed" | "accepted" | "deferred";
+
 export interface ReviewFinding {
   id: string;
   severity: FindingSeverity;
   summary: string;
-  disposition: FindingDisposition;
+  disposition?: FindingDisposition;
 }
 
-export interface ReviewResult {
-  schemaVersion: 1;
-  workId: string;
+export interface Review {
   reviewer: string;
-  digest: string;
+  /** The evaluated input commit the reviewer looked at. */
+  commit: string;
   verdict: "pass" | "fail";
   findings: ReviewFinding[];
-  /** Absent on v1 review records and therefore interpreted as attempt zero. */
-  attempt?: number;
-  taskId?: string;
+  submittedAt: string;
 }
 
-export interface ApprovalRecord {
-  schemaVersion: 1;
-  workId: string;
-  phase: SddPhase;
-  gateCommit: string;
+export interface Approval {
+  by: string;
+  at: string;
+  /** Evaluated input commit the human approved. */
+  input: string;
+  /** Digest of the criteria, evidence and review the human saw. */
   digest: string;
-  approvedBy: string;
-  approvedAt: string;
-  /** Absent on v1 approval records and therefore interpreted as attempt zero. */
-  attempt?: number;
+  reasons: string[];
 }
 
-export interface ReviewFailureEvidence {
-  kind: "review";
-  review: ReviewResult & { verdict: "fail" };
+export interface CriterionEvidence extends RunOutput {
+  strength: Strength;
+  status: "passed" | "failed" | "review-only";
+  command?: CommandArgv;
+  exitCode?: number;
+  detail?: string;
 }
 
-export interface ValidationCheckFailure {
-  check: string;
-  detail: string;
+export interface IntegrityIssue {
+  code: string;
+  path: string;
+  message: string;
 }
 
-export interface ValidationFailureRecord {
+export interface EarlierRun {
+  at: string;
+  input: string;
+  passed: boolean;
+  failed: string[];
+}
+
+/** Written only by `ways done`: what ran, on which input, and what it returned. */
+export interface Evidence {
+  base: string;
+  input: { commit: string; tree: string };
+  contract: CheckContract;
+  integrity: IntegrityIssue[];
+  checks: NamedCheckResult[];
+  /** Setup and services started around the checks, when configured. */
+  environment?: EnvironmentResult[];
+  criteria: Record<string, CriterionEvidence>;
+  /** Existing verifier-surface files the increment modified or deleted. */
+  verifierChanges: string[];
+  passed: boolean;
+  ranAt: string;
+  earlierRuns: EarlierRun[];
+}
+
+export type WorkKind = "outcome" | "change";
+
+/**
+ * The only committed work artifact, `.ways/work/<id>.json`. An outcome opens
+ * it with its goal, criteria and policy, which never change afterwards; a
+ * change gets one only when it must persist a human approval. Every other
+ * field is written by the harness.
+ */
+export interface WorkRecord {
+  schemaVersion: 2;
+  id: string;
+  kind: WorkKind;
+  goal?: string;
+  criteria: Criterion[];
+  policy: WorkPolicy;
+  openedAt: string;
+  evidence?: Evidence;
+  review?: Review;
+  approval?: Approval;
+  closed?: { at: string };
+  cancelled?: { at: string };
+}
+
+/** The work active in one worktree; runtime, never committed. */
+export interface ActiveWork {
   schemaVersion: 1;
-  workId: string;
-  attempt: number;
-  phase: "validate";
-  /** Immutable commit and tree on which the checks were run. */
-  inputCommit: string;
-  inputTree: string;
-  /** Legacy fallback command, retained for v1 records. */
-  testCommand: string[];
-  /** Immutable selected named-check contract, absent on legacy records. */
-  commands?: NamedChecksConfig;
-  checks: {
-    integrity: Array<{ code: string; path: string; message: string }>;
-    testExitCode?: number;
-    named?: NamedCheckEvidence[];
-    environment?: EnvironmentResult[];
-  };
-  digest: string;
-}
-
-/** Legacy inline failures remain readable; new remediation links a committed failure record. */
-export interface LegacyValidationFailureEvidence {
-  kind: "validate";
-  failures: ValidationCheckFailure[];
-}
-
-export interface ValidationFailureEvidence {
-  kind: "validate";
-  failureRecord: {
-    commit: string;
-    tree: string;
-    digest: string;
-  };
-}
-
-export type RemediationEvidence = ReviewFailureEvidence | LegacyValidationFailureEvidence | ValidationFailureEvidence;
-
-/** The attempt-scoped state needed to reopen an SDD work without erasing its prior gate. */
-export interface RemediationMetadata {
-  source: RemediationSource;
-  target: RemediationTarget;
-  reason: string;
-  evidence: RemediationEvidence;
-  priorCheckpoint: string;
-  attempt: number;
-  timestamp: string;
-}
-
-/** Immutable transition record written when a remediation attempt is opened. */
-export interface RemediationRecord extends RemediationMetadata {
-  schemaVersion: 1;
-  workId: string;
+  id: string;
+  kind: WorkKind;
+  /** HEAD when the work started; the increment is base..HEAD. */
+  base: string;
+  startedAt: string;
+  /** How it started: `ways start`, `ways outcome open`, or a commit in observe mode. */
+  origin: "start" | "outcome" | "commit";
 }

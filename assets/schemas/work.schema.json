@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ways.dev/schemas/work-v2.json",
+  "title": "Work record, .ways/work/<id>.json (written only by ways)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "kind", "criteria", "policy", "openedAt"],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,62}$" },
+    "kind": { "enum": ["outcome", "change"] },
+    "goal": { "type": "string", "minLength": 1 },
+    "criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "text", "strength"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[A-Z][A-Z0-9-]{0,31}$" },
+          "text": { "type": "string", "minLength": 1 },
+          "verify": { "$ref": "#/$defs/command" },
+          "strength": { "enum": ["proof", "property", "test", "e2e", "review-only"] }
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["review", "approval"],
+      "properties": {
+        "review": { "enum": ["required", "none"] },
+        "approval": { "enum": ["required", "none"] }
+      }
+    },
+    "openedAt": { "type": "string", "format": "date-time" },
+    "evidence": {
+      "type": "object",
+      "required": ["base", "input", "contract", "integrity", "checks", "criteria", "verifierChanges", "passed", "ranAt", "earlierRuns"],
+      "properties": {
+        "base": { "$ref": "#/$defs/sha" },
+        "input": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["commit", "tree"],
+          "properties": { "commit": { "$ref": "#/$defs/sha" }, "tree": { "$ref": "#/$defs/sha" } }
+        },
+        "contract": {
+          "type": "object",
+          "required": ["testCommand"],
+          "properties": { "testCommand": { "$ref": "#/$defs/command" }, "commands": { "type": "object" } }
+        },
+        "integrity": { "type": "array" },
+        "checks": { "type": "array" },
+        "environment": { "type": "array" },
+        "criteria": { "type": "object" },
+        "verifierChanges": { "type": "array", "items": { "type": "string" } },
+        "passed": { "type": "boolean" },
+        "ranAt": { "type": "string", "format": "date-time" },
+        "earlierRuns": { "type": "array" }
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reviewer", "commit", "verdict", "findings", "submittedAt"],
+      "properties": {
+        "reviewer": { "type": "string", "minLength": 1 },
+        "commit": { "$ref": "#/$defs/sha" },
+        "verdict": { "enum": ["pass", "fail"] },
+        "findings": { "type": "array" },
+        "submittedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["by", "at", "input", "digest", "reasons"],
+      "properties": {
+        "by": { "type": "string", "minLength": 1 },
+        "at": { "type": "string", "format": "date-time" },
+        "input": { "$ref": "#/$defs/sha" },
+        "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "reasons": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "closed": { "$ref": "#/$defs/event" },
+    "cancelled": { "$ref": "#/$defs/event" }
+  },
+  "$defs": {
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at"],
+      "properties": { "at": { "type": "string", "format": "date-time" } }
+    },
+    "command": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}

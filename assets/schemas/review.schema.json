@@ -1,28 +1,25 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ways.dev/schemas/review-v1.json",
+  "$id": "https://ways.dev/schemas/review-v2.json",
+  "title": "Review submitted with `ways review submit <file>`",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "workId", "reviewer", "digest", "verdict", "findings"],
+  "required": ["reviewer", "commit", "verdict", "findings"],
   "properties": {
-    "schemaVersion": { "const": 1 },
-    "workId": { "type": "string", "minLength": 1 },
-    "taskId": { "type": "string", "minLength": 1 },
-    "attempt": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
-    "reviewer": { "type": "string", "minLength": 1 },
-    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "reviewer": { "type": "string", "minLength": 1, "description": "who reviewed; must not be an author or committer of the reviewed increment" },
+    "commit": { "type": "string", "pattern": "^[0-9a-f]{7,64}$", "description": "the evaluated commit printed by `ways done`" },
     "verdict": { "enum": ["pass", "fail"] },
     "findings": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "severity", "summary", "disposition"],
+        "required": ["id", "severity", "summary"],
         "properties": {
           "id": { "type": "string", "minLength": 1 },
           "severity": { "enum": ["critical", "high", "medium", "low"], "description": "critical and high block until fixed; medium and low are recorded and shown but never block" },
           "summary": { "type": "string", "minLength": 1 },
-          "disposition": { "enum": ["open", "fixed", "accepted", "deferred"], "description": "only a fixed disposition clears a critical or high finding" }
+          "disposition": { "enum": ["open", "fixed", "accepted", "deferred"], "description": "only fixed clears a critical or high finding; absent reads as open" }
         }
       }
     }

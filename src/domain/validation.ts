@@ -2,10 +2,9 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { AnySchema, ErrorObject, ValidateFunction } from "ajv";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import type { CoverageArea, MemorySource, MemoryState, ReconciliationEvidence } from "../memory/model.js";
-import { CHECK_NAMES, type ApprovalRecord, type HarnessConfig, type ManagedManifest, type RemediationRecord, type ReviewResult, type ValidationFailureRecord, type WorkState } from "./types.js";
+import { CHECK_NAMES, type HarnessConfig, type ManagedManifest, type WorkRecord } from "./types.js";
 
-type SchemaName = "config" | "manifest" | "state" | "task" | "review" | "approval" | "remediation" | "validation-failure" | "coverage" | "memory-source" | "memory-state" | "reconciliation";
+type SchemaName = "config" | "manifest" | "review" | "work";
 
 export interface ValidationResult {
   valid: boolean;
@@ -44,86 +43,39 @@ function loadSchema(name: SchemaName): AnySchema {
   return JSON.parse(readFileSync(fileURLToPath(url), "utf8")) as AnySchema;
 }
 
-const taskSchema = loadSchema("task");
-const reviewSchema = loadSchema("review");
-const remediationSchema = loadSchema("remediation");
-const validationFailureSchema = loadSchema("validation-failure");
-ajv.addSchema(taskSchema);
-ajv.addSchema(reviewSchema);
-ajv.addSchema(remediationSchema);
-ajv.addSchema(validationFailureSchema);
-const validators: Record<Exclude<SchemaName, "task">, ValidateFunction> = {
-  config: ajv.compile(loadSchema("config")),
-  manifest: ajv.compile(loadSchema("manifest")),
-  state: ajv.compile(loadSchema("state")),
-  review: ajv.getSchema("https://ways.dev/schemas/review-v1.json")!,
-  approval: ajv.compile(loadSchema("approval")),
-  remediation: ajv.getSchema("https://ways.dev/schemas/remediation-v1.json")!,
-  "validation-failure": ajv.getSchema("https://ways.dev/schemas/validation-failure-v1.json")!,
-  coverage: ajv.compile(loadSchema("coverage")),
-  "memory-source": ajv.compile(loadSchema("memory-source")),
-  "memory-state": ajv.compile(loadSchema("memory-state")),
-  reconciliation: ajv.compile(loadSchema("reconciliation")),
-};
+const compiled = new Map<SchemaName, ValidateFunction>();
+
+/** Schemas compile on first use, so commands that never validate do not pay for them. */
+function validator(name: SchemaName): ValidateFunction {
+  let found = compiled.get(name);
+  if (!found) {
+    found = ajv.compile(loadSchema(name));
+    compiled.set(name, found);
+  }
+  return found;
+}
 
 function formatErrors(errors: ErrorObject[] | null | undefined): string[] {
   return (errors ?? []).map((error) => `${error.instancePath || "/"} ${error.message ?? "is invalid"}`);
 }
 
-function validate(name: keyof typeof validators, value: unknown): ValidationResult {
-  const validator = validators[name];
-  const valid = validator(value);
-  return { valid, errors: valid ? [] : formatErrors(validator.errors) };
+export function validationDetails(name: SchemaName, value: unknown): ValidationResult {
+  const validate = validator(name);
+  const valid = validate(value);
+  return { valid, errors: valid ? [] : formatErrors(validate.errors) };
 }
 
 export function validateConfig(value: unknown): value is HarnessConfig {
-  const result = validate("config", value);
-  if (!result.valid) return false;
+  if (!validationDetails("config", value).valid) return false;
   const config = value as HarnessConfig;
   const commands = CHECK_NAMES.map((name) => config.commands?.[name]).filter((command): command is string[] => command !== undefined);
   return commands.every((command) => command.every((part) => !part.includes("\0")));
 }
 
 export function validateManifest(value: unknown): value is ManagedManifest {
-  return validate("manifest", value).valid;
+  return validationDetails("manifest", value).valid;
 }
 
-export function validateState(value: unknown): value is WorkState {
-  return validate("state", value).valid;
-}
-
-export function validateReview(value: unknown): value is ReviewResult {
-  return validate("review", value).valid;
-}
-
-export function validateApproval(value: unknown): value is ApprovalRecord {
-  return validate("approval", value).valid;
-}
-
-export function validateRemediation(value: unknown): value is RemediationRecord {
-  return validate("remediation", value).valid;
-}
-
-export function validateValidationFailure(value: unknown): value is ValidationFailureRecord {
-  return validate("validation-failure", value).valid;
-}
-
-export function validateCoverage(value: unknown): value is CoverageArea {
-  return validate("coverage", value).valid;
-}
-
-export function validateMemorySource(value: unknown): value is MemorySource & { revision: string } {
-  return validate("memory-source", value).valid;
-}
-
-export function validateMemoryState(value: unknown): value is MemoryState {
-  return validate("memory-state", value).valid;
-}
-
-export function validateReconciliation(value: unknown): value is ReconciliationEvidence {
-  return validate("reconciliation", value).valid;
-}
-
-export function validationDetails(name: keyof typeof validators, value: unknown): ValidationResult {
-  return validate(name, value);
+export function validateWorkRecord(value: unknown): value is WorkRecord {
+  return validationDetails("work", value).valid;
 }

@@ -1,12 +1,19 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ways.dev/schemas/config-v1.json",
+  "$id": "https://ways.dev/schemas/config-v2.json",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "harnessVersion", "testCommand"],
   "properties": {
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": { "const": 2 },
     "harnessVersion": { "type": "string", "minLength": 1 },
+    "enforcement": { "enum": ["observe", "enforce"], "description": "observe (default): the commit hook only refuses commits that break a guarantee; enforce: it also refuses commits outside an active work" },
+    "review": { "enum": ["required", "none"], "description": "default review policy of new outcomes" },
+    "verifierPaths": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "globs of tests and check configuration; modifying or deleting an existing file here needs human approval"
+    },
     "testCommand": {
       "type": "array",
       "minItems": 1,
@@ -33,27 +40,7 @@
         "services": { "type": "array", "items": { "$ref": "#/$defs/service" } }
       }
     },
-    "defaultBranch": { "type": "string", "minLength": 1 },
-    "historySince": { "type": "string", "minLength": 7 },
-    "memory": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["releaseBranch", "reconciliationBranchPattern", "relevantPaths", "excludedPaths"],
-      "properties": {
-        "releaseBranch": { "type": "string", "minLength": 1 },
-        "integrationBranch": { "type": "string", "minLength": 1 },
-        "reconciliationBranchPattern": { "type": "string", "pattern": "^[^*]*\\*[^*]*$" },
-        "relevantPaths": {
-          "type": "array",
-          "minItems": 1,
-          "items": { "type": "string", "minLength": 1 }
-        },
-        "excludedPaths": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 }
-        }
-      }
-    }
+    "historySince": { "type": "string", "minLength": 7 }
   },
   "$defs": {
     "service": {

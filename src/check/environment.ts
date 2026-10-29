@@ -3,6 +3,7 @@ import { closeSync, mkdirSync, openSync } from "node:fs";
 import { connect } from "node:net";
 import { join } from "node:path";
 import type { EnvironmentResult, NamedChecksConfig, ServiceConfig, ServiceReadiness } from "../domain/types.js";
+import { runtimeDir } from "../runtime/runtime.js";
 import { execute, killTree } from "./process.js";
 
 const DEFAULT_READY_TIMEOUT_MS = 30_000;
@@ -61,10 +62,11 @@ function exitDetail(exit: NonNullable<RunningService["exit"]>, when: string): Pi
 }
 
 function startService(config: ServiceConfig, cwd: string): RunningService {
-  const log = join(".ways", "runtime", "services", `${config.name}.log`);
+  const directory = join(runtimeDir(cwd, false), "services");
+  const log = join(directory, `${config.name}.log`);
   const result: EnvironmentResult = { kind: "service", name: config.name, status: "passed", command: [...config.command], log };
-  mkdirSync(join(cwd, ".ways", "runtime", "services"), { recursive: true });
-  const fd = openSync(join(cwd, log), "w");
+  mkdirSync(directory, { recursive: true });
+  const fd = openSync(log, "w");
   const [program, ...args] = config.command;
   let child: ChildProcess;
   try {
@@ -121,7 +123,7 @@ async function stopService(service: RunningService): Promise<void> {
 
 /**
  * Run setup and start services for an execution boundary.  Services run in
- * their own process groups with logs under `.ways/runtime/services/`, and are
+ * their own process groups with logs under `<git-dir>/ways/services/`, and are
  * stopped on interruption as well as through `stop()`.
  */
 export async function startEnvironment(cwd: string, contract: NamedChecksConfig, timeoutMs: number): Promise<Environment> {

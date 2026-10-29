@@ -4,15 +4,10 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 export interface CommitTrailers {
+  /** The work a commit belongs to; added by the commit hook, never by hand. */
   work?: string;
-  phase?: string;
+  /** Set only on commits the harness makes for a work record: opened, verifying, reviewed, closed, cancelled. */
   state?: string;
-  task?: string;
-  attempt?: string;
-  /** Full motivating implementation range for a separate semantic-memory commit. */
-  implementation?: string;
-  /** Digest independently reviewed before a semantic-memory commit. */
-  memoryReviewDigest?: string;
 }
 
 export interface CommitInfo {
@@ -177,55 +172,51 @@ export class GitRepository {
     }
   }
 
-  async recentCommits(limit = 100): Promise<CommitInfo[]> {
-    const hashes = (await this.run(["log", `-${limit}`, "--format=%H"])).split("\n").filter(Boolean);
-    const commits: CommitInfo[] = [];
-    for (const hash of hashes) commits.push(await this.commitInfo(hash));
-    return commits;
-  }
-
-  async findCertification(work: string, phase: string): Promise<CommitInfo | undefined> {
-    for (const info of await this.recentCommits()) {
-      if (info.trailers.work === work && info.trailers.phase === phase && info.trailers.state === "completed") return info;
+  /** Uncommitted paths: modified, staged and untracked (ignored files excluded). */
+  async dirtyPaths(): Promise<string[]> {
+    const output = await this.run(["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+    const paths: string[] = [];
+    const records = output.split("\0");
+    for (let index = 0; index < records.length; index += 1) {
+      const record = records[index]!;
+      if (record.length < 4) continue;
+      paths.push(record.slice(3));
+      // A rename or copy is followed by its source path.
+      if (record[0] === "R" || record[0] === "C") index += 1;
     }
-    return undefined;
+    return [...new Set(paths)].sort();
   }
 
-  async commit(paths: readonly string[], subject: string, trailers: CommitTrailers): Promise<string> {
+  /**
+   * A commit the harness makes for its own record: only `paths`, with its
+   * trailers, and with the repository's hooks disabled so the commit hook,
+   * which refuses hand-made record commits, never sees it.
+   */
+  async harnessCommit(paths: readonly string[], subject: string, trailers: CommitTrailers): Promise<string> {
     if (paths.length === 0) throw new GitError("Refusing to commit without explicit paths");
     await this.run(["add", "--", ...paths]);
-
-    try {
-      await this.run(["diff", "--cached", "--quiet"]);
-      throw new GitError("Refusing to create an empty commit");
-    } catch (error) {
-      if (error instanceof GitError && error.message === "Refusing to create an empty commit") throw error;
-    }
-
+    const args = ["-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", subject];
     const trailerBody = formatTrailers(trailers);
-    const args = ["commit", "-m", subject];
     if (trailerBody) args.push("-m", trailerBody);
-    await this.run(args);
+    await this.run([...args, "--only", "--", ...paths]);
     return this.head();
   }
 }
 
+const TRAILER_NAMES: Record<string, keyof CommitTrailers> = {
+  "Harness-Work": "work",
+  "Harness-State": "state",
+};
+
+/** Reads the trailer block: the last paragraph of the message, as `git interpret-trailers` does. */
 export function parseTrailers(body: string): CommitTrailers {
   const result: CommitTrailers = {};
-  const names: Record<string, keyof CommitTrailers> = {
-    "Harness-Work": "work",
-    "Harness-Phase": "phase",
-    "Harness-State": "state",
-    "Harness-Task": "task",
-    "Harness-Attempt": "attempt",
-    "Memory-Implementation": "implementation",
-    "Memory-Review-Digest": "memoryReviewDigest",
-  };
-
-  for (const line of body.split("\n")) {
+  const paragraphs = body.replace(/\r\n/g, "\n").trim().split(/\n\s*\n/);
+  const block = paragraphs.at(-1) ?? "";
+  for (const line of block.split("\n")) {
     const match = line.match(/^([A-Za-z-]+):\s*(.+)$/);
     if (!match) continue;
-    const key = match[1] ? names[match[1]] : undefined;
+    const key = match[1] ? TRAILER_NAMES[match[1]] : undefined;
     const value = match[2]?.trim();
     if (key && value) result[key] = value;
   }
@@ -235,12 +226,7 @@ export function parseTrailers(body: string): CommitTrailers {
 export function formatTrailers(trailers: CommitTrailers): string {
   const entries: Array<[string, string | undefined]> = [
     ["Harness-Work", trailers.work],
-    ["Harness-Phase", trailers.phase],
     ["Harness-State", trailers.state],
-    ["Harness-Task", trailers.task],
-    ["Harness-Attempt", trailers.attempt],
-    ["Memory-Implementation", trailers.implementation],
-    ["Memory-Review-Digest", trailers.memoryReviewDigest],
   ];
   return entries.filter((entry): entry is [string, string] => Boolean(entry[1])).map(([key, value]) => `${key}: ${value}`).join("\n");
 }
