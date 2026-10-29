@@ -20,41 +20,167 @@ export const RETRIES = 2;
 export const TESTS_RAN = "tests-ran";
 
 /**
- * Existing verifier-surface files (tests, check configuration, CI) that the
- * increment modified or deleted. Added files are free: adding tests never
- * needs approval. `extra` are exact paths that count too (the files a
- * criterion's verifier names).
+ * Check configuration on the verifier surface: any change to it, adding it
+ * included, decides what runs, so it always counts. Everything else on the
+ * surface (tests, fixtures, helpers) is judged by what changed inside it.
  */
-export async function verifierChanges(git: GitRepository, base: string, input: string, globs: readonly string[], extra: readonly string[] = []): Promise<string[]> {
+const CHECK_CONFIG: readonly string[] = [
+  CONFIG_PATH,
+  `${WAYS_DIR}/allowed_signers`,
+  "package.json",
+  ".github/workflows/**",
+  ".gitlab-ci.yml",
+  "**/vitest.config.*",
+  "**/vitest.workspace.*",
+  "**/jest.config.*",
+  "**/playwright.config.*",
+  "**/cypress.config.*",
+  "**/karma.conf.*",
+  "**/.mocharc*",
+  "**/conftest.py",
+  "**/pytest.ini",
+];
+
+/** Directories of dependencies and build output: a test glob matching a file there is an accident, not a test of the project. */
+const OUTSIDE_SURFACE = new Set(["node_modules", "vendor", "dist", "build", "coverage", ".git", ".venv", "venv", "__pycache__", ".tox", "target", ".next"]);
+
+/**
+ * Added lines that turn tests off, narrow the run to some of them, or end a
+ * test file early. Extended by `testMarkers` in the base's config.
+ */
+export const TEST_MARKERS: readonly string[] = [
+  "\\.(skip|skipIf|runIf|only|todo)\\s*[(.`]",
+  "\\b(xit|xdescribe|xtest|xcontext|fit|fdescribe|ftest)\\s*\\(",
+  "@(Disabled|Ignore)\\b",
+  "@pytest\\.mark\\.(skip|skipif|xfail)\\b",
+  "\\bpytest\\.(skip|xfail)\\s*\\(",
+  "@unittest\\.(skip|expectedFailure)",
+  "\\bt\\.Skip(Now|f)?\\s*\\(",
+  "#\\[ignore\\]",
+  "\\b(process\\.exit|sys\\.exit|os\\._exit|os\\.Exit)\\s*\\(",
+];
+
+/** The markers that narrow the run to the marked tests: in a new file too they keep existing tests from running. */
+const FOCUS_MARKERS: readonly string[] = ["\\.only\\s*[(.`]", "\\b(fit|fdescribe|ftest)\\s*\\("];
+
+function onSurface(path: string, globs: readonly string[]): boolean {
+  return !path.split("/").slice(0, -1).some((segment) => OUTSIDE_SURFACE.has(segment)) && matchesAny(path, globs);
+}
+
+/**
+ * The verifier checkpoint of an increment, by what changed inside each file
+ * of the surface (docs/VERIFICATION.md): deleting a test file, removing or
+ * modifying an existing line (except widening an import of the same module),
+ * adding a line that skips, focuses or exits, and adding or changing check
+ * configuration. Adding test files, or tests to an existing file, is free.
+ * `extra` are exact paths whose every modification counts (the scripts a
+ * criterion's verifier runs); `markers` extend {@link TEST_MARKERS}.
+ */
+export async function verifierChanges(git: GitRepository, base: string, input: string, globs: readonly string[], extra: readonly string[] = [], markers: readonly string[] = []): Promise<string[]> {
   const output = await git.run(["diff", "--name-status", "--no-renames", "-z", base, input, "--"]);
   const fields = output.split("\0").filter(Boolean);
+  const disabling = [...TEST_MARKERS, ...markers].map((source) => new RegExp(source));
+  const focusing = FOCUS_MARKERS.map((source) => new RegExp(source));
+  // An increment that installs ways adds its configuration and CI; there is nothing of the base's to protect yet.
+  const installs = !await git.pathExists(base, CONFIG_PATH);
   const changed: string[] = [];
   for (let index = 0; index + 1 < fields.length; index += 2) {
     const status = fields[index]!;
     const path = fields[index + 1]!;
-    if (!(status.startsWith("M") || status.startsWith("D") || status.startsWith("T")) || path.startsWith(`${WORK_DIR}/`) || !(matchesAny(path, globs) || extra.includes(path))) continue;
-    // Structured files count only when the part that decides what is verified changes.
-    const watched = WATCHED_FIELDS[path];
-    if (watched && await watchedValue(git, base, path, watched) === await watchedValue(git, input, path, watched)) continue;
-    changed.push(path);
+    if (path.startsWith(`${WORK_DIR}/`)) continue;
+    const exact = extra.includes(path);
+    if (!exact && !onSurface(path, globs)) continue;
+    const added = status.startsWith("A");
+    if (exact && !added) {
+      changed.push(path);
+      continue;
+    }
+    if (matchesAny(path, CHECK_CONFIG)) {
+      if (added && installs) continue;
+      // Structured files count only when the part that decides what is verified changes.
+      const watched = WATCHED_FIELDS[path];
+      if (watched && await watchedValue(git, base, path, watched) === await watchedValue(git, input, path, watched)) continue;
+      changed.push(path);
+      continue;
+    }
+    if (status.startsWith("D") || status.startsWith("T")) {
+      changed.push(path);
+      continue;
+    }
+    const diff = await lineChanges(git, base, input, path);
+    if (diff === "binary" || diff.some((hunk) => !hunkIsAddition(hunk)) || diff.some((hunk) => hunk.added.some((line) => (added ? focusing : disabling).some((marker) => marker.test(line))))) changed.push(path);
   }
   return changed.sort();
 }
 
+interface Hunk {
+  removed: string[];
+  added: string[];
+}
+
+/** The hunks of one file's diff, without context lines. */
+async function lineChanges(git: GitRepository, base: string, input: string, path: string): Promise<Hunk[] | "binary"> {
+  const output = await git.run(["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", base, input, "--", path]);
+  const hunks: Hunk[] = [];
+  let hunk: Hunk | undefined;
+  for (const line of output.split("\n")) {
+    if (line.startsWith("Binary files ")) return "binary";
+    if (line.startsWith("@@")) {
+      hunk = { removed: [], added: [] };
+      hunks.push(hunk);
+    } else if (hunk && line.startsWith("-")) hunk.removed.push(line.slice(1));
+    else if (hunk && line.startsWith("+")) hunk.added.push(line.slice(1));
+  }
+  return hunks;
+}
+
+/**
+ * A hunk that only adds: every line it removes comes back unchanged (a final
+ * newline added) or as an import of the same module that names more things.
+ */
+function hunkIsAddition(hunk: Hunk): boolean {
+  const added = [...hunk.added];
+  for (const line of hunk.removed) {
+    let match = added.findIndex((candidate) => candidate.trimEnd() === line.trimEnd());
+    if (match < 0) match = added.findIndex((candidate) => widensImport(line, candidate));
+    if (match < 0) return false;
+    added.splice(match, 1);
+  }
+  return true;
+}
+
+function importParts(line: string): { skeleton: string; names: string[] } | undefined {
+  const names = (list: string): string[] => list.split(",").map((name) => name.trim()).filter(Boolean);
+  const js = /^(\s*(?:import|export|const|let|var)\b[^{]*)\{([^}]*)\}(.*)$/.exec(line);
+  if (js && /\b(from|require)\b/.test(js[3]!)) return { skeleton: `${js[1]!.trim()} {} ${js[3]!.trim()}`, names: names(js[2]!) };
+  const python = /^(\s*from\s+\S+\s+import\s+)\(?([^()#]*?)\)?\s*$/.exec(line);
+  if (python) return { skeleton: python[1]!.trim(), names: names(python[2]!) };
+  return undefined;
+}
+
+/** `import { a } from 'm'` → `import { a, b } from 'm'`: the same statement over the same module, with every name kept. */
+function widensImport(before: string, after: string): boolean {
+  const old = importParts(before);
+  const next = importParts(after);
+  return old !== undefined && next !== undefined && old.skeleton === next.skeleton && old.names.every((name) => next.names.includes(name));
+}
+
 /**
  * The ways config counts when what decides verification changes (commands,
- * verifier globs, review and approval policy, where evaluations run, the
- * reviewer), not its version; `package.json` when its scripts change (not a
- * dependency bump).
+ * verifier globs and markers, review and approval policy, enforcement, where
+ * evaluations run, the reviewer), not its version; `package.json` when its
+ * scripts or a test runner's settings change (not a dependency bump).
  */
 const WATCHED_FIELDS: Record<string, readonly string[]> = {
-  [CONFIG_PATH]: ["testCommand", "commands", "verifierPaths", "review", "evaluation", "approvals", "reviewer"],
-  "package.json": ["scripts"],
+  [CONFIG_PATH]: ["testCommand", "commands", "verifierPaths", "testMarkers", "review", "evaluation", "approvals", "reviewer", "enforcement", "historySince"],
+  "package.json": ["scripts", "jest", "vitest", "mocha", "ava", "c8", "nyc"],
 };
 
 async function watchedValue(git: GitRepository, ref: string, path: string, names: readonly string[]): Promise<string> {
+  // A file the ref does not have watches nothing, so adding one without those fields is free.
+  const text = await git.pathExists(ref, path) ? await git.run(["show", `${ref}:${path}`]) : "{}";
   try {
-    const value = JSON.parse(await git.run(["show", `${ref}:${path}`])) as Record<string, unknown>;
+    const value = JSON.parse(text) as Record<string, unknown>;
     return JSON.stringify(names.map((name) => value[name] ?? null));
   } catch {
     return "unreadable";
@@ -77,6 +203,22 @@ export async function baseVerifierPaths(git: GitRepository, base: string, curren
   if (!config) return current;
   const globs = config.verifierPaths;
   return Array.isArray(globs) && globs.every((glob) => typeof glob === "string") ? globs as string[] : DEFAULT_VERIFIER_PATHS;
+}
+
+/** The extra test markers as the base configured them (only valid expressions). */
+export async function baseTestMarkers(git: GitRepository, base: string, current: readonly string[]): Promise<readonly string[]> {
+  const config = await baseConfig(git, base);
+  const markers = config ? config.testMarkers : current;
+  return Array.isArray(markers) ? markers.filter((marker): marker is string => typeof marker === "string" && validRegex(marker)) : [];
+}
+
+function validRegex(source: string): boolean {
+  try {
+    new RegExp(source);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const INTERPRETERS = new Set(["node", "bash", "sh", "zsh", "python", "python3", "deno", "bun", "ruby", "perl", "tsx", "ts-node", "php"]);
@@ -293,7 +435,7 @@ export async function evaluate({ cwd, git, base, criteria, work, mode = "clean",
   }
 
   const surface = await baseVerifierPaths(git, base, verifierPaths(config));
-  const changes = await verifierChanges(git, base, input, surface, await verifierFiles(git, base, criteria));
+  const changes = await verifierChanges(git, base, input, surface, await verifierFiles(git, base, criteria), await baseTestMarkers(git, base, config.testMarkers ?? []));
   const testCheck = result.checks.find((check) => check.name === "test");
   let tests: TestsRatchet | undefined;
   if (testCheck?.tests !== undefined) {

@@ -18,6 +18,13 @@ export async function loadConfig(cwd: string): Promise<HarnessConfig> {
   }
   if (!validateConfig(value)) throw new Error(`Invalid ${CONFIG_PATH}: ${validationDetails("config", value).errors.join("; ")}`);
   for (const pattern of value.verifierPaths ?? []) normalizeGlob(pattern);
+  for (const marker of value.testMarkers ?? []) {
+    try {
+      new RegExp(marker);
+    } catch (error) {
+      throw new Error(`Invalid ${CONFIG_PATH}: testMarkers has "${marker}", which is not a regular expression (${error instanceof Error ? error.message : String(error)})`);
+    }
+  }
   return value;
 }
 

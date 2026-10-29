@@ -83,8 +83,10 @@ export interface HarnessConfig {
   commands?: NamedChecksConfig;
   /** Default review policy of new outcomes; absent reads as required. */
   review?: ReviewPolicy;
-  /** Globs of the verifier surface: modifying or deleting an existing file here needs human approval. */
+  /** Globs of the verifier surface: removing or changing what is there needs approval; adding tests does not (docs/VERIFICATION.md). */
   verifierPaths?: string[];
+  /** Extra regular expressions for added lines that disable or narrow tests, besides the built-in ones. */
+  testMarkers?: string[];
   /** Oldest commit the history audit looks at. */
   historySince?: string;
   /** Where `ways done` runs: a clean checkout of the commit (default) or the working tree (`fast`). */

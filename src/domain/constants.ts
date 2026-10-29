@@ -18,7 +18,7 @@ export function isWikiPath(path: string): boolean {
 /** The coding-agent hook wrapper: `agent-hook <agent> <event>` runs `ways hook <event> --agent=<agent>`. */
 export const AGENT_HOOK_PATH = `${HOOKS_DIR}/agent-hook`;
 
-/** Existing files here count as the verifier surface unless the config overrides it. */
+/** The verifier surface unless the config overrides it (dependency and build directories never count). */
 export const DEFAULT_VERIFIER_PATHS: readonly string[] = [
   "test/**",
   "tests/**",
@@ -31,10 +31,16 @@ export const DEFAULT_VERIFIER_PATHS: readonly string[] = [
   ".ways/allowed_signers",
   "package.json",
   ".github/workflows/**",
-  "vitest.config.*",
+  ".gitlab-ci.yml",
+  "**/vitest.config.*",
+  "**/vitest.workspace.*",
+  "**/jest.config.*",
+  "**/playwright.config.*",
+  "**/cypress.config.*",
+  "**/karma.conf.*",
+  "**/.mocharc*",
   "**/conftest.py",
-  "jest.config.*",
-  "playwright.config.*",
+  "**/pytest.ini",
 ];
 
 const WORK_ID = /^[a-z0-9][a-z0-9-]{1,62}$/;

@@ -12,7 +12,12 @@
     "verifierPaths": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
-      "description": "globs of tests and check configuration; modifying or deleting an existing file here needs human approval"
+      "description": "globs of tests and check configuration; removing or changing existing lines, deleting a file, adding a line that skips or focuses tests, or touching check configuration here needs approval; adding tests does not"
+    },
+    "testMarkers": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "extra regular expressions for added lines that disable or narrow tests (besides .skip, .only, xit, @Disabled, pytest.mark.skip...)"
     },
     "testCommand": {
       "type": "array",
