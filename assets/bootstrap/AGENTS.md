@@ -33,8 +33,8 @@
 
 ## Working with ways
 
-- Commit as you go; `npx ways done` checks and closes the change (`npx ways start <id>` names it).
+- Commit as you go; `npx ways done` checks and closes the change; `npx ways context` shows what is active and the next command.
 - For a delivery with acceptance criteria: `npx ways outcome open <id> --goal="..." --criterion="AC1:..." --verify="AC1:<command>"`.
 - `.ways/work/` is written only by ways; changing an existing test or check needs the human's `npx ways approve`.
+- If the task cannot be done as asked, run `npx ways block "<what is missing; what would unblock it>"` and stop; never weaken a test or check to pass.
 - Learned something durable? `npx ways remember "<fact>" --path=<glob>` and commit it with the change.
-- `npx ways context` shows the active work, what fails and the next command.
