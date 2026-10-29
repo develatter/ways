@@ -7,6 +7,7 @@ import { STRENGTHS, type ActiveWork, type Approval, type ApprovalPolicy, type Cr
 import { validationDetails } from "../domain/validation.js";
 import { GitRepository, parseTrailers } from "../git/git.js";
 import { relevantConcepts, type RelevantConcept } from "../memory/memory.js";
+import { closeWhere } from "../inbox/inbox.js";
 import { appendRun, clearActive, clearRuns, gitDirs, readActive, readRuns, writeActive, writeLastRun } from "../runtime/runtime.js";
 import { formatCommandLine, parseCommandLine } from "./argv.js";
 import { evaluate, evidenceFailures, inferStrength } from "./evaluate.js";
@@ -241,6 +242,7 @@ async function settle(top: string, git: GitRepository, active: ActiveWork, recor
   }
   next = { ...next, evidence };
   // A passing evaluation after a block means whatever blocked it was resolved.
+  if (next.blocked) resolveBlockItems(top, active.id, "resolved: a later `ways done` passed");
   delete next.blocked;
   if (next.review && next.review.commit !== evidence.input.commit) delete next.review;
   if (next.approval && next.approval.input !== evidence.input.commit) delete next.approval;
@@ -572,5 +574,15 @@ export async function cancel(cwd: string): Promise<{ id: string; commit?: string
   }
   clearActive(top, active.id);
   clearRuns(top, active.id);
+  resolveBlockItems(top, active.id, "the work was cancelled");
   return { id: active.id, ...(commit ? { commit } : {}) };
+}
+
+/** The inbox's open block items of a work, closed once the block no longer stands. The inbox is runtime: a failure here never fails the work. */
+function resolveBlockItems(top: string, id: string, reason: string): void {
+  try {
+    closeWhere(gitDirs(top), (item) => item.type === "block" && item.work === id, "ways", reason);
+  } catch {
+    // Nothing to close, or an unwritable inbox.
+  }
 }

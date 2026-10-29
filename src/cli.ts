@@ -247,8 +247,26 @@ async function dispatch(command: string, args: string[], cwd: string): Promise<n
     const reason = args.filter((arg) => !arg.startsWith("--")).join(" ");
     const { block } = await import("./work/work.js");
     const result = await block(cwd, reason);
-    console.log(`Work ${result.id} is blocked; the human sees why. Stop here: that is a valid end of this task. A later passing \`ways done\` clears the block; \`ways cancel\` drops the work.`);
+    let item: string | undefined;
+    try {
+      const { gitDirs } = await import("./runtime/runtime.js");
+      const { blockItem } = await import("./inbox/commands.js");
+      item = blockItem(gitDirs(cwd), result.id, reason)?.id;
+    } catch {
+      // The record holds the block; the inbox is a convenience.
+    }
+    console.log(`Work ${result.id} is blocked; the human sees why${item ? ` (inbox ${item}: their answer reaches this session through the hooks)` : ""}. Stop here: that is a valid end of this task. A later passing \`ways done\` clears the block; \`ways cancel\` drops the work.`);
     return 0;
+  }
+
+  if (command === "ask") {
+    const { runAsk } = await import("./inbox/commands.js");
+    return runAsk(args, cwd, { option, options });
+  }
+
+  if (command === "inbox") {
+    const { runInbox } = await import("./inbox/commands.js");
+    return runInbox(args, cwd, { option, options });
   }
 
   if (command === "cancel") {

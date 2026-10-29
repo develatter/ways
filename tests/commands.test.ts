@@ -80,7 +80,8 @@ describe("command registry", () => {
     for (const command of COMMANDS) for (const action of command.actions) expect(action.startsWith(command.name), action).toBe(true);
     expect(actionCount()).toBe(actions.length);
     expect(actionCount()).toBeLessThanOrEqual(ACTION_BUDGET);
-    expect(ACTION_BUDGET).toBe(28);
+    // 28 for the lean core, plus ask and the inbox's list/answer/close/tell.
+    expect(ACTION_BUDGET).toBe(32);
   });
 
   it("no longer offers the removed workflows", async () => {

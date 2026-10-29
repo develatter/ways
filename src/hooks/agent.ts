@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { BriefSection, SectionId } from "../context/brief.js";
 import { CONFIG_PATH } from "../domain/constants.js";
 import type { Enforcement } from "../domain/types.js";
@@ -100,6 +101,29 @@ async function memoryForTool(dirs: GitDirs, paths: readonly string[], state: Ses
   if (fresh.length === 0) return undefined;
   for (const concept of fresh) state.memory.push(concept.path);
   return [`ways memory for ${paths.join(", ")}:`, ...fresh.map(renderMemory)].join("\n");
+}
+
+/** Answers and instructions from the inbox for this session, each delivered once; nothing to read when there is no inbox. */
+async function inboxFor(dirs: GitDirs, payload: HookPayload, agent: AgentId, event: AgentEvent, work: string | null): Promise<string | undefined> {
+  if (!existsSync(join(dirs.common, "ways", "inbox"))) return undefined;
+  const { deliverTo } = await import("../inbox/inbox.js");
+  return deliverTo(dirs, { session: payload.session, agent, worktree: dirs.top, work, starting: event === "SessionStart" }, event);
+}
+
+/**
+ * Claude Code: SessionStart may append `export` lines to $CLAUDE_ENV_FILE for
+ * the session's later shell commands, so `ways ask` knows which session asks.
+ * Only a plain session id is written: it lands in a shell script.
+ */
+function exportSession(session: string, agent: AgentId): void {
+  const file = process.env.CLAUDE_ENV_FILE;
+  if (!file || !/^[A-Za-z0-9_-]{1,128}$/.test(session)) return;
+  appendFileSync(file, `export WAYS_SESSION=${session}\nexport WAYS_AGENT=${agent}\n`);
+}
+
+function joined(...parts: Array<string | undefined>): string | undefined {
+  const text = parts.filter(Boolean).join("\n\n");
+  return text || undefined;
 }
 
 async function stopReminder(dirs: GitDirs, payload: HookPayload, state: SessionState): Promise<HookDecision> {
@@ -219,14 +243,19 @@ export async function runAgentHook(event: AgentEvent, agent: AgentId, stdin: str
     let save = false;
     if (event === "SessionStart") {
       pruneEvents(dirs);
+      try {
+        exportSession(payload.session, agent);
+      } catch {
+        // Without it, answers still reach the session through its worktree.
+      }
       state.sections = {};
       state.memory = [];
-      const context = await contextFor(dirs, payload, state, true);
+      const context = joined(await inboxFor(dirs, payload, agent, event, base.work), await contextFor(dirs, payload, state, true));
       if (context) decision.context = context;
       detail = payload.source;
       save = true;
     } else if (event === "UserPromptSubmit") {
-      const context = await contextFor(dirs, payload, state, false);
+      const context = joined(await inboxFor(dirs, payload, agent, event, base.work), await contextFor(dirs, payload, state, false));
       if (context) decision.context = context;
       save = true;
     } else if (event === "PreToolUse") {
@@ -249,8 +278,12 @@ export async function runAgentHook(event: AgentEvent, agent: AgentId, stdin: str
         }
       }
     } else if (event === "Stop") {
+      // An answer or an instruction keeps the agent going once, even when a stop hook already did: each is said once, so it cannot loop.
+      const inbox = await inboxFor(dirs, payload, agent, event, base.work);
       decision = await stopReminder(dirs, payload, state);
       save = decision.remind !== undefined || decision.notify !== undefined;
+      const remind = joined(inbox, decision.remind);
+      if (remind) decision.remind = remind;
     } else if (event === "SessionEnd") {
       detail = payload.reason;
     } else if (event === "SubagentStart" && payload.agentType === REVIEWER && payload.agentId) {
@@ -263,7 +296,8 @@ export async function runAgentHook(event: AgentEvent, agent: AgentId, stdin: str
     }
     if (save) writeSession(dirs, state);
     const injected = (decision.context ?? "").length + (decision.remind ?? "").length;
-    if (result === "ok") result = decision.remind || decision.notify ? "reminded" : decision.context ? "injected" : event === "SessionStart" || event === "UserPromptSubmit" ? "silent" : "ok";    appendEvent(dirs, { ...base, ts: new Date().toISOString(), result, ms: Math.round(performance.now() - started), ...(paths.length > 0 ? { paths } : {}), ...(detail ? { detail } : {}), ...(injected > 0 ? { chars: injected } : {}) });
+    if (result === "ok") result = decision.remind || decision.notify ? "reminded" : decision.context ? "injected" : event === "SessionStart" || event === "UserPromptSubmit" ? "silent" : "ok";
+    appendEvent(dirs, { ...base, ts: new Date().toISOString(), result, ms: Math.round(performance.now() - started), ...(paths.length > 0 ? { paths } : {}), ...(detail ? { detail } : {}), ...(injected > 0 ? { chars: injected } : {}) });
     mark(`${event} done`);
     return { stdout: formatOutput(agent, event, decision), exitCode: 0 };
   } catch (error) {

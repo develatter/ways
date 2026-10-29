@@ -14,7 +14,7 @@ export interface CommandSpec {
 }
 
 /** The lean target: no more distinct CLI actions than this. */
-export const ACTION_BUDGET = 28;
+export const ACTION_BUDGET = 32;
 
 export const COMMANDS: readonly CommandSpec[] = [
   {
@@ -71,6 +71,31 @@ export const COMMANDS: readonly CommandSpec[] = [
     usage: ["ways block \"<what is missing; what would unblock it>\""],
     examples: ["ways block \"AC2 needs the payments sandbox key; set PAYMENTS_KEY in .env.test or drop AC2\""],
     actions: ["block"],
+  },
+  {
+    name: "ask",
+    summary: "Ask the human something (a question, a decision, an approval); the answer comes back through the hooks, or at once with --wait",
+    usage: [
+      "ways ask \"<question>\" [--options=a,b] [--type=ask|decision|approval] [--default=<option>] [--body=<text>]",
+      "        [--work=<id>] [--priority=low|normal|high] [--expires=30m] [--wait[=5m]] [--session=<id>] [--json]",
+      "  --wait exits 0 with the answer, 2 if still open (it arrives later through the hooks), 3 if it expired or was closed unanswered",
+    ],
+    examples: ["ways ask \"Mock Stripe in CI, or will you add STRIPE_TEST_KEY?\" --options=mock,key --wait=5m"],
+    actions: ["ask"],
+  },
+  {
+    name: "inbox",
+    summary: "What agents wait on from the human, and what the human tells them: list, show, answer, close, or tell an agent something",
+    usage: [
+      "ways inbox [list] [--all] [--json]",
+      "ways inbox show <id> [--json]",
+      "ways inbox answer <id> \"<answer>\" [--choice=<option>] [--json]",
+      "ways inbox close <id> [--reason=<text>] [--json]",
+      "ways inbox tell \"<instruction>\" [--session=<id> | --work=<id> | --worktree=<path>] [--priority=high] [--json]",
+      "  answers and instructions reach the agent once, at its next prompt, stop or session start",
+    ],
+    examples: ["ways inbox", "ways inbox answer i-mabc12-1a2b3c4d mock", "ways inbox tell \"Stream the export; it must stay under 2 s\" --work=billing-export"],
+    actions: ["inbox", "inbox answer", "inbox close", "inbox tell"],
   },
   {
     name: "review",

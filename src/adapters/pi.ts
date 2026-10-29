@@ -98,6 +98,9 @@ export default function (pi: ExtensionAPI) {
   };
   on("session_start", async (event, ctx) => {
     refresh(ctx);
+    // \`ways ask\` in pi's shell tool reads them, so the answer comes back to this session.
+    process.env.WAYS_SESSION = sessionOf(ctx);
+    process.env.WAYS_AGENT = "pi";
     pending = (await waysHook(cwdOf(ctx), "SessionStart", { session_id: sessionOf(ctx), source: event?.reason })).context ?? "";
   });
   on("turn_start", async (_event, ctx) => refresh(ctx));
