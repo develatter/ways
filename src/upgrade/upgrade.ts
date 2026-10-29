@@ -69,7 +69,7 @@ export async function planUpgrade(cwd: string): Promise<UpgradePlan> {
     const actual = await hashOf(cwd, path);
     if (actual === undefined || actual === expected) continue;
     if (owned.has(path)) modified.push(path);
-    else notes.push(`${path} is no longer managed by ways and you edited it, so it is kept as is${path === "AGENTS.md" ? "; replace its ways bullets with the short \"Working here\" section of the new template (see the README)" : ""}.`);
+    else notes.push(`${path} is no longer managed by ways and you edited it, so it is kept as is${path === "AGENTS.md" ? "; replace its ways bullets with the short \"Working with ways\" section of the new template (see the README)" : ""}.`);
   }
   const config = await readFile(join(cwd, CONFIG_PATH), "utf8").then((text) => JSON.parse(text) as { schemaVersion?: number }).catch(() => undefined);
   if (config?.schemaVersion === 1) notes.push("Moves the 0.2 model (SDD, plan, quick, tasks, attempts, discovery) to start/done and outcomes with verifiable criteria; see docs/decisions/0003-what-stays-and-what-goes.md.");

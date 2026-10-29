@@ -1,18 +1,40 @@
 # AGENTS.md
 
-<!-- A map of this project for coding agents. Replace each line below; keep it under ~100 lines. Durable facts belong in .ways/knowledge (`npx ways remember`), not here. -->
+<!-- A map of this project for coding agents and new contributors. Replace the placeholders; keep it under 100 lines. Durable facts about one area of the code belong in .ways/knowledge (`npx ways remember "<fact>" --path=<glob>`), where agents get them when they touch that code. -->
 
-## Project
+## What this is
 
-- What it is: (one or two sentences)
-- Code: (where the source lives)
-- Tests: (where they live and the command that runs them)
-- Docs: (where to look first)
-- Build and run: (commands)
+(One or two sentences: what the project does and who uses it.)
 
-## Working here
+## Map
 
-- Commit as you go; a commit hook adds the `Harness-Work` trailer. When a change is finished, run `npx ways done`: it runs the checks once and closes it. `npx ways status` shows what is missing and the next command.
-- A delivery with acceptance criteria: `npx ways outcome open <id> --goal="<one line>" --criterion="AC1:<one line>" --verify="AC1:<command>"`, then commit and `npx ways done`.
-- Never edit `.ways/work/` by hand. Changing or deleting an existing test or the check configuration needs a human approval (`npx ways approve`, run by the human); adding tests does not.
-- Learned something durable (a convention, a decision, a pitfall, how to verify something)? `npx ways remember "<fact>" --path=<glob>` and commit it with the change.
+| Path | What lives there |
+| --- | --- |
+| `(path)` | (application code) |
+| `(path)` | (tests) |
+| `(path)` | (documentation for humans) |
+| `.ways/` | ways: checks config, work records, memory (`knowledge/`) |
+
+## Commands
+
+| Task | Command |
+| --- | --- |
+| Install | `(npm ci)` |
+| Build | `(npm run build)` |
+| Test | `(npm test)` |
+| Lint | `(npm run lint)` |
+| Run | `(npm start)` |
+
+## Conventions
+
+- (Language, style and formatting rules that are not enforced by a tool.)
+- (Naming, error handling, logging.)
+- (How to add a dependency, a migration, an endpoint.)
+
+## Working with ways
+
+- Commit as you go; `npx ways done` checks and closes the change (`npx ways start <id>` names it).
+- For a delivery with acceptance criteria: `npx ways outcome open <id> --goal="..." --criterion="AC1:..." --verify="AC1:<command>"`.
+- `.ways/work/` is written only by ways; changing an existing test or check needs the human's `npx ways approve`.
+- Learned something durable? `npx ways remember "<fact>" --path=<glob>` and commit it with the change.
+- `npx ways context` shows the active work, what fails and the next command.

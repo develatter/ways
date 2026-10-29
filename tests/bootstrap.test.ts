@@ -51,7 +51,12 @@ describe("bootstrap", () => {
   it("seeds AGENTS.md once and then leaves it to the project", async () => {
     const { cwd } = await repository();
     await bootstrap({ cwd, testCommand: ["npm", "test"] });
-    expect(await readFile(join(cwd, "AGENTS.md"), "utf8")).toContain("## Project");
+    const map = await readFile(join(cwd, "AGENTS.md"), "utf8");
+    // A map of the project, not a manual of the harness: ways gets five lines, the hooks say the rest.
+    expect(map.split("\n").length).toBeLessThanOrEqual(100);
+    for (const heading of ["## What this is", "## Map", "## Commands", "## Conventions", "## Working with ways"]) expect(map).toContain(heading);
+    expect(map.slice(map.indexOf("## Working with ways")).trim().split("\n").filter((line) => line.startsWith("- "))).toHaveLength(5);
+    expect(map).not.toMatch(/review submit|Harness-Work|verifying|evidence/);
     await writeFile(join(cwd, "AGENTS.md"), "# My project\n");
     await bootstrap({ cwd, testCommand: ["npm", "test"] });
     expect(await readFile(join(cwd, "AGENTS.md"), "utf8")).toBe("# My project\n");
