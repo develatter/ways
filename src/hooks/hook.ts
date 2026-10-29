@@ -1,9 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CONFIG_PATH, isWorkId, MANIFEST_PATH, slugify, WORK_DIR } from "../domain/constants.js";
 import type { ActiveWork } from "../domain/types.js";
-import { clearRuns, gitDirs, readActive, writeActive, type GitDirs } from "../runtime/runtime.js";
+import { clearRuns, currentBranchOf, gitDirs, readActive, writeActive, type GitDirs } from "../runtime/runtime.js";
 
 /**
  * The Git commit hooks. This runs on every commit, so it only loads Node
@@ -38,9 +38,17 @@ function enforcement(top: string): "observe" | "enforce" | undefined {
   }
 }
 
+/** Staged paths with their status letter (A, M, D, ...), from one git call. */
+function stagedChanges(dirs: GitDirs): Map<string, string> {
+  const fields = git(dirs.top, ["diff", "--cached", "--name-status", "-z", "--no-renames"]).out.split("\0").filter(Boolean);
+  const changes = new Map<string, string>();
+  for (let index = 0; index + 1 < fields.length; index += 2) changes.set(fields[index + 1]!, fields[index]!);
+  return changes;
+}
+
 /** Staged record files that do not come verbatim from a commit being merged, cherry-picked or rebased. */
-function tamperedRecords(dirs: GitDirs): string[] {
-  const staged = git(dirs.top, ["diff", "--cached", "--name-only", "-z", "--no-renames"]).out.split("\0").filter((path) => path.startsWith(`${WORK_DIR}/`));
+function tamperedRecords(dirs: GitDirs, changes: ReadonlyMap<string, string>): string[] {
+  const staged = [...changes.keys()].filter((path) => path.startsWith(`${WORK_DIR}/`));
   if (staged.length === 0) return [];
   const sources = ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REBASE_HEAD"].filter((ref) => existsSync(join(dirs.gitDir, ref)));
   return staged.filter((path) => {
@@ -70,26 +78,33 @@ export function addTrailer(message: string, id: string): string {
   return comments ? `${next}${comments.startsWith("\n") ? "" : "\n"}${comments}` : next;
 }
 
-/** An outcome left open at HEAD by a harness commit, found without parsing every record. */
-function openOutcomeAtHead(top: string): ActiveWork | undefined {
-  const last = git(top, ["log", "-1", "--format=%B%x00%H"]);
-  if (!last.ok) return undefined;
-  const [body = "", head = ""] = last.out.split("\0");
-  const id = TRAILER.exec(body)?.[1];
-  if (!id || !isWorkId(id)) return undefined;
+/**
+ * The single open record in the working tree, for a checkout without a runtime
+ * pointer (a fresh clone, another worktree). Read from files, without git; the
+ * pointer itself is left to `ways done`, which knows the base.
+ */
+function openRecordInTree(top: string): string | undefined {
+  let names: string[];
   try {
-    const record = JSON.parse(readFileSync(join(top, WORK_DIR, `${id}.json`), "utf8")) as { kind?: string; openedAt?: string; closed?: unknown; cancelled?: unknown };
-    if (record.closed || record.cancelled || (record.kind !== "outcome" && record.kind !== "change")) return undefined;
-    return { schemaVersion: 1, id, kind: record.kind, base: head.trim(), startedAt: record.openedAt ?? new Date().toISOString(), origin: "outcome" };
+    names = readdirSync(join(top, WORK_DIR)).filter((name) => name.endsWith(".json"));
   } catch {
     return undefined;
   }
+  const open = names.filter((name) => {
+    try {
+      const record = JSON.parse(readFileSync(join(top, WORK_DIR, name), "utf8")) as { closed?: unknown; cancelled?: unknown };
+      return !record.closed && !record.cancelled;
+    } catch {
+      return false;
+    }
+  }).map((name) => name.slice(0, -".json".length));
+  return open.length === 1 && isWorkId(open[0]!) ? open[0] : undefined;
 }
 
-function autoStartId(top: string, message: string): string {
-  const branch = git(top, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
-  if (branch.ok && branch.out && !DEFAULT_BRANCHES.has(branch.out)) {
-    const fromBranch = slugify(branch.out);
+function autoStartId(dirs: GitDirs, message: string): string {
+  const branch = currentBranchOf(dirs);
+  if (branch && !DEFAULT_BRANCHES.has(branch)) {
+    const fromBranch = slugify(branch);
     if (fromBranch) return fromBranch;
   }
   return slugify(splitComments(message).content.split("\n")[0] ?? "") ?? "change";
@@ -97,11 +112,15 @@ function autoStartId(top: string, message: string): string {
 
 async function judge(cwd: string, messagePath: string, stage: "prepare" | "final"): Promise<HookVerdict> {
   if (process.env.WAYS_DISABLE === "1") return { accepted: true };
+  // commit-msg after a traced prepare-commit-msg has nothing left to do: skip even resolving the repository.
+  if (stage === "final" && TRAILER.test(splitComments(readFileSync(messagePath, "utf8")).content)) return { accepted: true };
   const dirs = gitDirs(cwd);
   const mode = enforcement(dirs.top);
   if (!mode) return { accepted: true };
+  let changes: Map<string, string> | undefined;
+  const staged = (): Map<string, string> => (changes ??= stagedChanges(dirs));
   if (stage === "prepare") {
-    const tampered = tamperedRecords(dirs);
+    const tampered = tamperedRecords(dirs, staged());
     if (tampered.length > 0) {
       const list = tampered.join(" ");
       return {
@@ -112,15 +131,11 @@ async function judge(cwd: string, messagePath: string, stage: "prepare" | "final
   }
   const message = readFileSync(messagePath, "utf8");
   if (TRAILER.test(splitComments(message).content)) return { accepted: true };
-  let active = readActive(dirs.top);
+  let id = readActive(dirs.top)?.id ?? openRecordInTree(dirs.top);
   let note: string | undefined;
-  if (!active) {
-    active = openOutcomeAtHead(dirs.top);
-    if (active) await writeActive(dirs.top, active);
-  }
-  if (!active) {
+  if (!id) {
     // The commit that installs ways is not work of its own.
-    if (!git(dirs.top, ["cat-file", "-e", `HEAD:${MANIFEST_PATH}`]).ok) return { accepted: true };
+    if (staged().get(MANIFEST_PATH) === "A") return { accepted: true };
     if (mode === "enforce") {
       return { accepted: false, message: "ways: refused: no active work (enforcement: enforce). Start one with `ways start <id>` or `ways outcome open <id> --goal=... --criterion=AC1:...`, then commit again." };
     }
@@ -128,12 +143,13 @@ async function judge(cwd: string, messagePath: string, stage: "prepare" | "final
     if (!splitComments(message).content.trim()) return { accepted: true };
     const head = git(dirs.top, ["rev-parse", "-q", "--verify", "HEAD"]);
     if (!head.ok) return { accepted: true };
-    active = { schemaVersion: 1, id: autoStartId(dirs.top, message), kind: "change", base: head.out, startedAt: new Date().toISOString(), origin: "commit" };
+    const active: ActiveWork = { schemaVersion: 1, id: autoStartId(dirs, message), kind: "change", base: head.out, startedAt: new Date().toISOString(), origin: "commit" };
     await writeActive(dirs.top, active);
     clearRuns(dirs.top, active.id);
+    id = active.id;
     note = `ways: this commit starts change ${active.id}; run \`ways done\` when it is finished.`;
   }
-  const next = addTrailer(message, active.id);
+  const next = addTrailer(message, id);
   if (next !== message) writeFileSync(messagePath, next, "utf8");
   return { accepted: true, ...(note ? { message: note } : {}) };
 }

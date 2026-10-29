@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { appendFileSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { isWorkId } from "../domain/constants.js";
 import type { ActiveWork, EarlierRun } from "../domain/types.js";
 import { writeAtomic } from "../fs/files.js";
@@ -18,12 +18,63 @@ export interface GitDirs {
   common: string;
 }
 
+const resolved = new Map<string, GitDirs>();
+
+/**
+ * Finds the working tree the way Git does for the plain layouts (a `.git`
+ * directory, or a `.git` file pointing at a worktree's or submodule's Git
+ * directory) without starting a process. Anything else, or GIT_DIR in the
+ * environment, is left to `git rev-parse`.
+ */
+function locate(cwd: string): GitDirs | undefined {
+  if (process.env.GIT_DIR || process.env.GIT_WORK_TREE || process.env.GIT_COMMON_DIR) return undefined;
+  for (let dir = resolve(cwd); ; dir = dirname(dir)) {
+    const dotGit = join(dir, ".git");
+    let stats;
+    try {
+      stats = statSync(dotGit);
+    } catch {
+      if (dirname(dir) === dir) return undefined;
+      continue;
+    }
+    if (stats.isDirectory()) return { top: dir, gitDir: dotGit, common: dotGit };
+    const match = /^gitdir: (.+)$/m.exec(readFileSync(dotGit, "utf8"));
+    if (!match?.[1]) return undefined;
+    const gitDir = resolve(dir, match[1].trim());
+    let common = gitDir;
+    try {
+      common = resolve(gitDir, readFileSync(join(gitDir, "commondir"), "utf8").trim());
+    } catch {
+      // A submodule's Git directory is its own common directory.
+    }
+    return { top: dir, gitDir, common };
+  }
+}
+
+/** Resolved once per directory and process: the commit hook must not spawn git for every lookup. */
 export function gitDirs(cwd: string): GitDirs {
-  const result = spawnSync("git", ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"], { cwd, encoding: "utf8" });
-  if (result.status !== 0) throw new Error(`Not inside a Git working tree: ${cwd}`);
-  const [top, gitDir, common] = result.stdout.trim().split("\n");
-  if (!top || !gitDir || !common) throw new Error(`Not inside a Git working tree: ${cwd}`);
-  return { top, gitDir, common };
+  const cached = resolved.get(cwd);
+  if (cached) return cached;
+  let dirs = locate(cwd);
+  if (!dirs) {
+    const result = spawnSync("git", ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"], { cwd, encoding: "utf8" });
+    if (result.status !== 0) throw new Error(`Not inside a Git working tree: ${cwd}`);
+    const [top, gitDir, common] = result.stdout.trim().split("\n");
+    if (!top || !gitDir || !common) throw new Error(`Not inside a Git working tree: ${cwd}`);
+    dirs = { top, gitDir, common };
+  }
+  resolved.set(cwd, dirs);
+  return dirs;
+}
+
+/** The branch HEAD points at, read from the Git directory without spawning git; undefined when detached. */
+export function currentBranchOf(dirs: GitDirs): string | undefined {
+  try {
+    const head = readFileSync(join(dirs.gitDir, "HEAD"), "utf8").trim();
+    return head.startsWith("ref: refs/heads/") ? head.slice("ref: refs/heads/".length) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function runtimeDir(cwd: string, shared = true): string {

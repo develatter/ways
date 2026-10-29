@@ -1,10 +1,12 @@
 import { spawnSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { CONFIG_PATH } from "../src/domain/constants.js";
 import { addTrailer } from "../src/hooks/hook.js";
-import { readActive } from "../src/runtime/runtime.js";
+import { GitRepository } from "../src/git/git.js";
+import { gitDirs, readActive } from "../src/runtime/runtime.js";
 import { committedRecord } from "../src/work/record.js";
 import { done, openOutcome } from "../src/work/work.js";
 import { commitFile, installed } from "./helpers.js";
@@ -89,6 +91,16 @@ describe("the commit hook", () => {
     await git.run(["add", "b.txt"]);
     await expect(git.run(["commit", "-q", "-m", "feat: b"])).rejects.toMatchObject({ stderr: expect.stringContaining("ways start <id>") });
     expect(readActive(cwd)).toBeUndefined();
+  });
+
+  it("finds the Git directories of a linked worktree without git, as git does", async () => {
+    const { cwd, git } = await installed();
+    const tree = join(cwd, "..", `wt-${Date.now()}`);
+    await git.run(["worktree", "add", "-q", "-b", "side", tree]);
+    const expected = (await new GitRepository(tree).run(["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"])).split("\n");
+    const dirs = gitDirs(tree);
+    expect([dirs.top, dirs.gitDir, dirs.common].map((path) => realpathSync(path))).toEqual(expected.map((path) => realpathSync(path)));
+    expect(realpathSync(gitDirs(cwd).gitDir)).toBe(realpathSync(join(cwd, ".git")));
   });
 
   it("runs in well under 100 ms of its own work per commit", async () => {
