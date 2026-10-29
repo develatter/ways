@@ -2,7 +2,7 @@ import { runChecks } from "../check/check.js";
 import { effectiveContract } from "../check/contract.js";
 import { execute } from "../check/process.js";
 import { loadConfig, verifierPaths } from "../config/config.js";
-import { WORK_DIR } from "../domain/constants.js";
+import { CONFIG_PATH, WORK_DIR } from "../domain/constants.js";
 import type { Criterion, CriterionEvidence, Evidence } from "../domain/types.js";
 import type { GitRepository } from "../git/git.js";
 import { matchesAny } from "../memory/glob.js";
@@ -21,9 +21,21 @@ export async function verifierChanges(git: GitRepository, base: string, input: s
   for (let index = 0; index + 1 < fields.length; index += 2) {
     const status = fields[index]!;
     const path = fields[index + 1]!;
-    if ((status.startsWith("M") || status.startsWith("D") || status.startsWith("T")) && !path.startsWith(`${WORK_DIR}/`) && matchesAny(path, globs)) changed.push(path);
+    if (!(status.startsWith("M") || status.startsWith("D") || status.startsWith("T")) || path.startsWith(`${WORK_DIR}/`) || !matchesAny(path, globs)) continue;
+    // The ways config counts only when the commands it runs change, not its version or other settings.
+    if (path === CONFIG_PATH && await rawContract(git, base) === await rawContract(git, input)) continue;
+    changed.push(path);
   }
   return changed.sort();
+}
+
+async function rawContract(git: GitRepository, ref: string): Promise<string> {
+  try {
+    const config = JSON.parse(await git.run(["show", `${ref}:${CONFIG_PATH}`])) as { testCommand?: unknown; commands?: unknown };
+    return JSON.stringify({ testCommand: config.testCommand ?? null, commands: config.commands ?? null });
+  } catch {
+    return "unreadable";
+  }
 }
 
 export interface EvaluationInput {
