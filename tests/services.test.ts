@@ -6,11 +6,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { bootstrap } from "../src/bootstrap/bootstrap.js";
 import { failedCheckDetails, runChecks } from "../src/check/check.js";
-import type { NamedChecksConfig, ValidationFailureRecord } from "../src/domain/types.js";
+import type { NamedChecksConfig } from "../src/domain/types.js";
 import { validateConfig } from "../src/domain/validation.js";
 import { GitRepository } from "../src/git/git.js";
-import { finishQuick, startQuick } from "../src/work/quick.js";
-import { validationFailureDigest, validationFailureRecordFailure } from "../src/work/validation-failure.js";
+import { runtimeDir } from "../src/runtime/runtime.js";
+import { done, startChange } from "../src/work/work.js";
 
 const node = process.execPath;
 const pass = [node, "-e", "process.exit(0)"];
@@ -29,7 +29,7 @@ async function repository(commands: NamedChecksConfig): Promise<string> {
   await writeFile(join(cwd, ".gitkeep"), "");
   await git.run(["add", ".gitkeep"]);
   await git.run(["commit", "-q", "-m", "initial"]);
-  await bootstrap({ cwd, testCommand: pass, adapters: false, commands });
+  await bootstrap({ cwd, testCommand: pass, agents: [], commands });
   return cwd;
 }
 
@@ -93,18 +93,18 @@ describe("setup and service readiness", () => {
     expect(plain.checks?.find((check) => check.name === "test")?.status).toBe("failed");
     await expect(readFile(setupMarker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 
-    const result = await runChecks(repo, false, undefined, { services: true });
+    const result = await runChecks(repo, { services: true });
     expect(result.environment?.map(({ kind, name, status }) => [kind, name, status])).toEqual([
       ["setup", "setup", "passed"],
       ["service", "api", "passed"],
     ]);
     expect(result.checks?.find((check) => check.name === "test")?.status).toBe("passed");
-    expect(result.testExitCode).toBe(0);
-    expect(await readFile(join(repo, ".ways", "runtime", "services", "api.log"), "utf8")).toContain("api listening");
+    expect(result.passed).toBe(true);
+    expect(await readFile(join(runtimeDir(repo, false), "services", "api.log"), "utf8")).toContain("api listening");
     const pid = await pidOf(pidFile);
     await eventually(() => !alive(pid));
     expect(alive(bystander.pid!)).toBe(true);
-    expect(await new GitRepository(repo).run(["status", "--porcelain", "--", ".ways/runtime"])).toBe("");
+    expect(runtimeDir(repo, false).startsWith(join(repo, ".git"))).toBe(true);
   });
 
   it("fails an evaluation whose service never becomes ready and kills it", async () => {
@@ -116,10 +116,10 @@ describe("setup and service readiness", () => {
       test: [node, "-e", `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran")`],
       services: [{ name: "idle", command: service(pidFile, "setInterval(() => {}, 1000)"), ready: { tcp: { port: await freePort() } }, timeoutMs: 300 }],
     });
-    const result = await runChecks(repo, false, undefined, { services: true });
+    const result = await runChecks(repo, { services: true });
     expect(result.environment?.[0]).toMatchObject({ name: "idle", status: "timed-out", detail: "Service did not become ready within 300ms" });
     expect(result.checks?.find((check) => check.name === "test")?.status).toBe("skipped");
-    expect(result.testExitCode).toBe(1);
+    expect(result.passed).toBe(false);
     expect(failedCheckDetails(result)[0]).toContain("service idle: timed-out");
     await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     const pid = await pidOf(pidFile);
@@ -133,10 +133,10 @@ describe("setup and service readiness", () => {
       test: pass,
       services: [{ name: "crash", command: [node, "-e", "console.error('boom'); process.exit(3)"], ready: { command: [node, "-e", "process.exit(1)"] }, timeoutMs: 3_000 }],
     });
-    const crashed = await runChecks(early, false, undefined, { services: true });
-    expect(crashed.environment?.[0]).toMatchObject({ status: "failed", exitCode: 3, detail: "Service exited with code 3 before becoming ready", log: ".ways/runtime/services/crash.log" });
-    expect(crashed.testExitCode).toBe(1);
-    expect(await readFile(join(early, ".ways", "runtime", "services", "crash.log"), "utf8")).toContain("boom");
+    const crashed = await runChecks(early, { services: true });
+    expect(crashed.environment?.[0]).toMatchObject({ status: "failed", exitCode: 3, detail: "Service exited with code 3 before becoming ready", log: join(runtimeDir(early, false), "services", "crash.log") });
+    expect(crashed.passed).toBe(false);
+    expect(await readFile(join(runtimeDir(early, false), "services", "crash.log"), "utf8")).toContain("boom");
 
     const readyFile = join(cwd, "ready");
     const late = await repository({
@@ -149,10 +149,10 @@ describe("setup and service readiness", () => {
         timeoutMs: 3_000,
       }],
     });
-    const died = await runChecks(late, false, undefined, { services: true });
+    const died = await runChecks(late, { services: true });
     expect(died.checks?.find((check) => check.name === "test")?.status).toBe("passed");
     expect(died.environment?.[0]).toMatchObject({ status: "failed", detail: "Service exited with code 4 while checks ran" });
-    expect(died.testExitCode).toBe(1);
+    expect(died.passed).toBe(false);
   });
 
   it("does not start services when setup fails", async () => {
@@ -164,7 +164,7 @@ describe("setup and service readiness", () => {
       setup: [node, "-e", "process.exit(5)"],
       services: [{ name: "never", command: service(pidFile, ""), ready: { tcp: { port: 1 } } }],
     });
-    const result = await runChecks(repo, false, undefined, { services: true });
+    const result = await runChecks(repo, { services: true });
     expect(result.environment).toEqual([{ kind: "setup", name: "setup", status: "failed", command: [node, "-e", "process.exit(5)"], exitCode: 5 }]);
     expect(result.checks?.find((check) => check.name === "test")?.status).toBe("skipped");
     await expect(readFile(pidFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
@@ -189,7 +189,7 @@ describe("setup and service readiness", () => {
     await eventually(() => !alive(pid));
   });
 
-  it("refuses to finish quick work in an unhealthy environment", async () => {
+  it("refuses to finish a change in an unhealthy environment and records why", async () => {
     const repo = await repository({
       required: ["test"],
       test: pass,
@@ -197,36 +197,18 @@ describe("setup and service readiness", () => {
     });
     const git = new GitRepository(repo);
     await git.run(["add", "."]);
-    await git.run(["commit", "-q", "-m", "bootstrap"]);
-    await startQuick(repo, "health");
+    await git.run(["-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "bootstrap"]);
+    await startChange(repo, "health");
     await writeFile(join(repo, "change.txt"), "x\n");
-    await expect(finishQuick(repo, "chore: change")).rejects.toThrow("service down: failed (Service exited with code 7 before becoming ready)");
-  });
-
-  it("records environment failures in validation failure evidence", () => {
-    const withoutDigest = {
-      schemaVersion: 1 as const,
-      workId: "service-record",
-      attempt: 0,
-      phase: "validate" as const,
-      inputCommit: "a".repeat(40),
-      inputTree: "b".repeat(40),
-      testCommand: pass,
-      commands: { required: ["test"] as const, test: pass, services: [{ name: "api", command: pass, ready: { tcp: { port: 3000 } } }] },
-      checks: {
-        testExitCode: 1,
-        integrity: [],
-        named: [{ name: "test" as const, status: "skipped" as const, command: pass, detail: "Skipped because the environment is not healthy" }],
-        environment: [{ kind: "service" as const, name: "api", status: "timed-out" as const, command: pass, detail: "Service did not become ready within 30000ms", log: ".ways/runtime/services/api.log" }],
-      },
-    };
-    const record: ValidationFailureRecord = { ...withoutDigest, commands: { ...withoutDigest.commands, required: ["test"] }, digest: "" };
-    record.digest = validationFailureDigest({ ...record, digest: undefined } as Omit<ValidationFailureRecord, "digest">);
-    expect(validationFailureRecordFailure(record)).toBeUndefined();
+    const result = await done(repo, { message: "chore: change" });
+    expect(result.status).toBe("failed");
+    expect(result.failures[0]).toContain("service down: failed — Service exited with code 7 before becoming ready");
+    expect(result.evidence.environment?.[0]).toMatchObject({ name: "down", status: "failed" });
+    expect(result.evidence.checks.find((check) => check.name === "test")?.status).toBe("skipped");
   });
 
   it("validates the service contract", () => {
-    const base = { schemaVersion: 1, harnessVersion: "0.1.0", testCommand: pass };
+    const base = { schemaVersion: 2, harnessVersion: "0.3.0", testCommand: pass };
     expect(validateConfig({ ...base, commands: { required: ["test"], test: pass, setup: pass, services: [{ name: "db", command: pass, ready: { tcp: { port: 5432 } } }] } })).toBe(true);
     expect(validateConfig({ ...base, commands: { required: ["test"], services: [{ name: "db", command: pass, ready: { tcp: { port: 5432 }, http: "http://x" } }] } })).toBe(false);
     expect(validateConfig({ ...base, commands: { required: ["test"], services: [{ name: "Bad Name", command: pass, ready: { command: pass } }] } })).toBe(false);

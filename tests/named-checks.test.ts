@@ -9,8 +9,6 @@ import { bootstrap } from "../src/bootstrap/bootstrap.js";
 import { runChecks, treeKillArgs } from "../src/check/check.js";
 import { validateConfig } from "../src/domain/validation.js";
 import { GitRepository } from "../src/git/git.js";
-import type { ValidationFailureRecord } from "../src/domain/types.js";
-import { validationFailureDigest, validationFailureRecordFailure, validationFailureReplayFailure } from "../src/work/validation-failure.js";
 
 async function repository(): Promise<string> {
   const cwd = await mkdtemp(join(tmpdir(), "ways-named-checks-"));
@@ -32,7 +30,7 @@ describe("named environment checks", () => {
     await bootstrap({
       cwd,
       testCommand: pass,
-      adapters: false,
+      agents: [],
       commands: {
         required: ["lint", "test"],
         test: pass,
@@ -47,7 +45,15 @@ describe("named environment checks", () => {
       ["build", "skipped"],
       ["e2e", "skipped"],
     ]);
-    expect(result.testExitCode).toBe(1);
+    expect(result.passed).toBe(false);
+  });
+
+  it("records duration, output digest and tail instead of streaming when capturing", async () => {
+    const cwd = await repository();
+    await bootstrap({ cwd, testCommand: [process.execPath, "-e", "for (let i = 1; i <= 30; i++) console.log('line ' + i); process.exit(2)"], agents: [] });
+    const [check] = (await runChecks(cwd, { capture: true })).checks;
+    expect(check).toMatchObject({ name: "test", status: "failed", exitCode: 2, outputSha256: expect.stringMatching(/^[0-9a-f]{64}$/), durationMs: expect.any(Number) });
+    expect(check?.tail?.split("\n")).toEqual(Array.from({ length: 20 }, (_, index) => `line ${index + 11}`));
   });
 
   it("distinguishes unavailable required commands and bounded timeouts", async () => {
@@ -55,7 +61,7 @@ describe("named environment checks", () => {
     await bootstrap({
       cwd,
       testCommand: pass,
-      adapters: false,
+      agents: [],
       commands: {
         required: ["test", "lint"],
         // Exercise the real child-process timeout and process-tree cleanup boundary.
@@ -69,61 +75,13 @@ describe("named environment checks", () => {
     expect(result.checks?.find((check) => check.name === "lint")?.status).toBe("unavailable");
   });
 
-  it("replays the recorded named contract after current configuration changes", async () => {
+  it("skips the commands when integrity fails", async () => {
     const cwd = await repository();
-    const git = new GitRepository(cwd);
-    const failingLint = [process.execPath, "-e", "process.exit(4)"];
-    const passingLint = [process.execPath, "-e", "process.exit(0)"];
-    const commands = { required: ["test", "lint"] as const, test: pass, lint: failingLint };
-    await bootstrap({ cwd, testCommand: pass, adapters: false, commands });
-    await git.run(["add", "."]);
-    await git.run(["commit", "-q", "-m", "bootstrap"]);
-    const inputCommit = await git.head();
+    await bootstrap({ cwd, testCommand: pass, agents: [], commands: { required: ["test"], test: pass } });
+    await writeFile(join(cwd, "scripts/check.sh"), "#!/bin/sh\n");
     const result = await runChecks(cwd);
-    const recordWithoutDigest = {
-      schemaVersion: 1 as const,
-      workId: "named-replay",
-      attempt: 0,
-      phase: "validate" as const,
-      inputCommit,
-      inputTree: await git.run(["rev-parse", "HEAD^{tree}"]),
-      testCommand: pass,
-      commands,
-      checks: {
-        integrity: result.issues,
-        testExitCode: result.testExitCode,
-        named: result.checks,
-      },
-    };
-    const record: ValidationFailureRecord = {
-      ...recordWithoutDigest,
-      digest: validationFailureDigest(recordWithoutDigest),
-    };
-    const configPath = join(cwd, ".ways/config.json");
-    const config = JSON.parse(await readFile(configPath, "utf8")) as Record<string, unknown>;
-    config.commands = { ...commands, lint: passingLint };
-    await writeFile(configPath, `${JSON.stringify(config)}\\n`);
-    expect(await validationFailureReplayFailure(git, record)).toBeUndefined();
-  });
-
-  it("accepts integrity failures when named commands were skipped", () => {
-    const withoutDigest = {
-      schemaVersion: 1 as const,
-      workId: "integrity-record",
-      attempt: 0,
-      phase: "validate" as const,
-      inputCommit: "a".repeat(40),
-      inputTree: "b".repeat(40),
-      testCommand: pass,
-      commands: { required: ["test"] as const, test: pass },
-      checks: {
-        integrity: [{ code: "integrity-error", path: "AGENTS.md", message: "changed" }],
-        testExitCode: 1,
-        named: [{ name: "test" as const, status: "skipped" as const, command: pass, detail: "Skipped because integrity checks failed" }],
-      },
-    };
-    const record: ValidationFailureRecord = { ...withoutDigest, digest: validationFailureDigest(withoutDigest) };
-    expect(validationFailureRecordFailure(record)).toBeUndefined();
+    expect(result.passed).toBe(false);
+    expect(result.checks.find((check) => check.name === "test")).toMatchObject({ status: "skipped", detail: "Skipped because integrity checks failed" });
   });
 
   it("terminates the harness on interruption without running later checks", async () => {
@@ -132,7 +90,7 @@ describe("named environment checks", () => {
     await bootstrap({
       cwd,
       testCommand: pass,
-      adapters: false,
+      agents: [],
       commands: {
         required: ["test", "lint"],
         test: [process.execPath, "-e", "setTimeout(() => {}, 5000)"],
@@ -161,7 +119,7 @@ describe("named environment checks", () => {
 
   it("bootstraps legacy whitespace arguments unchanged", async () => {
     const cwd = await repository();
-    await expect(bootstrap({ cwd, testCommand: [process.execPath, "-e", " "], adapters: false })).resolves.toBeDefined();
+    await expect(bootstrap({ cwd, testCommand: [process.execPath, "-e", " "], agents: [] })).resolves.toBeDefined();
   });
 
   it("rejects every present invalid commands option", async () => {
@@ -172,23 +130,23 @@ describe("named environment checks", () => {
   });
 
   it("rejects empty or unknown commands while accepting legacy configuration", () => {
-    expect(validateConfig({ schemaVersion: 1, harnessVersion: "test", testCommand: ["true"] })).toBe(true);
+    expect(validateConfig({ schemaVersion: 2, harnessVersion: "test", testCommand: ["true"] })).toBe(true);
     expect(validateConfig({
-      schemaVersion: 1,
+      schemaVersion: 2,
       harnessVersion: "test",
       testCommand: ["true"],
       commands: { required: ["test"], test: [] },
     })).toBe(false);
     expect(validateConfig({
-      schemaVersion: 1,
+      schemaVersion: 2,
       harnessVersion: "test",
       testCommand: ["true"],
       commands: { required: ["unknown"], test: ["true"] },
     })).toBe(false);
-    expect(validateConfig({ schemaVersion: 1, harnessVersion: "test", testCommand: [" "] })).toBe(true);
-    expect(validateConfig({ schemaVersion: 1, harnessVersion: "test", testCommand: ["bad\0"] })).toBe(true);
+    expect(validateConfig({ schemaVersion: 2, harnessVersion: "test", testCommand: [" "] })).toBe(true);
+    expect(validateConfig({ schemaVersion: 2, harnessVersion: "test", testCommand: ["bad\0"] })).toBe(true);
     expect(validateConfig({
-      schemaVersion: 1,
+      schemaVersion: 2,
       harnessVersion: "test",
       testCommand: ["true"],
       commands: { required: ["test"], test: ["bad\0"] },

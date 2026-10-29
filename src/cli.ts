@@ -271,6 +271,9 @@ async function dispatch(command: string, args: string[], cwd: string): Promise<n
     const testCommand = jsonOption(args, "--test-command") ?? ["npm", "test"];
     if (!Array.isArray(testCommand) || !testCommand.every((part) => typeof part === "string")) throw new Error("--test-command must be a JSON string array, e.g. --test-command='[\"npm\",\"test\"]'");
     const commands = jsonOption(args, "--commands");
+    if (commands !== undefined && (typeof commands !== "object" || commands === null || Array.isArray(commands))) {
+      throw new Error("--commands must be a JSON object, e.g. --commands='{\"required\":[\"test\",\"lint\"],\"test\":[\"npm\",\"test\"],\"lint\":[\"npm\",\"run\",\"lint\"]}'");
+    }
     const agentsOption = option(args, "--agents");
     const agents = args.includes("--no-adapters") ? [] : agentsOption === undefined ? [...DEFAULT_AGENTS] : agentsOption.split(",").map((agent) => agent.trim()).filter(Boolean);
     const result = await bootstrap({
