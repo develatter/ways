@@ -1,0 +1,7 @@
+5b72cd1 outcome(close): complete greeting | Harness-Work: greeting,Harness-Phase: outcome-close,Harness-State: completed
+77c88a4 outcome(execute): complete greeting | Harness-Work: greeting,Harness-Phase: outcome-execute,Harness-State: completed
+7eb1f2c feat: greet users | Harness-Work: greeting
+d379ff9 outcome(open): greeting | Harness-Work: greeting,Harness-Phase: outcome-open,Harness-State: opened
+d1a0705 docs(memory): record the token refresh convention | Harness-Work: add-memory,Harness-State: completed
+d250f3d chore: install ways 0.2.2 | 
+8930f80 chore: initial project | 

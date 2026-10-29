@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "harnessVersion": "0.3.0-dev.0",
+  "id": "padding",
+  "mode": "quick",
+  "status": "active",
+  "baseCommit": "5b72cd17029aba22c077a8c8beee0371137c32c4",
+  "gateCommit": "5b72cd17029aba22c077a8c8beee0371137c32c4",
+  "createdAt": "2026-10-29T00:31:41.239Z",
+  "updatedAt": "2026-10-29T00:31:41.239Z",
+  "tasks": []
+}
