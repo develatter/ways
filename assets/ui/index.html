@@ -40,10 +40,12 @@ select,.btn{background:var(--panel);border:1px solid var(--line);border-radius:8
 @media (prefers-color-scheme:dark){.count.hot{color:#1b1200}}
 .banner{margin:8px 16px 0;padding:8px 12px;border-radius:8px;background:var(--chip);border-left:3px solid var(--c-waiting)}
 .banner.err{border-left-color:var(--bad)}
-main.layout{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:0;min-height:0}
-.board{overflow:auto;padding:14px 16px}
-.columns{display:grid;grid-template-columns:repeat(6,minmax(220px,1fr));gap:12px;align-items:start;min-width:max-content}
-.col{background:transparent;min-width:220px}
+main.layout{flex:1;display:grid;grid-template-columns:minmax(0,1fr) clamp(280px,22vw,360px);min-height:0}
+.board{overflow:auto;padding:14px 16px;min-width:0}
+/* Equal flexible columns: a card's text never widens its column; the board scrolls only when six 200px columns do not fit. */
+.columns{display:flex;gap:12px;align-items:flex-start}
+.col{flex:1 1 240px;min-width:200px}
+.card{overflow-wrap:anywhere}
 .col h2{display:flex;align-items:center;gap:8px;margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
 .col h2::before{content:"";width:8px;height:8px;border-radius:2px;background:var(--cc)}
 .col .empty{color:var(--muted);font-size:12px;padding:10px;border:1px dashed var(--line);border-radius:10px;text-align:center}
@@ -87,7 +89,8 @@ aside h2{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:15px}
 @media (prefers-color-scheme:dark){.t-ask,.t-decision{background:#1d2a4a;color:#a9c1ff}.t-approval{background:#3d2a10;color:#ffcf8a}.t-block{background:#43201d;color:#ffb3ad}.t-instruction{background:#16351f;color:#9be3b3}}
 details summary{cursor:pointer;color:var(--muted);font-size:13px;margin:6px 0}
 .none{color:var(--muted);font-size:13px}
-@media (max-width:1000px){main.layout{grid-template-columns:1fr}aside.inbox{border-left:0;border-top:1px solid var(--line)}.board{overflow-x:auto}}
+@media (max-width:1000px){main.layout{grid-template-columns:1fr}aside.inbox{border-left:0;border-top:1px solid var(--line)}}
+@media (max-width:640px){.columns{flex-direction:column;align-items:stretch}.col{flex:none;min-width:0}header.top{flex-wrap:wrap}}
 </style>
 </head>
 <body>

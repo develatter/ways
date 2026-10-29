@@ -139,6 +139,34 @@ describe("ways serve: who may talk to it", () => {
     expect(createHash("sha256").update(html).digest("hex")).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  it("lays the board out in equal flexible columns that share the width next to the inbox", () => {
+    const css = /<style>([\s\S]*?)<\/style>/.exec(readFileSync(uiPath(), "utf8"))![1]!;
+    const rule = (selector: string): string => new RegExp(`(?:^|\\n|\\})${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\{([^}]*)\\}`).exec(css)?.[1] ?? "";
+    // A grid with min-width:max-content sized every column to the longest unwrapped card text (933 px at 1700 px).
+    expect(css).not.toMatch(/max-content/);
+    expect(rule(".columns")).toMatch(/display:flex/);
+    const col = rule(".col");
+    const [, grow, shrink, basis] = /flex:(\d+) (\d+) (\d+)px/.exec(col)!;
+    const minWidth = Number(/min-width:(\d+)px/.exec(col)![1]);
+    expect([Number(grow), Number(shrink)]).toEqual([1, 1]);
+    expect(Number(basis)).toBeLessThanOrEqual(260);
+    const [, low, share, high] = /grid-template-columns:minmax\(0,1fr\) clamp\((\d+)px,(\d+)vw,(\d+)px\)/.exec(rule("main.layout"))!.map(Number) as number[];
+    const gap = Number(/gap:(\d+)px/.exec(rule(".columns"))![1]);
+    // Six columns side by side next to the inbox (above 1000 px), below it under 1000 px.
+    const column = (viewport: number): { width: number; scrolls: boolean } => {
+      const inbox = viewport > 1000 ? Math.min(high!, Math.max(low!, viewport * share! / 100)) : 0;
+      const room = viewport - inbox - 32 - 5 * gap;
+      return { width: Math.max(minWidth, room / 6), scrolls: room / 6 < minWidth };
+    };
+    expect(column(1700)).toMatchObject({ scrolls: false });
+    expect(column(1700).width).toBeGreaterThan(200);
+    expect(column(1700).width).toBeLessThan(260);
+    expect(column(1280)).toEqual({ width: minWidth, scrolls: true });
+    expect(column(2560).width).toBeLessThan(400);
+    // On a phone the columns stack and take the whole width.
+    expect(css).toMatch(/@media \(max-width:640px\)\{\.columns\{flex-direction:column/);
+  });
+
   it("keeps a registry of repositories in the user's config directory", async () => {
     const env = { WAYS_CONFIG_DIR: await mkdtemp(join(tmpdir(), "ways-config-")) };
     expect(readRegistry(env)).toEqual([]);
