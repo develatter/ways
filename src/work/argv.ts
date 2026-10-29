@@ -7,7 +7,7 @@
  */
 export function parseCommandLine(text: string): string[] {
   const trimmed = text.trim();
-  if (trimmed.startsWith("[")) {
+  if (trimmed.startsWith("[") && !/^\[\s/.test(trimmed)) {
     let value: unknown;
     try {
       value = JSON.parse(trimmed);
@@ -27,7 +27,8 @@ export function parseCommandLine(text: string): string[] {
     const character = trimmed[index]!;
     if (quote) {
       if (character === quote) quote = undefined;
-      else if (character === "\\" && quote === "\"" && index + 1 < trimmed.length) current += trimmed[++index];
+      // As in POSIX shells, inside double quotes a backslash only escapes $ ` " \; elsewhere it stays.
+      else if (character === "\\" && quote === "\"" && /[$`"\\]/.test(trimmed[index + 1] ?? "")) current += trimmed[++index];
       else current += character;
       continue;
     }

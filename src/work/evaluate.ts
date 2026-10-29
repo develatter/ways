@@ -2,7 +2,7 @@ import { runChecks } from "../check/check.js";
 import { effectiveContract } from "../check/contract.js";
 import { execute } from "../check/process.js";
 import { loadConfig, verifierPaths } from "../config/config.js";
-import { CONFIG_PATH, WORK_DIR } from "../domain/constants.js";
+import { CONFIG_PATH, DEFAULT_VERIFIER_PATHS, WORK_DIR } from "../domain/constants.js";
 import type { Criterion, CriterionEvidence, Evidence } from "../domain/types.js";
 import type { GitRepository } from "../git/git.js";
 import { matchesAny } from "../memory/glob.js";
@@ -22,19 +22,40 @@ export async function verifierChanges(git: GitRepository, base: string, input: s
     const status = fields[index]!;
     const path = fields[index + 1]!;
     if (!(status.startsWith("M") || status.startsWith("D") || status.startsWith("T")) || path.startsWith(`${WORK_DIR}/`) || !matchesAny(path, globs)) continue;
-    // The ways config counts only when the commands it runs change, not its version or other settings.
-    if (path === CONFIG_PATH && await rawContract(git, base) === await rawContract(git, input)) continue;
+    // Structured files count only when the part that decides what is verified changes.
+    const watched = WATCHED_FIELDS[path];
+    if (watched && await watchedValue(git, base, path, watched) === await watchedValue(git, input, path, watched)) continue;
     changed.push(path);
   }
   return changed.sort();
 }
 
-async function rawContract(git: GitRepository, ref: string): Promise<string> {
+/**
+ * The ways config counts when its commands, verifier globs or review default
+ * change (not its version); `package.json` when its scripts change (not a
+ * dependency bump).
+ */
+const WATCHED_FIELDS: Record<string, readonly string[]> = {
+  [CONFIG_PATH]: ["testCommand", "commands", "verifierPaths", "review"],
+  "package.json": ["scripts"],
+};
+
+async function watchedValue(git: GitRepository, ref: string, path: string, names: readonly string[]): Promise<string> {
   try {
-    const config = JSON.parse(await git.run(["show", `${ref}:${CONFIG_PATH}`])) as { testCommand?: unknown; commands?: unknown };
-    return JSON.stringify({ testCommand: config.testCommand ?? null, commands: config.commands ?? null });
+    const value = JSON.parse(await git.run(["show", `${ref}:${path}`])) as Record<string, unknown>;
+    return JSON.stringify(names.map((name) => value[name] ?? null));
   } catch {
     return "unreadable";
+  }
+}
+
+/** The verifier globs as the base configured them, so an increment cannot narrow them for itself. */
+async function baseVerifierPaths(git: GitRepository, base: string, current: readonly string[]): Promise<readonly string[]> {
+  try {
+    const config = JSON.parse(await git.run(["show", `${base}:${CONFIG_PATH}`])) as { verifierPaths?: unknown };
+    return Array.isArray(config.verifierPaths) && config.verifierPaths.every((glob) => typeof glob === "string") ? config.verifierPaths as string[] : DEFAULT_VERIFIER_PATHS;
+  } catch {
+    return current;
   }
 }
 
@@ -79,7 +100,7 @@ export async function evaluate({ cwd, git, base, criteria }: EvaluationInput): P
       ...(run.tail !== undefined ? { tail: run.tail } : {}),
     };
   }
-  const changes = await verifierChanges(git, base, input, verifierPaths(config));
+  const changes = await verifierChanges(git, base, input, await baseVerifierPaths(git, base, verifierPaths(config)));
   const passed = result.passed && Object.values(evidence).every((entry) => entry.status !== "failed");
   return {
     base,

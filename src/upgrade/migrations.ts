@@ -22,7 +22,9 @@ export interface MigrationReport {
 
 const LEGACY_STATE = ".ways/state/current.json";
 const LEGACY_STATUS = ".ways/status.json";
-const LEGACY_DIRECTORIES = [".ways/memory", ".ways/indexes", ".ways/runtime", ".ways/worktrees", ".ways/reconciliations"];
+const LEGACY_DIRECTORIES = [".ways/memory", ".ways/indexes", ".ways/runtime", ".ways/reconciliations"];
+/** 0.2 task worktrees may hold uncommitted work: they are reported, never deleted. */
+const LEGACY_WORKTREES = ".ways/worktrees";
 const LEGACY_HISTORY = [".ways/outcomes", ".ways/sdd", ".ways/plans"];
 const LEGACY_DIRECTORY_INDEX = "# Concepts\n\nNo concepts recorded.\n";
 
@@ -166,6 +168,9 @@ export async function migrateFromLegacy(cwd: string): Promise<MigrationReport> {
     if (!await exists(join(cwd, directory))) continue;
     await rm(join(cwd, directory), { recursive: true, force: true });
     notes.push(`Removed ${directory}/ (0.2 discovery, reconciliation, index or worktree data).`);
+  }
+  if (await exists(join(cwd, LEGACY_WORKTREES))) {
+    notes.push(`${LEGACY_WORKTREES}/ holds 0.2 task worktrees; commit or move anything you need from them, then remove each with \`git worktree remove <path>\`.`);
   }
   const legacy: string[] = [];
   for (const directory of LEGACY_HISTORY) if (await exists(join(cwd, directory))) legacy.push(`${directory}/`);

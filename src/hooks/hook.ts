@@ -60,10 +60,14 @@ function tamperedRecords(dirs: GitDirs, changes: ReadonlyMap<string, string>): s
   });
 }
 
-/** Splits a message into its content and the trailing comment block Git strips. */
+/** Git cuts everything from this line on (`git commit -v`). */
+const SCISSORS = /^# -+ >8 -+$/;
+
+/** Splits a message into its content and the trailing comment block (and verbose diff) Git strips. */
 function splitComments(message: string): { content: string; comments: string } {
   const lines = message.split("\n");
-  let end = lines.length;
+  const scissors = lines.findIndex((line) => SCISSORS.test(line));
+  let end = scissors === -1 ? lines.length : scissors;
   while (end > 0 && (lines[end - 1]!.startsWith("#") || lines[end - 1]!.trim() === "")) end -= 1;
   return { content: lines.slice(0, end).join("\n"), comments: lines.slice(end).join("\n") };
 }
@@ -101,13 +105,14 @@ function openRecordInTree(top: string): string | undefined {
   return open.length === 1 && isWorkId(open[0]!) ? open[0] : undefined;
 }
 
+/** From the branch, else the subject; never the id of a record that already exists. */
 function autoStartId(dirs: GitDirs, message: string): string {
   const branch = currentBranchOf(dirs);
-  if (branch && !DEFAULT_BRANCHES.has(branch)) {
-    const fromBranch = slugify(branch);
-    if (fromBranch) return fromBranch;
-  }
-  return slugify(splitComments(message).content.split("\n")[0] ?? "") ?? "change";
+  const base = (branch && !DEFAULT_BRANCHES.has(branch) ? slugify(branch) : undefined)
+    ?? slugify(splitComments(message).content.split("\n")[0] ?? "") ?? "change";
+  let id = base;
+  for (let suffix = 2; existsSync(join(dirs.top, WORK_DIR, `${id}.json`)); suffix += 1) id = `${base.slice(0, 58)}-${suffix}`;
+  return id;
 }
 
 async function judge(cwd: string, messagePath: string, stage: "prepare" | "final"): Promise<HookVerdict> {

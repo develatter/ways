@@ -113,13 +113,40 @@ async function recordVersionIssues(git: GitRepository, commit: CommitInfo, path:
   return issues;
 }
 
+async function blobAt(git: GitRepository, ref: string, path: string): Promise<string | undefined> {
+  try {
+    return await git.run(["rev-parse", "-q", "--verify", `${ref}:${path}`]);
+  } catch {
+    return undefined;
+  }
+}
+
+async function mergeMadeRecords(git: GitRepository, merge: string, mergeParents: readonly string[]): Promise<string[]> {
+  const touched = new Set<string>();
+  for (const parent of mergeParents) {
+    for (const path of (await git.run(["diff", "--name-only", parent, merge, "--", `${WORK_DIR}/`])).split("\n")) if (path.endsWith(".json")) touched.add(path);
+  }
+  const made: string[] = [];
+  for (const path of touched) {
+    const version = await blobAt(git, merge, path);
+    const fromParents = await Promise.all(mergeParents.map((parent) => blobAt(git, parent, path)));
+    if (!fromParents.includes(version)) made.push(path);
+  }
+  return made.sort();
+}
+
 export async function auditHistory(git: GitRepository, commits: readonly CommitInfo[], options: { untraced: boolean }): Promise<IntegrityIssue[]> {
   const issues: IntegrityIssue[] = [];
   for (const commit of commits) {
-    if ((await parents(git, commit.hash)).length > 1) {
+    const commitParents = await parents(git, commit.hash);
+    if (commitParents.length > 1) {
       // Merged branches are audited commit by commit; a merge with its own changes still needs a trailer in enforce.
       if (options.untraced && !commit.trailers.work && !await isCleanMerge(git, commit)) {
         issues.push({ code: "history-untraced", path: commit.hash.slice(0, 12), message: `Merge "${commit.subject}" adds its own changes without a Harness-Work trailer` });
+      }
+      // A record version equal to one of the parents' came from that branch; any other was written by the merge itself.
+      for (const path of await mergeMadeRecords(git, commit.hash, commitParents)) {
+        issues.push({ code: "history-record-hand-made", path: `${commit.hash.slice(0, 12)} ${path}`, message: `the merge "${commit.subject}" wrote its own version of a work record; resolve record conflicts by taking one side and running \`ways done\` again` });
       }
       continue;
     }

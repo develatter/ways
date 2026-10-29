@@ -115,6 +115,34 @@ describe("a small change", () => {
     expect(readActive(cwd)).toBeUndefined();
     expect(await checkHistory(cwd)).toEqual([]);
   });
+
+  it("cannot narrow the verifier globs for itself, and counts test-script changes but not dependency bumps", async () => {
+    const { cwd, git } = await project();
+    await writeFile(join(cwd, "package.json"), JSON.stringify({ name: "p", scripts: { test: "vitest run" }, devDependencies: { a: "1" } }));
+    await git.run(["add", "-A"]);
+    await git.run(["-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "chore: package"]);
+
+    const before = await git.head();
+    await startChange(cwd, "narrow");
+    const configPath = join(cwd, ".ways/config.json");
+    const config = JSON.parse(await readFile(configPath, "utf8")) as Record<string, unknown>;
+    await writeFile(configPath, `${JSON.stringify({ ...config, verifierPaths: ["docs/**"] }, null, 2)}\n`);
+    await writeFile(join(cwd, "tests/existing.test.js"), "// weakened\n");
+    await git.run(["commit", "-qam", "chore: narrow and weaken"]);
+    expect((await done(cwd)).evidence.verifierChanges).toEqual([".ways/config.json", "tests/existing.test.js"]);
+    await cancel(cwd);
+    await git.run(["reset", "-q", "--hard", before]);
+
+    await startChange(cwd, "bump");
+    await writeFile(join(cwd, "package.json"), JSON.stringify({ name: "p", scripts: { test: "vitest run" }, devDependencies: { a: "2" } }));
+    await git.run(["commit", "-qam", "chore: bump a"]);
+    expect((await done(cwd)).status).toBe("closed");
+
+    await startChange(cwd, "scripts");
+    await writeFile(join(cwd, "package.json"), JSON.stringify({ name: "p", scripts: { test: "vitest run --passWithNoTests" }, devDependencies: { a: "2" } }));
+    await git.run(["commit", "-qam", "chore: relax tests"]);
+    expect((await done(cwd)).evidence.verifierChanges).toEqual(["package.json"]);
+  });
 });
 
 describe("an outcome", () => {
@@ -228,6 +256,26 @@ describe("an outcome", () => {
     await expect(openOutcome(cwd, "dropped", { goal: "Again", criteria: ["AC1:x"], verify: [], strength: [] })).rejects.toThrow(/already exists/);
   });
 
+  it("leaves several open records to `ways start <id>` instead of locking the CLI", async () => {
+    const { cwd, git } = await project();
+    const forget = (): Promise<void> => writeFile(join(git.cwd, ".git", "ways", "active.json"), "{}");
+    // Two outcomes opened on two branches, both still open once merged.
+    await git.run(["checkout", "-q", "-b", "a"]);
+    await openOutcome(cwd, "first", { goal: "First", criteria: ["AC1:x"], verify: [], strength: [] });
+    await git.run(["checkout", "-q", "main"]);
+    await forget();
+    await openOutcome(cwd, "second", { goal: "Second", criteria: ["AC1:x"], verify: [], strength: [] });
+    await git.run(["merge", "-q", "--no-ff", "-m", "merge a", "a"]);
+    await forget();
+    expect(await resolveActive(cwd)).toBeUndefined();
+    const status = await buildStatus(cwd);
+    expect(status.problem).toContain("first, second");
+    expect(status.next).toContain("`ways start first`");
+    expect(await startChange(cwd, "second")).toMatchObject({ id: "second", kind: "outcome" });
+    expect((await cancel(cwd)).id).toBe("second");
+    expect((await resolveActive(cwd))?.active.id).toBe("first");
+  });
+
   it("refuses a second active work", async () => {
     const { cwd } = await project();
     await startChange(cwd, "first");
@@ -256,6 +304,8 @@ describe("criteria", () => {
       expect(() => parseCommandLine(unsafe)).toThrow(/shell operator/);
     }
     expect(() => parseCommandLine("echo 'open")).toThrow(/unclosed/);
+    expect(parseCommandLine("grep -q \"a\\.b\" f")).toEqual(["grep", "-q", "a\\.b", "f"]);
+    expect(parseCommandLine("[ -f out ]")).toEqual(["[", "-f", "out", "]"]);
   });
 });
 
@@ -272,5 +322,25 @@ describe("the history audit", () => {
     await git.run(["commit", "-q", "-m", "chore: easier"], { WAYS_DISABLE: "1" });
     const codes = (await checkHistory(cwd)).map((issue) => issue.code);
     expect(codes).toEqual(expect.arrayContaining(["history-record-hand-made", "history-criteria-changed"]));
+  });
+
+  it("flags a record version written by a merge, but not one carried from a branch", async () => {
+    const { cwd, git } = await project();
+    await git.run(["checkout", "-q", "-b", "feature"]);
+    await openOutcome(cwd, "merged", { goal: "Merge", criteria: ["AC1:x"], verify: ["AC1:true"], strength: [], review: "none" });
+    await commitFile(git, cwd, "m.txt", "m\n", "feat: m");
+    await done(cwd);
+    await git.run(["checkout", "-q", "main"]);
+    await commitFile(git, cwd, "o.txt", "o\n", "feat: o");
+    await done(cwd);
+    await git.run(["merge", "-q", "--no-ff", "-m", "merge feature", "feature"]);
+    expect(await checkHistory(cwd)).toEqual([]);
+    await git.run(["reset", "-q", "--hard", "HEAD~1"]);
+    await git.run(["merge", "-q", "--no-ff", "--no-commit", "feature"]);
+    const path = join(cwd, workRecordPath("merged"));
+    await writeFile(path, (await readFile(path, "utf8")).replace("\"Merge\"", "\"Merged by hand\""));
+    await git.run(["add", "-A"]);
+    await git.run(["commit", "-q", "-m", "merge feature by hand"], { WAYS_DISABLE: "1" });
+    expect((await checkHistory(cwd)).map((issue) => issue.code)).toContain("history-record-hand-made");
   });
 });

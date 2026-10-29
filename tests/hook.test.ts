@@ -24,6 +24,9 @@ describe("addTrailer", () => {
     expect(addTrailer("fix: a\n\n# Please enter the commit message\n# Lines starting with '#'\n", "x")).toBe("fix: a\n\nHarness-Work: x\n\n# Please enter the commit message\n# Lines starting with '#'\n");
     expect(addTrailer("\n# Please enter the commit message\n", "x")).toBe("\n# Please enter the commit message\n");
     expect(addTrailer("fix: a\n\nHarness-Work: y\n", "x")).toBe("fix: a\n\nHarness-Work: y\n");
+    // `git commit -v`: the trailer goes above the scissors line, never into the diff Git cuts.
+    const verbose = "fix: a\n\n# Please enter the commit message\n# ------------------------ >8 ------------------------\n# Do not modify or remove the line above.\ndiff --git a/x b/x\n+x\n";
+    expect(addTrailer(verbose, "x")).toBe(`fix: a\n\nHarness-Work: x\n\n${verbose.slice("fix: a\n\n".length)}`);
   });
 });
 
@@ -35,6 +38,17 @@ describe("the commit hook", () => {
     await git.run(["commit", "-q", "--allow-empty", "-m", "chore: empty", "--no-verify"]);
     // --no-verify skips commit-msg but not prepare-commit-msg.
     expect((await git.commitInfo()).trailers.work).toBe("feat-add-a");
+  });
+
+  it("never starts a change under the id of an existing record", async () => {
+    const { cwd, git } = await installed();
+    await git.run(["checkout", "-q", "-b", "fix-padding"]);
+    await openOutcome(cwd, "fix-padding", { goal: "Pad", criteria: ["AC1:x"], verify: ["AC1:true"], strength: [], review: "none" });
+    await commitFile(git, cwd, "p.txt", "p\n", "fix: pad");
+    expect((await done(cwd)).status).toBe("closed");
+    await commitFile(git, cwd, "q.txt", "q\n", "fix: more padding");
+    expect((await git.commitInfo()).trailers.work).toBe("fix-padding-2");
+    expect(readActive(cwd)?.id).toBe("fix-padding-2");
   });
 
   it("does not attribute the commit that installs ways", async () => {

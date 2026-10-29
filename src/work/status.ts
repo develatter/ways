@@ -7,7 +7,7 @@ import { gitDirs, readRuns } from "../runtime/runtime.js";
 import { HARNESS_VERSION } from "../version.js";
 import { formatCommandLine } from "./argv.js";
 import { pending, reviewBlockers, reviewNotes, type Pending } from "./record.js";
-import { resolveActive } from "./work.js";
+import { openWorkIds, resolveActive } from "./work.js";
 
 /**
  * A short, deterministic packet: what is active, what "done" means for it,
@@ -74,6 +74,12 @@ export async function buildStatus(cwd: string): Promise<StatusPacket> {
     return packet;
   }
   const uncommitted = await git.dirtyPaths();
+  const open = resolved ? [] : await openWorkIds(top);
+  if (!resolved && open.length > 1) {
+    packet.problem = `Several works are open at HEAD: ${open.join(", ")}`;
+    packet.next = `Continue one with \`ways start <id>\` (${open.map((id) => `\`ways start ${id}\``).join(" or ")}).`;
+    return packet;
+  }
   if (!resolved) {
     packet.next = enforcement === "enforce"
       ? "Start work with `ways start <id>` (small change) or `ways outcome open <id> --goal=... --criterion=AC1:... --verify=AC1:<command>`; commits outside a work are refused."

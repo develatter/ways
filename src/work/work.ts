@@ -60,15 +60,24 @@ export async function resolveActive(cwd: string): Promise<Resolved | undefined> 
     }
     return { active: pointer, ...(record ? { record } : {}) };
   }
+  // Several open records are ambiguous: none is adopted, and `ways start <id>` picks one.
   const open = await openRecords(git);
-  if (open.length === 0) return undefined;
-  if (open.length > 1) throw new Error(`Several works are open at HEAD (${open.map((record) => record.id).join(", ")}); run \`ways start <id>\` with the one to continue`);
-  const record = open[0]!;
+  return open.length === 1 ? adopt(top, git, open[0]!) : undefined;
+}
+
+/** Makes an open committed record the active work of this checkout. */
+async function adopt(top: string, git: GitRepository, record: WorkRecord): Promise<Resolved> {
   const introduced = await recordIntroduction(git, record.id);
   const base = record.evidence?.base ?? (introduced ? await git.parent(introduced) : await git.head());
   const active: ActiveWork = { schemaVersion: 1, id: record.id, kind: record.kind, base, startedAt: record.openedAt, origin: "outcome" };
   await writeActive(top, active);
   return { active, record };
+}
+
+/** Records open at HEAD, for status to name when none could be adopted. */
+export async function openWorkIds(cwd: string): Promise<string[]> {
+  const { git } = repo(cwd);
+  return (await openRecords(git)).map((record) => record.id);
 }
 
 async function assertBaseInHistory(git: GitRepository, active: ActiveWork): Promise<void> {
@@ -87,7 +96,10 @@ export async function startChange(cwd: string, requested?: string): Promise<Acti
     if (current.active.id === id) return current.active;
     throw new Error(`Work ${current.active.id} is already active; finish it with \`ways done\` or drop it with \`ways cancel\``);
   }
-  if (await committedRecord(git, id)) throw new Error(`${workRecordPath(id)} already exists; choose another id`);
+  const existing = await committedRecord(git, id);
+  // Starting an open record's id resumes it (one of several left open at HEAD, for example).
+  if (existing && isOpen(existing)) return (await adopt(top, git, existing)).active;
+  if (existing) throw new Error(`${workRecordPath(id)} already exists and is ${existing.closed ? "closed" : "cancelled"}; choose another id`);
   const active: ActiveWork = { schemaVersion: 1, id, kind: "change", base: await git.head(), startedAt: new Date().toISOString(), origin: "start" };
   await writeActive(top, active);
   clearRuns(top, id);
