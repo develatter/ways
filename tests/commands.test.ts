@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { run } from "../src/cli.js";
@@ -102,6 +102,28 @@ describe("command registry", () => {
     const expected = `${README_COMMANDS_START}\n${renderReadmeTable()}\n${README_COMMANDS_END}`;
     if (process.env.UPDATE_README === "1") await writeFile(path, `${readme.slice(0, start)}${expected}${readme.slice(end + README_COMMANDS_END.length)}`);
     else expect(readme.slice(start, end + README_COMMANDS_END.length), "run `UPDATE_README=1 npx vitest run tests/commands.test.ts`").toBe(expected);
+  });
+
+  it("names only commands and flags the CLI has, in the README and the guides", async () => {
+    const files = ["README.md", ...(await readdir(join(process.cwd(), "docs"))).filter((name) => name.endsWith(".md")).map((name) => `docs/${name}`)];
+    const wrong: string[] = [];
+    for (const file of files) {
+      const text = (await readFile(join(process.cwd(), file), "utf8")).replace(/\\\n\s*/g, " ");
+      const code = [...text.matchAll(/^```[a-z]*\n([\s\S]*?)^```/gm)].map((block) => block[1]!).join("\n");
+      const mentions = [...text.matchAll(/`(?:npx )?ways ([a-z][a-z-]*)([^`\n]*)`/g), ...code.matchAll(/^(?:npx (?:--no-install )?)?ways ([a-z][a-z-]*)(.*)$/gm)];
+      for (const [, name, rest] of mentions) {
+        const command = COMMANDS.find((entry) => entry.name === name);
+        if (!command) {
+          wrong.push(`${file}: ways ${name}`);
+          continue;
+        }
+        const usage = command.usage.join(" ");
+        for (const [flag] of (rest ?? "").replace(/\s#.*$/, "").matchAll(/(?<=^|\s)--[a-z][a-z-]*/g)) {
+          if (flag !== "--help" && !usage.includes(flag)) wrong.push(`${file}: ways ${name} ${flag}`);
+        }
+      }
+    }
+    expect(wrong).toEqual([]);
   });
 
   it("keeps the wiki's command reference generated from the registry", async () => {
