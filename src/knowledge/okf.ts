@@ -2,7 +2,8 @@ import { lstat, readdir, readFile } from "node:fs/promises";
 import { dirname, join, normalize, relative, resolve } from "node:path";
 import { parse } from "yaml";
 import { KNOWLEDGE_DIR } from "../domain/constants.js";
-import { validateSources } from "../memory/validation.js";
+import { GitRepository } from "../git/git.js";
+import { matchesGlob, normalizeGlob, normalizeRepoPath } from "../memory/glob.js";
 
 export interface OkfDocument {
   id: string;
@@ -18,8 +19,12 @@ export interface OkfIssue {
   message: string;
 }
 
+/** A concept body longer than this is a document, not a memory: it still passes, with a warning. */
+export const MAX_CONCEPT_LINES = 15;
+
 const ACTOR = /^(?:human:[^\s]+|process:[^\s]+|[^\s/]+\/[^\s/]+)$/;
 const DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+const GLOB_MARKERS = /[*?]/;
 
 async function files(root: string): Promise<string[]> {
   const found: string[] = [];
@@ -43,6 +48,17 @@ export function parseOkfDocument(path: string, root: string, content: string): O
   const body = content.slice(match[0].length);
   const links = [...body.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)].map((item) => item[1] ?? "").filter(Boolean);
   return { id: relativePath.replace(/\.md$/, ""), path: relativePath, frontmatter: value as Record<string, unknown>, body, links };
+}
+
+/** The `paths:` globs a concept applies to; invalid entries are reported by `inspectOkf`. */
+export function conceptPaths(document: OkfDocument): string[] {
+  const value = document.frontmatter.paths;
+  const list = typeof value === "string" ? [value] : Array.isArray(value) ? value : [];
+  return list.filter((entry): entry is string => typeof entry === "string");
+}
+
+export function isCurrentConcept(document: OkfDocument): boolean {
+  return document.frontmatter.status !== "deprecated" && !document.path.startsWith("deprecated/");
 }
 
 function events(value: unknown): Array<Record<string, unknown>> {
@@ -69,15 +85,56 @@ async function targetExists(root: string, documentPath: string, target: string):
   }
 }
 
-export async function inspectOkf(cwd: string, options: { validateSources?: boolean } = {}): Promise<{ documents: OkfDocument[]; issues: OkfIssue[] }> {
+/** Repository-local sources (`/path` or `/glob`) must resolve in the working tree's HEAD. */
+async function sourceIssues(cwd: string, documents: readonly OkfDocument[]): Promise<OkfIssue[]> {
+  const issues: OkfIssue[] = [];
+  let tracked: string[] | undefined;
+  for (const document of documents) {
+    const sources = document.frontmatter.sources;
+    if (!Array.isArray(sources)) continue;
+    for (const [index, item] of sources.entries()) {
+      const resource = item && typeof item === "object" ? (item as Record<string, unknown>).resource : undefined;
+      if (typeof resource !== "string" || !resource.startsWith("/") || resource.startsWith("//")) continue;
+      const path = `${document.path}#sources[${index}]`;
+      let normalized: string;
+      try {
+        normalized = GLOB_MARKERS.test(resource) ? normalizeGlob(resource.slice(1)) : normalizeRepoPath(resource.slice(1));
+      } catch (error) {
+        issues.push({ code: "invalid-source-path", path, message: error instanceof Error ? error.message : String(error) });
+        continue;
+      }
+      try {
+        tracked ??= (await new GitRepository(cwd).treeEntries("HEAD")).map((entry) => entry.path);
+      } catch {
+        return issues;
+      }
+      const resolves = GLOB_MARKERS.test(normalized)
+        ? tracked.some((candidate) => matchesGlob(candidate, normalized))
+        : tracked.includes(normalized) || tracked.some((candidate) => candidate.startsWith(`${normalized}/`));
+      if (!resolves) issues.push({ code: "missing-source", path, message: `Local source does not resolve at HEAD: /${normalized}` });
+    }
+  }
+  return issues;
+}
+
+export interface OkfInspection {
+  documents: OkfDocument[];
+  /** Broken memory: fails `ways memory check` and `ways done`. */
+  issues: OkfIssue[];
+  /** Worth a look, never blocking: long concepts, a passed `stale_after`. */
+  warnings: OkfIssue[];
+}
+
+export async function inspectOkf(cwd: string, options: { validateSources?: boolean } = {}): Promise<OkfInspection> {
   const root = join(cwd, KNOWLEDGE_DIR);
   const documents: OkfDocument[] = [];
   const issues: OkfIssue[] = [];
+  const warnings: OkfIssue[] = [];
   let markdown: string[];
   try {
     markdown = await files(root);
   } catch {
-    return { documents, issues: [{ code: "missing-okf", path: KNOWLEDGE_DIR, message: "Knowledge bundle is missing" }] };
+    return { documents, issues: [{ code: "missing-okf", path: KNOWLEDGE_DIR, message: "Knowledge directory is missing; run `ways bootstrap` or create .ways/knowledge/index.md" }], warnings };
   }
 
   for (const path of markdown) {
@@ -111,23 +168,34 @@ export async function inspectOkf(cwd: string, options: { validateSources?: boole
     }
     const verified = events(fm.verified);
     if (fm.verified !== undefined && (verified.length === 0 || verified.some((event) => !validEvent(event)))) issues.push({ code: "okf-verified", path: relativePath, message: "verified events require valid actors and timestamps" });
-    const status = fm.status === undefined ? "stable" : String(fm.status);
-    if (status === "stable" && verified.length === 0) issues.push({ code: "unverified-stable", path: relativePath, message: "Stable concepts require verification" });
-    if (typeof fm.stale_after === "string" && (!DATE_TIME.test(fm.stale_after) || Date.parse(fm.stale_after) <= Date.now()) && status === "stable") {
-      issues.push({ code: "stale-concept", path: relativePath, message: "Stable concept is stale or has invalid stale_after" });
+    if (typeof fm.stale_after === "string" && (!DATE_TIME.test(fm.stale_after) || Date.parse(fm.stale_after) <= Date.now())) {
+      warnings.push({ code: "stale-after-passed", path: relativePath, message: "stale_after has passed or is invalid; confirm the concept and update or remove the date" });
     }
     if (fm.sources !== undefined) {
       if (!Array.isArray(fm.sources) || fm.sources.some((source) => !source || typeof source !== "object" || typeof (source as Record<string, unknown>).resource !== "string")) {
         issues.push({ code: "okf-sources", path: relativePath, message: "Every source requires a resource" });
       }
     }
+    if (fm.paths !== undefined) {
+      const raw = typeof fm.paths === "string" ? [fm.paths] : fm.paths;
+      if (!Array.isArray(raw) || raw.some((entry) => typeof entry !== "string")) {
+        issues.push({ code: "okf-paths", path: relativePath, message: "paths must be a list of repository-relative globs" });
+      } else {
+        for (const entry of raw as string[]) {
+          try {
+            normalizeGlob(entry);
+          } catch (error) {
+            issues.push({ code: "okf-paths", path: relativePath, message: error instanceof Error ? error.message : String(error) });
+          }
+        }
+      }
+    }
+    const lines = document.body.split("\n").filter((line) => line.trim()).length;
+    if (lines > MAX_CONCEPT_LINES) warnings.push({ code: "long-concept", path: relativePath, message: `${lines} lines; a memory is a short fact (≤ ${MAX_CONCEPT_LINES} lines): split it or move the detail to docs/` });
     for (const link of document.links) {
       if (!await targetExists(root, document.path, link)) issues.push({ code: "broken-okf-link", path: relativePath, message: `Missing link target: ${link}` });
     }
   }
-  if (options.validateSources ?? true) {
-    const active = documents.filter((document) => document.frontmatter.status !== "deprecated" && !document.path.startsWith("deprecated/"));
-    issues.push(...await validateSources(cwd, active));
-  }
-  return { documents, issues };
+  if (options.validateSources ?? true) issues.push(...await sourceIssues(cwd, documents.filter(isCurrentConcept)));
+  return { documents, issues, warnings };
 }

@@ -1,8 +1,13 @@
 import { readFile } from "node:fs/promises";
 import { join, normalize, posix } from "node:path";
-import { INDEX_DIR } from "../domain/constants.js";
 import { stableJson, writeAtomic } from "../fs/files.js";
+import { runtimeDir } from "../runtime/runtime.js";
 import { inspectOkf, type OkfDocument } from "./okf.js";
+
+/** Derived, disposable search indexes live with the other runtime data, outside the working tree. */
+export function indexDir(cwd: string): string {
+  return join(runtimeDir(cwd), "indexes");
+}
 
 interface CatalogEntry {
   id: string;
@@ -74,9 +79,9 @@ export async function buildIndexes(cwd: string): Promise<KnowledgeIndexes> {
 }
 
 async function persistIndexes(cwd: string, indexes: KnowledgeIndexes): Promise<void> {
-  await writeAtomic(join(cwd, INDEX_DIR, "catalog.json"), stableJson(indexes.catalog));
-  await writeAtomic(join(cwd, INDEX_DIR, "graph.json"), stableJson(indexes.graph));
-  await writeAtomic(join(cwd, INDEX_DIR, "search.json"), stableJson(indexes.search));
+  await writeAtomic(join(indexDir(cwd), "catalog.json"), stableJson(indexes.catalog));
+  await writeAtomic(join(indexDir(cwd), "graph.json"), stableJson(indexes.graph));
+  await writeAtomic(join(indexDir(cwd), "search.json"), stableJson(indexes.search));
 }
 
 export async function writeIndexes(cwd: string): Promise<KnowledgeIndexes> {
@@ -90,7 +95,7 @@ export async function indexesMatch(cwd: string): Promise<boolean> {
   try {
     const names: Array<keyof KnowledgeIndexes> = ["catalog", "graph", "search"];
     for (const name of names) {
-      const actual = await readFile(join(cwd, INDEX_DIR, `${name}.json`), "utf8");
+      const actual = await readFile(join(indexDir(cwd), `${name}.json`), "utf8");
       if (actual !== stableJson(expected[name])) return false;
     }
     return true;
@@ -104,7 +109,7 @@ export async function loadIndexes(cwd: string): Promise<KnowledgeIndexes> {
   const expected = await buildIndexes(cwd);
   const names: Array<keyof KnowledgeIndexes> = ["catalog", "graph", "search"];
   try {
-    const cached = await Promise.all(names.map((name) => readFile(join(cwd, INDEX_DIR, `${name}.json`), "utf8")));
+    const cached = await Promise.all(names.map((name) => readFile(join(indexDir(cwd), `${name}.json`), "utf8")));
     const current = cached.every((content, index) => content === stableJson(expected[names[index]!]));
     if (current) {
       return {
