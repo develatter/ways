@@ -51,6 +51,12 @@ export interface RunOutput {
   tail?: string;
   /** Runs made; more than one means it failed and was retried (it is then flaky if it passed). */
   attempts?: number;
+  /** What the agent reads instead of the output: the status line and each failure on one line (`ways run`'s reading). */
+  summary?: string;
+  /** The run id: `ways run --show <run>` prints its whole log. */
+  run?: string;
+  /** Where the whole output is, on the machine that ran it (under the Git directory, never committed). */
+  log?: string;
 }
 
 export interface NamedCheckResult extends RunOutput {

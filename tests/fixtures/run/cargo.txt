@@ -1,0 +1,33 @@
+   Compiling shop v0.1.0 (/home/dev/shop)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.02s
+     Running unittests src/lib.rs (target/debug/deps/shop-3f2a9c1d)
+
+running 20 tests
+test money::tests::rounds ... ok
+test cart::tests::adds_items ... ok
+test cart::tests::applies_discount ... FAILED
+test cart::tests::rejects_negative_quantities ... FAILED
+
+failures:
+
+---- cart::tests::applies_discount stdout ----
+
+thread 'cart::tests::applies_discount' panicked at src/cart.rs:48:9:
+assertion `left == right` failed
+  left: 90
+ right: 81
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- cart::tests::rejects_negative_quantities stdout ----
+
+thread 'cart::tests::rejects_negative_quantities' panicked at src/cart.rs:55:9:
+expected an error for a negative quantity
+
+
+failures:
+    cart::tests::applies_discount
+    cart::tests::rejects_negative_quantities
+
+test result: FAILED. 18 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `--lib`

@@ -1,0 +1,34 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-8.3.2, pluggy-1.5.0
+rootdir: /home/dev/shop
+configfile: pyproject.toml
+collected 20 items
+
+tests/test_money.py ............                                         [ 60%]
+tests/test_cart.py .F.F....                                              [100%]
+
+=================================== FAILURES ===================================
+____________________________ test_applies_discount _____________________________
+
+    def test_applies_discount():
+        cart = Cart([Item("sku-1", 100)])
+        cart.discount(0.19)
+>       assert cart.total() == 81
+E       assert 90 == 81
+E        +  where 90 = <bound method Cart.total of <shop.cart.Cart object at 0x7f>>()
+
+tests/test_cart.py:14: AssertionError
+______________________ test_rejects_negative_quantities ________________________
+
+    def test_rejects_negative_quantities():
+        cart = Cart([])
+>       with pytest.raises(ValueError):
+E       Failed: DID NOT RAISE <class 'ValueError'>
+
+tests/test_cart.py:22: Failed
+----------------------------- Captured stdout call -----------------------------
+adding item sku-1
+=========================== short test summary info ============================
+FAILED tests/test_cart.py::test_applies_discount - assert 90 == 81
+FAILED tests/test_cart.py::test_rejects_negative_quantities - Failed: DID NOT RAISE <class 'ValueError'>
+========================= 2 failed, 18 passed in 0.31s =========================

@@ -325,12 +325,61 @@ async function dispatch(command: string, args: string[], cwd: string, invoked = 
       console.log("History checks passed.");
       return 0;
     }
-    const { failedCheckDetails, runChecks } = await import("./check/check.js");
-    const result = await runChecks(cwd, { integrityOnly: args.includes("--integrity-only"), services: args.includes("--with-services") });
-    for (const issue of result.issues) console.error(`${issue.code}: ${issue.path}: ${issue.message}`);
-    for (const failure of failedCheckDetails(result)) console.error(failure);
-    if (!result.passed) return 1;
-    console.log("Checks passed.");
+    if (args[0] === "add") {
+      const separator = args.indexOf("--");
+      const name = args[1];
+      const command = separator >= 0 ? args.slice(separator + 1) : [];
+      if (!name || name.startsWith("-") || command.length === 0) throw new Error("Usage: ways check add <test|lint|typecheck|build|e2e> -- <command> [args...]   (ways runs it once to validate it)");
+      const { addCheck } = await import("./run/validate.js");
+      const { gitDirs } = await import("./runtime/runtime.js");
+      console.log(`Running \`${command.join(" ")}\` once to validate it…`);
+      const added = await addCheck(gitDirs(cwd), name, command);
+      for (const line of added.lines) console.log(line);
+      if (!added.accepted) return 1;
+      console.log(`Saved in ${added.written.join(" and ")}. \`ways run ${name}\` runs it; commit the change (the human approves check changes at \`ways done\` when a check existed before).`);
+      return 0;
+    }
+    const { runChecks } = await import("./check/check.js");
+    const { gitDirs } = await import("./runtime/runtime.js");
+    const result = await runChecks(cwd, { integrityOnly: args.includes("--integrity-only"), services: args.includes("--with-services"), capture: true, runs: { dirs: gitDirs(cwd) } });
+    const { renderCheckReport } = await import("./check/report.js");
+    const report = renderCheckReport(result);
+    (result.passed ? console.log : console.error)(report);
+    // In CI the runner's Git directory is gone after the job: the log of what failed goes to the job's output.
+    if (process.env.CI && !result.passed) {
+      const { showRun } = await import("./run/run.js");
+      for (const check of result.checks.filter((entry) => entry.run && entry.status !== "passed")) {
+        console.error(`::group::ways: full log of ${check.name}`);
+        try {
+          console.error(showRun(gitDirs(cwd), check.run!, { tail: "all" }));
+        } catch {
+          // No log to show.
+        }
+        console.error("::endgroup::");
+      }
+    }
+    return result.passed ? 0 : 1;
+  }
+
+  if (command === "run") {
+    const { runRunCommand } = await import("./run/command.js");
+    return runRunCommand(args, cwd, { option });
+  }
+
+  if (command === "map") {
+    const { writeMap } = await import("./map/map.js");
+    const result = await writeMap(cwd, { check: args.includes("--check") });
+    if (args.includes("--check")) {
+      for (const orphan of result.orphans) console.log(`note for a path that is gone: ${orphan} (.ways/map-notes.json)`);
+      if (result.drift.reasons.length === 0) {
+        console.log("MAP.md matches the repository.");
+        return 0;
+      }
+      console.error(`MAP.md is out of date: ${result.drift.reasons.join("; ")}. Run \`ways map\` and commit MAP.md.`);
+      return 1;
+    }
+    console.log(result.written ? "MAP.md written; review and commit it. Folder purposes come from .ways/map-notes.json (path → one line)." : "MAP.md is up to date.");
+    for (const orphan of result.orphans) console.log(`  note for a path that is gone: ${orphan}; remove it from .ways/map-notes.json`);
     return 0;
   }
 

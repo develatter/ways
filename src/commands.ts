@@ -14,7 +14,7 @@ export interface CommandSpec {
 }
 
 /** The lean target: no more distinct CLI actions than this. */
-export const ACTION_BUDGET = 37;
+export const ACTION_BUDGET = 44;
 
 export const COMMANDS: readonly CommandSpec[] = [
   {
@@ -138,11 +138,33 @@ export const COMMANDS: readonly CommandSpec[] = [
     actions: ["cancel"],
   },
   {
+    name: "run",
+    summary: "Run a configured check (test, lint, typecheck, build, e2e) and get a short summary instead of its output: counts, each failure on a line, new vs already failing at the base, and the full log kept",
+    usage: [
+      "ways run [<check>...] [--all] [--json]",
+      "ways run --show <id> [--grep=<regex>] [--tail=<n>|all]",
+      "  without a name: every configured check in order, except the slow ones (--all includes them); the exit code is the check's",
+    ],
+    examples: ["ways run test", "ways run", "ways run --show test-m3k2p0a1 --grep=FAIL"],
+    actions: ["run", "run --show"],
+  },
+  {
     name: "check",
-    summary: "Run integrity and the configured checks (what CI runs); --history audits work records and trailers",
-    usage: ["ways check [--integrity-only] [--with-services]", "ways check --history [--since=<ref>] [--to=<ref>]"],
-    examples: ["ways check", "ways check --history --to=$GITHUB_SHA"],
-    actions: ["check", "check --history"],
+    summary: "Integrity and every configured check (what CI runs), one line per area; add a check, validated by running it; --history audits work records and trailers",
+    usage: [
+      "ways check [--integrity-only] [--with-services]",
+      "ways check add <test|lint|typecheck|build|e2e> -- <command> [args...]",
+      "ways check --history [--since=<ref>] [--to=<ref>]",
+    ],
+    examples: ["ways check", "ways check add lint -- npx eslint .", "ways check --history --to=$GITHUB_SHA"],
+    actions: ["check", "check add", "check --history"],
+  },
+  {
+    name: "map",
+    summary: "Write MAP.md from the repository (stack, commands, folders, entry points, tests, CI) with the folder purposes in .ways/map-notes.json; --check fails when it drifted",
+    usage: ["ways map [--check]"],
+    examples: ["ways map", "ways map --check"],
+    actions: ["map", "map --check"],
   },
   {
     name: "verify",

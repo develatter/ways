@@ -1,5 +1,6 @@
 import { loadConfig } from "../config/config.js";
-import { CHECK_NAMES, type CheckContract, type CheckName, type EnvironmentResult, type IntegrityIssue, type NamedCheckResult, type NamedChecksConfig } from "../domain/types.js";
+import { CHECK_NAMES, type CheckContract, type CheckName, type EnvironmentResult, type IntegrityIssue, type NamedCheckResult, type NamedChecksConfig, type RunOutput } from "../domain/types.js";
+import type { GitDirs } from "../runtime/runtime.js";
 import { checkIntegrity } from "../integrity/integrity.js";
 import { effectiveContract } from "./contract.js";
 import { startEnvironment, type Environment } from "./environment.js";
@@ -31,6 +32,13 @@ export interface RunChecksOptions {
   retries?: number;
   /** The setup already ran for this checkout and its inputs: record this detail instead of running it. */
   setupCached?: string;
+  /**
+   * With `capture`: keep each run's whole output as a log in this repository's
+   * runtime directory and put a compact summary of it in the result (the
+   * wrapper `ways run` uses). `commit` is what the run is of, when it runs in a
+   * clean checkout.
+   */
+  runs?: { dirs: GitDirs; commit?: string };
 }
 
 const unhealthy = (status: string): boolean => status === "failed" || status === "timed-out" || status === "unavailable";
@@ -64,7 +72,7 @@ function validContract(contract: NamedChecksConfig): void {
   }
 }
 
-function resultFor(name: CheckName, command: string[] | undefined, result: Omit<Partial<CapturedResult>, "status"> & { status: NamedCheckResult["status"]; attempts?: number }): NamedCheckResult {
+function resultFor(name: CheckName, command: string[] | undefined, result: Omit<Partial<CapturedResult>, "status"> & { status: NamedCheckResult["status"]; attempts?: number } & Pick<RunOutput, "run" | "log" | "summary">): NamedCheckResult {
   const tests = name === "test" || name === "e2e" ? testsRan(result.tail) : undefined;
   return {
     id: `check:${name}`,
@@ -78,14 +86,26 @@ function resultFor(name: CheckName, command: string[] | undefined, result: Omit<
     ...(result.tail === undefined ? {} : { tail: result.tail }),
     ...(result.attempts && result.attempts > 1 ? { attempts: result.attempts } : {}),
     ...(tests === undefined ? {} : { tests }),
+    ...(result.summary ? { summary: result.summary } : {}),
+    ...(result.run ? { run: result.run } : {}),
+    ...(result.log ? { log: result.log } : {}),
   };
 }
 
 /** Flaky executions of the last `runChecks`, keyed by execution id, with their first failure. */
 export type FlakyRuns = Record<string, CapturedResult>;
 
-async function run(command: string[], cwd: string, timeoutMs: number | undefined, strict: boolean, options: RunChecksOptions, id: string, flaky: FlakyRuns): Promise<CapturedResult & { attempts?: number }> {
+type Ran = CapturedResult & { attempts?: number } & Pick<RunOutput, "run" | "log" | "summary">;
+
+async function run(command: string[], cwd: string, timeoutMs: number | undefined, strict: boolean, options: RunChecksOptions, id: string, flaky: FlakyRuns): Promise<Ran> {
   if (!options.capture) return execute(command, cwd, timeoutMs, strict, "inherit");
+  if (options.runs) {
+    const { runCommand, compactSummary, shownLogPath } = await import("../run/run.js");
+    const { record, result } = await runCommand(options.runs.dirs, id.replace(/^check:/, ""), command, { cwd, ...(timeoutMs === undefined ? {} : { timeoutMs }), retries: options.retries ?? 0, ...(options.runs.commit ? { commit: options.runs.commit } : {}) });
+    if (result.flakyFailure) flaky[id] = result.flakyFailure;
+    const { output: _output, bytes: _bytes, flakyFailure: _flaky, ...kept } = result;
+    return { ...kept, run: record.id, log: shownLogPath(options.runs.dirs, record.id), summary: compactSummary(record) };
+  }
   const result = await executeWithRetries(command, cwd, timeoutMs, strict, options.retries ?? 0);
   if (result.flakyFailure) flaky[id] = result.flakyFailure;
   return result;

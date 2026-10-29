@@ -1,0 +1,54 @@
+
+ RUN  v3.2.4 /home/dev/shop
+
+stdout | tests/cart.test.ts > cart > adds items
+adding item sku-1
+adding item sku-2
+
+ ✓ tests/money.test.ts (12 tests) 9ms
+ ❯ tests/cart.test.ts (8 tests | 2 failed) 31ms
+   ✓ cart > adds items 2ms
+   × cart > applies the discount 4ms
+     → expected 90 to be 81 // Object.is equality
+   × cart > rejects negative quantities 3ms
+     → expected [Function] to throw an error
+   ✓ cart > empties 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/cart.test.ts > cart > applies the discount
+AssertionError: expected 90 to be 81 // Object.is equality
+
+- Expected
++ Received
+
+- 81
++ 90
+
+ ❯ tests/cart.test.ts:22:31
+     20|     const cart = new Cart([{ sku: "sku-1", price: 100 }]);
+     21|     cart.discount(0.19);
+     22|     expect(cart.total()).toBe(81);
+       |                               ^
+     23|   });
+     24|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/cart.test.ts > cart > rejects negative quantities
+AssertionError: expected [Function] to throw an error
+ ❯ tests/cart.test.ts:30:44
+     28|   it("rejects negative quantities", () => {
+     29|     const cart = new Cart([]);
+     30|     expect(() => cart.add("sku-1", -1)).toThrow();
+       |                                            ^
+     31|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  2 failed | 18 passed (20)
+   Start at  09:12:44
+   Duration  612ms (transform 88ms, setup 0ms, collect 120ms, tests 40ms, environment 0ms, prepare 141ms)
+

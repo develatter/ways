@@ -1,0 +1,3 @@
+src/cart.ts(22,7): error TS2322: Type 'string' is not assignable to type 'number'.
+src/checkout/index.ts(8,19): error TS2345: Argument of type 'Item | undefined' is not assignable to parameter of type 'Item'.
+  Type 'undefined' is not assignable to type 'Item'.

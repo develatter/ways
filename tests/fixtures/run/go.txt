@@ -1,0 +1,8 @@
+--- FAIL: TestAppliesDiscount (0.00s)
+    cart_test.go:18: total = 90, want 81
+--- FAIL: TestRejectsNegativeQuantities (0.00s)
+    cart_test.go:27: expected an error for quantity -1
+FAIL
+FAIL	example.com/shop/cart	0.004s
+ok  	example.com/shop/money	0.002s
+FAIL

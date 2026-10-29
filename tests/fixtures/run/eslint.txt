@@ -1,0 +1,10 @@
+
+/home/dev/shop/src/cart.js
+  12:7   error    'total' is assigned a value but never used  no-unused-vars
+  30:3   warning  Unexpected console statement                no-console
+
+/home/dev/shop/src/checkout/index.js
+  4:1  error  'fetch' is not defined  no-undef
+
+✖ 3 problems (2 errors, 1 warning)
+

@@ -1,0 +1,19 @@
+F401 [*] `os` imported but unused
+ --> shop/cart.py:1:8
+  |
+1 | import os
+  |        ^^
+2 | from decimal import Decimal
+  |
+help: Remove unused import: `os`
+
+E711 Comparison to `None` should be `cond is None`
+  --> shop/checkout.py:14:15
+   |
+14 |     if item == None:
+   |               ^^^^
+   |
+help: Replace with `cond is None`
+
+Found 2 errors.
+[*] 1 fixable with the `--fix` option.

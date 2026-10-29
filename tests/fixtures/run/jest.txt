@@ -1,0 +1,41 @@
+PASS src/money.test.js
+FAIL src/cart.test.js
+  ● Console
+
+    console.log
+      adding item sku-1
+
+      at Cart.log (src/cart.js:12:13)
+
+  ● cart › applies the discount
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 81
+    Received: 90
+
+      20 |     const cart = new Cart([{ sku: "sku-1", price: 100 }]);
+      21 |     cart.discount(0.19);
+    > 22 |     expect(cart.total()).toBe(81);
+         |                          ^
+      23 |   });
+
+      at Object.toBe (src/cart.test.js:22:26)
+
+  ● cart › rejects negative quantities
+
+    expect(received).toThrow()
+
+    Received function did not throw
+
+      28 |   it("rejects negative quantities", () => {
+    > 29 |     expect(() => cart.add("sku-1", -1)).toThrow();
+         |                                         ^
+
+      at Object.toThrow (src/cart.test.js:29:41)
+
+Test Suites: 1 failed, 1 passed, 2 total
+Tests:       2 failed, 18 passed, 20 total
+Snapshots:   0 total
+Time:        1.204 s
+Ran all test suites.

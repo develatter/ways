@@ -1,5 +1,7 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
+import { closeSync, mkdirSync, openSync, writeSync } from "node:fs";
+import { dirname } from "node:path";
 import type { RunOutput } from "../domain/types.js";
 
 export interface ExecutionResult {
@@ -75,25 +77,77 @@ export function runWithInput(command: readonly string[], cwd: string, input: str
 
 const TAIL_LINES = 20;
 const TAIL_BYTES = 16 * 1024;
+/** Output kept in memory for the summary's parser; the log file gets all of it. */
+const KEEP_BYTES = 16 * 1024 * 1024;
 
-/** Collects combined output: its sha256 and a bounded tail, never the whole stream in memory. */
+/** Where a captured run also writes its whole output, and whether the caller wants the text to read it. */
+export interface CaptureOptions {
+  /** Path of a file that receives the combined output as it comes. */
+  log?: string;
+  /** Keep the combined output (up to 16 MiB, its end) in the result's `output`. */
+  keep?: boolean;
+  env?: NodeJS.ProcessEnv;
+}
+
+/** Collects combined output: its sha256 and a bounded tail; with a log, every byte goes to the file. */
 class OutputCapture {
   private readonly hash = createHash("sha256");
   private tail = Buffer.alloc(0);
+  private readonly kept: Buffer[] = [];
+  private keptBytes = 0;
+  private bytes = 0;
+  private readonly fd: number | undefined;
+
+  constructor(private readonly options: CaptureOptions = {}) {
+    if (options.log) {
+      mkdirSync(dirname(options.log), { recursive: true });
+      this.fd = openSync(options.log, "w");
+    }
+  }
 
   add(chunk: Buffer): void {
     this.hash.update(chunk);
+    this.bytes += chunk.length;
     this.tail = Buffer.concat([this.tail, chunk]);
     if (this.tail.length > TAIL_BYTES) this.tail = this.tail.subarray(this.tail.length - TAIL_BYTES);
+    if (this.fd !== undefined) {
+      try {
+        writeSync(this.fd, chunk);
+      } catch {
+        // A full disk costs the log, never the run.
+      }
+    }
+    if (this.options.keep) {
+      this.kept.push(chunk);
+      this.keptBytes += chunk.length;
+      while (this.keptBytes > KEEP_BYTES && this.kept.length > 1) this.keptBytes -= this.kept.shift()!.length;
+    }
   }
 
-  result(): RunOutput & { outputSha256: string; tail: string } {
+  result(): RunOutput & { outputSha256: string; tail: string; output?: string; bytes: number } {
+    if (this.fd !== undefined) {
+      try {
+        closeSync(this.fd);
+      } catch {
+        // Already closed.
+      }
+    }
     const lines = this.tail.toString("utf8").replace(/\r\n/g, "\n").replace(/\n+$/, "").split("\n");
-    return { outputSha256: this.hash.digest("hex"), tail: lines.slice(-TAIL_LINES).join("\n") };
+    return {
+      outputSha256: this.hash.digest("hex"),
+      tail: lines.slice(-TAIL_LINES).join("\n"),
+      bytes: this.bytes,
+      ...(this.options.keep ? { output: Buffer.concat(this.kept).toString("utf8") } : {}),
+    };
   }
 }
 
-export type CapturedResult = ExecutionResult & RunOutput;
+export type CapturedResult = ExecutionResult & RunOutput & {
+  /** The combined output, when the capture kept it. */
+  output?: string;
+  /** Bytes of output. */
+  bytes?: number;
+};
 
 export type RetriedResult = CapturedResult & { attempts: number; /** The first failing attempt, when a retry passed. */ flakyFailure?: CapturedResult };
 
@@ -102,10 +156,11 @@ export type RetriedResult = CapturedResult & { attempts: number; /** The first f
  * times out. A pass after a failure is flaky: the result says so and keeps the
  * first failure. A command that cannot start is not retried.
  */
-export async function executeWithRetries(command: string[], cwd: string, timeoutMs: number | undefined, strict: boolean, retries: number): Promise<RetriedResult> {
+export async function executeWithRetries(command: string[], cwd: string, timeoutMs: number | undefined, strict: boolean, retries: number, capture: CaptureOptions = {}): Promise<RetriedResult> {
   let first: CapturedResult | undefined;
   for (let attempt = 1; ; attempt += 1) {
-    const result = await execute(command, cwd, timeoutMs, strict, "capture");
+    // Each attempt overwrites the log: the one kept is the attempt recorded.
+    const result = await execute(command, cwd, timeoutMs, strict, "capture", capture);
     const failed = result.status === "failed" || result.status === "timed-out";
     if (!failed || attempt > retries) {
       return { ...result, attempts: attempt, ...(first && result.status === "passed" ? { flakyFailure: first } : {}) };
@@ -118,13 +173,20 @@ export async function executeWithRetries(command: string[], cwd: string, timeout
  * Runs an argv without a shell. With `stdio: "capture"` the output is not
  * shown; the result carries its duration, sha256 and last lines instead.
  */
-export function execute(command: string[], cwd: string, timeoutMs?: number, strict = false, stdio: "inherit" | "ignore" | "capture" = "inherit"): Promise<CapturedResult> {
+export function execute(command: string[], cwd: string, timeoutMs?: number, strict = false, stdio: "inherit" | "ignore" | "capture" = "inherit", options: CaptureOptions = {}): Promise<CapturedResult> {
   const [program, ...args] = command;
   if (!program || (strict && command.some((part) => part.trim() === "" || part.includes("\0")))) {
     return Promise.resolve({ status: "unavailable", detail: "Configured command must contain non-empty arguments without NUL bytes" });
   }
   const started = Date.now();
-  const capture = stdio === "capture" ? new OutputCapture() : undefined;
+  let capture: OutputCapture | undefined;
+  try {
+    capture = stdio === "capture" ? new OutputCapture(options) : undefined;
+  } catch {
+    // The log cannot be opened: capture without it.
+    const { log: _unwritable, ...withoutLog } = options;
+    capture = stdio === "capture" ? new OutputCapture(withoutLog) : undefined;
+  }
   return new Promise((resolve) => {
     let child: ChildProcess;
     try {
@@ -133,10 +195,12 @@ export function execute(command: string[], cwd: string, timeoutMs?: number, stri
         stdio: capture ? ["ignore", "pipe", "pipe"] : stdio as "inherit" | "ignore",
         shell: false,
         detached: process.platform !== "win32",
+        ...(options.env ? { env: options.env } : {}),
       });
       child.stdout?.on("data", (chunk: Buffer) => capture?.add(chunk));
       child.stderr?.on("data", (chunk: Buffer) => capture?.add(chunk));
     } catch (error) {
+      capture?.result();
       resolve({ status: "unavailable", detail: `Unable to spawn command: ${error instanceof Error ? error.message : String(error)}` });
       return;
     }

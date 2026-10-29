@@ -3,11 +3,13 @@ import { arch, platform } from "node:os";
 import { join } from "node:path";
 import { runChecks } from "../check/check.js";
 import { committedContract, effectiveContract } from "../check/contract.js";
-import { execute, executeWithRetries, type CapturedResult } from "../check/process.js";
+import { execute, type CapturedResult } from "../check/process.js";
+import { compactSummary, runCommand, shownLogPath } from "../run/run.js";
+import { gitDirs } from "../runtime/runtime.js";
 import { cleanCheckout, DEPENDENCY_DIRS } from "../check/sandbox.js";
 import { loadConfig, verifierPaths } from "../config/config.js";
 import { CONFIG_PATH, DEFAULT_VERIFIER_PATHS, WAYS_DIR, WORK_DIR } from "../domain/constants.js";
-import { STRENGTHS, type ApprovalsConfig, type BaselineResult, type CheckContract, type Criterion, type CriterionEvidence, type EnvironmentResult, type EvaluationMode, type Evidence, type RunnerInfo, type Strength, type TestsRatchet } from "../domain/types.js";
+import { STRENGTHS, type ApprovalsConfig, type BaselineResult, type CheckContract, type Criterion, type CriterionEvidence, type EnvironmentResult, type EvaluationMode, type Evidence, type RunnerInfo, type RunOutput, type Strength, type TestsRatchet } from "../domain/types.js";
 import type { GitRepository } from "../git/git.js";
 import { matchesAny } from "../memory/glob.js";
 import { quarantine, readBaseline, recordTestsRan, testsRanAt, writeBaseline, type BaselineRun } from "../runtime/ledger.js";
@@ -390,6 +392,7 @@ export async function evaluate({ cwd, git, base, criteria, work, mode = "clean",
     ? await cleanCheckout(git, input, { ...(setup ? { setup, runSetup: async (dir) => (setupResult = await runSetupIn(dir, setup, timeoutMs)).status === "passed" } : {}) })
     : undefined;
   const dir = checkout?.dir ?? cwd;
+  const dirs = gitDirs(cwd);
   const flaky: string[] = [];
   const evidence: Record<string, CriterionEvidence> = {};
   let result: Awaited<ReturnType<typeof runChecks>>;
@@ -400,7 +403,7 @@ export async function evaluate({ cwd, git, base, criteria, work, mode = "clean",
       result = await runChecks(dir, { integrityOnly: true });
     } else {
       const cachedDetail = checkout?.setupCached ? checkout.dependencies : setupResult?.detail;
-      result = await runChecks(dir, { services: true, capture: true, contract, retries: RETRIES, ...(cachedDetail && setup ? { setupCached: cachedDetail } : {}) });
+      result = await runChecks(dir, { services: true, capture: true, contract, retries: RETRIES, runs: { dirs, ...(checkout ? { commit: input } : {}) }, ...(cachedDetail && setup ? { setupCached: cachedDetail } : {}) });
     }
     for (const [id, failure] of Object.entries(result.flaky ?? {})) {
       flaky.push(id);
@@ -417,12 +420,12 @@ export async function evaluate({ cwd, git, base, criteria, work, mode = "clean",
         evidence[criterion.id] = { id: criterion.id, strength: criterion.strength, status: "failed", command: [...criterion.verify], detail: result.issues.length > 0 ? "Skipped because integrity checks failed" : "Skipped because the environment is not healthy", ...note };
         continue;
       }
-      const run = await executeWithRetries(criterion.verify, dir, timeoutMs, true, RETRIES);
+      const { record, result: run } = await runCommand(dirs, `criterion:${criterion.id}`, criterion.verify, { cwd: dir, timeoutMs, retries: RETRIES, ...(checkout ? { commit: input } : {}) });
       if (run.flakyFailure) {
         flaky.push(criterion.id);
         quarantine(cwd, { key: `${work ?? "work"}/${criterion.id}`, command: [...criterion.verify], lastAt: new Date().toISOString(), lastCommit: input, ...(run.flakyFailure.tail ? { tail: run.flakyFailure.tail } : {}) });
       }
-      evidence[criterion.id] = { id: criterion.id, strength: criterion.strength, status: run.status === "passed" ? "passed" : "failed", command: [...criterion.verify], ...output(run), runs: [criterion.id], ...note };
+      evidence[criterion.id] = { id: criterion.id, strength: criterion.strength, status: run.status === "passed" ? "passed" : "failed", command: [...criterion.verify], ...output(run), summary: compactSummary(record), run: record.id, log: shownLogPath(dirs, record.id), runs: [criterion.id], ...note };
     }
   } finally {
     checkout?.release();
@@ -512,12 +515,12 @@ export function evidenceFailures(evidence: Evidence): string[] {
   for (const check of evidence.checks) {
     if (check.status === "passed" || check.status === "skipped") continue;
     lines.push(`check ${check.name}: ${check.status}${check.exitCode === undefined ? "" : ` (exit ${check.exitCode})`}${check.attempts ? ` after ${check.attempts} attempts` : ""}${check.detail ? ` — ${check.detail}` : ""}`);
-    if (check.tail) lines.push(...indent(check.tail));
+    lines.push(...details(check));
   }
   for (const [id, entry] of Object.entries(evidence.criteria)) {
     if (entry.status !== "failed") continue;
     lines.push(`criterion ${id} (${entry.strength}): failed${entry.exitCode === undefined ? "" : ` (exit ${entry.exitCode})`}${entry.attempts ? ` after ${entry.attempts} attempts` : ""}${entry.detail ? ` — ${entry.detail}` : ""}`);
-    if (entry.tail) lines.push(...indent(entry.tail));
+    lines.push(...details(entry));
   }
   const runner = evidence.runner;
   if (lines.length > 0 && runner?.clean && runner.dependencies.startsWith("none (")) {
@@ -528,4 +531,11 @@ export function evidenceFailures(evidence: Evidence): string[] {
 
 function indent(text: string): string[] {
   return text.split("\n").slice(-10).map((line) => `    ${line}`);
+}
+
+/** The failures `ways run`'s reading found, and where the whole log is; the raw tail when there is no reading. */
+function details(entry: Pick<RunOutput, "summary" | "tail" | "run">): string[] {
+  const failures = entry.summary?.split("\n").slice(1) ?? [];
+  if (failures.length === 0) return entry.tail ? indent(entry.tail) : [];
+  return [...failures.map((line) => `  ${line}`), ...(entry.run ? [`    full log: ways run --show ${entry.run}`] : [])];
 }
