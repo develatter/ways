@@ -8,7 +8,7 @@ sources:
   - src/hooks/hook.ts
 reviewed: 2026-10-29
 source_hashes:
-  src/cli.ts: 6801ff123cbd
+  src/cli.ts: 9d31d48e1830
   src/work/work.ts: 6cf798d8e5c6
   src/work/evaluate.ts: 6abdbb69b336
   src/hooks/hook.ts: fd41f9993c45

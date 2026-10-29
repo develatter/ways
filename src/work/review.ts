@@ -217,10 +217,11 @@ export async function describeReview(cwd: string, agent?: string): Promise<{ pro
  * `ways review`: launches the independent reviewer, records its verdict, and
  * closes the work when nothing else is missing.
  */
-export async function launchReview(cwd: string, options: { agent?: string } = {}): Promise<ReviewOutcome & { reviewer: string }> {
+export async function launchReview(cwd: string, options: { agent?: string; onLaunch?: () => void } = {}): Promise<ReviewOutcome & { reviewer: string }> {
   const { top } = gitDirs(cwd);
   const prompt = await reviewPrompt(top);
   const reviewer = await chooseReviewer(new GitRepository(top), prompt.base, options.agent);
+  options.onLaunch?.();
   const result = await runReviewer(reviewer.command, top, prompt.text);
   let answer = result.stdout;
   if (reviewer.preset?.agent === "claude") {

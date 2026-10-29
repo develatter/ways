@@ -70,5 +70,7 @@ describe("CLI: where it runs and what it says", () => {
       expect(result.status, args.join(" ")).toBe(1);
       expect(result.out, args.join(" ")).toContain(next);
     }
+    // Nothing is launched, so nothing says it is.
+    expect(ways(cwd, ["review"]).out).not.toContain("Launching");
   });
 });

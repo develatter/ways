@@ -227,8 +227,9 @@ async function dispatch(command: string, args: string[], cwd: string, invoked = 
         return 0;
       }
       const { launchReview } = await import("./work/review.js");
-      console.log("Launching an independent read-only reviewer; this can take a few minutes.");
-      const launched = await launchReview(cwd, agent === undefined ? {} : { agent });
+      // Said only once the reviewer is really starting, not before a missing precondition.
+      const onLaunch = (): void => console.log("Launching an independent read-only reviewer; this can take a few minutes.");
+      const launched = await launchReview(cwd, { onLaunch, ...(agent === undefined ? {} : { agent }) });
       console.log(`Reviewed by ${launched.reviewer} in a new read-only process.`);
       result = launched;
     } else {
