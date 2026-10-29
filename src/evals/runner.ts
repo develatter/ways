@@ -164,7 +164,7 @@ async function runTask(task: EvalTask, adapter: EvalAdapter, config: EvalConfigu
     const final = sessions.at(-1);
     if (!final) throw new Error("Eval task produced no session");
     const incorrectDoneClaim = sessions.some((session) => session.doneClaim && !session.grading.success);
-    const compliance = await gradeCompliance(config.harness, disposable.path, task.id, disposable.revision, config.outcomePolicy);
+    const compliance = await gradeCompliance(config.harness, disposable.path, task.id, disposable.revision, config.outcomePolicy, task.kind);
     return {
       taskId: task.id,
       kind: task.kind ?? "feature",

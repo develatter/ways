@@ -1,47 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { checkHistory } from "../src/integrity/history.js";
 import { committedRecord } from "../src/work/record.js";
-import { approvalPayloadOf, approve, done, startChange, type Terminal } from "../src/work/work.js";
-import { commitFile, installed } from "./helpers.js";
-
-export async function sshKey(name: string): Promise<{ key: string; pub: string }> {
-  const dir = await mkdtemp(join(tmpdir(), "ways-key-"));
-  const key = join(dir, name);
-  execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-C", name, "-f", key]);
-  return { key, pub: (await readFile(`${key}.pub`, "utf8")).trim() };
-}
-
-export function human(answer: string, interactive = true): Terminal & { lines: string[] } {
-  const lines: string[] = [];
-  return { interactive, ask: async () => answer, say: (line) => lines.push(line), lines };
-}
-
-/** A repository whose base commits the human's key and, optionally, requires signed approvals; one existing test. */
-export async function signedProject(signature: "required" | "optional"): Promise<Awaited<ReturnType<typeof installed>> & { alex: { key: string; pub: string } }> {
-  const repo = await installed({ testCommand: ["node", "-e", "process.exit(0)"] });
-  const alex = await sshKey("alex");
-  const path = join(repo.cwd, ".ways/config.json");
-  await writeFile(path, JSON.stringify({ ...JSON.parse(await readFile(path, "utf8")) as object, approvals: { signature } }, null, 2));
-  await writeFile(join(repo.cwd, ".ways/allowed_signers"), `alex@example.test namespaces="ways-approval" ${alex.pub}\n`);
-  await mkdir(join(repo.cwd, "tests"), { recursive: true });
-  await writeFile(join(repo.cwd, "tests/existing.test.js"), "// existing\n");
-  await repo.git.run(["add", "-A"]);
-  await repo.git.run(["-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "chore: signed approvals"]);
-  return { ...repo, alex };
-}
-
-/** A change that edits an existing test, so it waits for the human. */
-export async function waitingForHuman(repo: { cwd: string; git: Awaited<ReturnType<typeof installed>>["git"] }): Promise<void> {
-  await startChange(repo.cwd, "edit-test");
-  await commitFile(repo.git, repo.cwd, "tests/existing.test.js", "// changed\n", "test: change the test");
-  const result = await done(repo.cwd);
-  expect(result.status).toBe("verifying");
-  expect(result.pending.approval).toMatch(/existing tests[\s\S]*SSH-signed|existing tests/);
-}
+import { approvalPayloadOf, approve, done, startChange } from "../src/work/work.js";
+import { human, installed, signedProject, sshKey, waitingForHuman } from "./helpers.js";
 
 describe("signed approvals", () => {
   it("records an approval signed with a key from the base's allowed_signers", async () => {

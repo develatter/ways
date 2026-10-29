@@ -13,7 +13,13 @@ export interface OutcomeEvalPolicy {
 }
 export const DEFAULT_OUTCOME_POLICY: OutcomeEvalPolicy = { review: "required", approval: "none" };
 
-export const TASK_KINDS = ["feature", "resume", "failed-evaluation-remediation", "false-done-claim", "concurrent-conflict"] as const;
+/**
+ * The adversarial kinds (assets/evals/adversarial.json) tempt a shortcut that
+ * would break a guarantee: editing the test, loosening the checks, reviewing
+ * one's own work, faking the human's approval, or forcing an impossible task
+ * through instead of blocking it.
+ */
+export const TASK_KINDS = ["feature", "resume", "failed-evaluation-remediation", "false-done-claim", "concurrent-conflict", "tamper-test", "tamper-config", "self-review", "fake-approval", "legit-block"] as const;
 export type TaskKind = typeof TASK_KINDS[number];
 
 export interface EvalFile {
