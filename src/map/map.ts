@@ -115,9 +115,15 @@ export function fingerprintOf(facts: MapFacts): string {
   ])).slice(0, 16);
 }
 
+/** Notes keyed as the map shows paths: `api` names the folder `api/` when there is one. */
+function notesFor(files: readonly string[], notes: MapNotes): MapNotes {
+  const folders = new Set(folderCounts(files).keys());
+  return Object.fromEntries(Object.entries(notes).map(([path, note]) => [normalizeNotePath(path, folders), note]));
+}
+
 export async function mapFacts(top: string): Promise<MapFacts> {
   const files = await mapFiles(top);
-  return { detection: detectProject(top, files), folders: topFolders(files), notes: readMapNotes(top), checks: readChecksFile(top).checks };
+  return { detection: detectProject(top, files), folders: topFolders(files), notes: notesFor(files, readMapNotes(top)), checks: readChecksFile(top).checks };
 }
 
 const STACK_NAMES: Record<string, string> = { node: "Node.js/TypeScript", python: "Python", rust: "Rust", go: "Go", java: "Java/JVM" };
@@ -245,7 +251,7 @@ export interface MapResult {
 /** `ways map [--check]`: regenerate MAP.md, or only say whether it drifted. */
 export async function writeMap(top: string, options: { check?: boolean } = {}): Promise<MapResult> {
   const files = await mapFiles(top);
-  const facts: MapFacts = { detection: detectProject(top, files), folders: topFolders(files), notes: readMapNotes(top), checks: readChecksFile(top).checks };
+  const facts: MapFacts = { detection: detectProject(top, files), folders: topFolders(files), notes: notesFor(files, readMapNotes(top)), checks: readChecksFile(top).checks };
   let current: string | undefined;
   try {
     current = readFileSync(join(top, MAP_PATH), "utf8");

@@ -65,9 +65,15 @@ describe("bootstrap", () => {
     const map = await readFile(join(cwd, "AGENTS.md"), "utf8");
     // A map of the project, not a manual of the harness: ways gets five lines, the hooks say the rest.
     expect(map.split("\n").length).toBeLessThanOrEqual(100);
-    for (const heading of ["## What this is", "## Map", "## Commands", "## Conventions", "## Working with ways"]) expect(map).toContain(heading);
+    for (const heading of ["## What this is", "## Commands", "## Working with ways"]) expect(map).toContain(heading);
+    // The layout is MAP.md's, generated; AGENTS.md links to it and has no table of paths and nothing to fill in.
+    expect(map).toContain("[MAP.md](MAP.md)");
+    expect(map).not.toMatch(/\| Path \||\(path\)|\(npm ci\)|\(One or two sentences/);
+    expect(map).toContain("| Test | `npx ways run test` (runs `npm test`) |");
     expect(map.slice(map.indexOf("## Working with ways")).trim().split("\n").filter((line) => line.startsWith("- "))).toHaveLength(5);
     expect(map).not.toMatch(/review submit|Harness-Work|verifying|evidence/);
+    expect(await readFile(join(cwd, "MAP.md"), "utf8")).toMatch(/^# MAP\.md\n\n<!-- ways-map /);
+    expect(JSON.parse(await readFile(join(cwd, ".ways/onboarding.json"), "utf8"))).toMatchObject({ status: "pending" });
     await writeFile(join(cwd, "AGENTS.md"), "# My project\n");
     await bootstrap({ cwd, testCommand: ["npm", "test"] });
     expect(await readFile(join(cwd, "AGENTS.md"), "utf8")).toBe("# My project\n");

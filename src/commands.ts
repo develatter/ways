@@ -19,9 +19,12 @@ export const ACTION_BUDGET = 44;
 export const COMMANDS: readonly CommandSpec[] = [
   {
     name: "bootstrap",
-    summary: "Install ways in a Git repository: config, commit hooks, memory and the Claude Code and pi adapters",
-    usage: ["ways bootstrap [--test-command=<json-array>] [--commands=<json>] [--agents=claude,pi[,codex,cursor]] [--no-adapters] [--force]"],
-    examples: ["ways bootstrap --test-command='[\"npm\",\"test\"]'"],
+    summary: "Install ways in a Git repository: checks detected and validated by running them, AGENTS.md, MAP.md, commit hooks, memory and the Claude Code and pi adapters",
+    usage: [
+      "ways bootstrap [--test-command=<json-array>] [--commands=<json>] [--agents=claude,pi[,codex,cursor]] [--no-adapters] [--force]",
+      "  without --test-command or --commands, ways detects the checks (manifests, CI, Makefile) and runs each candidate once",
+    ],
+    examples: ["ways bootstrap", "ways bootstrap --test-command='[\"npm\",\"test\"]'"],
     actions: ["bootstrap"],
   },
   {

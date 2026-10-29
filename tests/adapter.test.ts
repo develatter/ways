@@ -14,7 +14,7 @@ import { applyUpgrade, planUpgrade } from "../src/upgrade/upgrade.js";
 import { startChange } from "../src/work/work.js";
 import { repository } from "./helpers.js";
 
-const ROLES = ["documentalist", "reviewer"];
+const ROLES = ["documentalist", "onboarder", "reviewer"];
 const COMMANDS = ["orchestrator", "outcome", "remember"];
 const AGENT_EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd"];
 const OLD_GUARD = { matcher: "Bash", hooks: [{ type: "command", command: "\"$CLAUDE_PROJECT_DIR\"/.claude/ways-guard.sh" }] };
@@ -34,6 +34,11 @@ describe("canonical adapter source", () => {
     expect(documentalist).toMatchObject({ access: "write" });
     expect(documentalist?.body).toMatch(/docs\/wiki/);
     expect(documentalist?.body).toMatch(/Never touch code.*\.ways\/knowledge/);
+    // The onboarder writes only what an agent cannot read from the code, and only proposes checks.
+    const onboarder = source.roles.find((role) => role.name === "onboarder");
+    expect(onboarder?.body).toMatch(/cannot see by reading the code/);
+    expect(onboarder?.body).toMatch(/ways runs each and keeps only those that work/);
+    expect(onboarder?.body).toMatch(/Never edit code, tests, config or AGENTS\.md/);
   });
 
   it("rejects prompts longer than six lines", async () => {
@@ -50,7 +55,7 @@ describe("claude renderer", () => {
   it("renders optional procedures as skills, a read-only reviewer and the status line", async () => {
     const files = renderClaude(await loadAdapterSource());
     const byPath = new Map(files.map((file) => [file.path, file]));
-    expect([...byPath.keys()].sort()).toEqual([".claude/agents/ways-documentalist.md", ".claude/agents/ways-reviewer.md",".claude/skills/ways-orchestrator/SKILL.md", ".claude/skills/ways-outcome/SKILL.md", ".claude/skills/ways-remember/SKILL.md", ".claude/ways-statusline.sh"]);
+    expect([...byPath.keys()].sort()).toEqual([".claude/agents/ways-documentalist.md", ".claude/agents/ways-onboarder.md", ".claude/agents/ways-reviewer.md", ".claude/skills/ways-orchestrator/SKILL.md", ".claude/skills/ways-outcome/SKILL.md", ".claude/skills/ways-remember/SKILL.md", ".claude/ways-statusline.sh"]);
     expect(byPath.get(".claude/skills/ways-outcome/SKILL.md")?.content).toMatch(/^---\nname: ways-outcome\ndescription: .*\nargument-hint: <id> \[what to deliver\]\n---\n/);
     expect(byPath.get(".claude/agents/ways-reviewer.md")?.content).toContain("permissionMode: plan");
     expect(byPath.get(".claude/ways-statusline.sh")?.mode).toBe(0o755);

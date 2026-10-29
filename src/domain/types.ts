@@ -100,7 +100,13 @@ export interface HarnessConfig {
   approvals?: ApprovalsConfig;
   /** The reviewer `ways review` launches when no `--agent` is given. */
   reviewer?: ReviewerConfig;
+  /** The first session's onboarding: `ask` (default) proposes it and asks the human, `auto` runs it, `off` never mentions it. */
+  onboarding?: OnboardingPolicy;
+  /** The agent `ways onboard` launches when no `--agent` is given. */
+  onboarder?: ReviewerConfig & { model?: string };
 }
+
+export type OnboardingPolicy = "ask" | "auto" | "off";
 
 export type EvaluationMode = "clean" | "fast";
 

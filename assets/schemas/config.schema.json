@@ -46,6 +46,17 @@
       }
     },
     "historySince": { "type": "string", "minLength": 7 },
+    "onboarding": { "enum": ["ask", "auto", "off"], "description": "the first session's onboarding (`ways onboard`): ask (default) the agent proposes it and asks the human before an agent spends their quota; auto it runs it; off ways never mentions it" },
+    "onboarder": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agent": { "enum": ["claude", "pi"] },
+        "command": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "model": { "type": "string", "minLength": 1 }
+      },
+      "description": "the agent `ways onboard` launches when no --agent is given; command replaces the preset (it gets the brief on stdin)"
+    },
     "evaluation": { "enum": ["clean", "fast"], "description": "clean (default): `ways done` runs in a clean checkout of the commit; fast: in the working tree, leaving the clean run to CI (`ways verify`)" },
     "approvals": {
       "type": "object",

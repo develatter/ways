@@ -486,22 +486,27 @@ async function dispatch(command: string, args: string[], cwd: string, invoked = 
 
   if (command === "bootstrap") {
     const { bootstrap, DEFAULT_AGENTS } = await import("./bootstrap/bootstrap.js");
-    const testCommand = jsonOption(args, "--test-command") ?? ["npm", "test"];
-    if (!Array.isArray(testCommand) || !testCommand.every((part) => typeof part === "string")) throw new Error("--test-command must be a JSON string array, e.g. --test-command='[\"npm\",\"test\"]'");
+    const testCommand = jsonOption(args, "--test-command");
+    if (testCommand !== undefined && (!Array.isArray(testCommand) || !testCommand.every((part) => typeof part === "string"))) throw new Error("--test-command must be a JSON string array, e.g. --test-command='[\"npm\",\"test\"]'");
     const commands = jsonOption(args, "--commands");
     if (commands !== undefined && (typeof commands !== "object" || commands === null || Array.isArray(commands))) {
       throw new Error("--commands must be a JSON object, e.g. --commands='{\"required\":[\"test\",\"lint\"],\"test\":[\"npm\",\"test\"],\"lint\":[\"npm\",\"run\",\"lint\"]}'");
     }
     const agentsOption = option(args, "--agents");
     const agents = args.includes("--no-adapters") ? [] : agentsOption === undefined ? [...DEFAULT_AGENTS] : agentsOption.split(",").map((agent) => agent.trim()).filter(Boolean);
+    if (testCommand === undefined && commands === undefined) console.log("Detecting the checks from the manifests and CI; ways runs each candidate once to keep only those that work…");
     const result = await bootstrap({
       cwd,
-      testCommand,
+      ...(testCommand === undefined ? {} : { testCommand: testCommand as string[] }),
       ...(commands === undefined ? {} : { commands: commands as never }),
       force: args.includes("--force"),
       agents,
+      onProgress: (line) => console.log(line),
     });
-    console.log(`ways installed (${result.files.length} files, agents: ${agents.join(", ") || "none"}). Describe your project in AGENTS.md, commit, and work as usual: \`ways done\` finishes a change.`);
+    const { describeValidation } = await import("./run/validate.js");
+    for (const line of describeValidation(result.validation)) console.log(line);
+    console.log(`ways installed (${result.files.length} files, agents: ${agents.join(", ") || "none"}): AGENTS.md, MAP.md and .ways/checks.json are written from the repository.`);
+    console.log("Commit them. In the first agent session ways offers `ways onboard`: an agent adds folder purposes to MAP.md and a few facts to the memory, and ways validates them.");
     for (const warning of result.warnings) console.error(`Warning: ${warning}`);
     return 0;
   }

@@ -2,8 +2,15 @@ import { chmod, lstat, readFile, readlink, realpath, rm } from "node:fs/promises
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HARNESS_VERSION } from "../version.js";
-import { AGENT_HOOK_PATH, CONFIG_PATH, HOOKS_DIR, KNOWLEDGE_DIR, MANIFEST_PATH } from "../domain/constants.js";
-import type { HarnessConfig, ManagedManifest, NamedChecksConfig } from "../domain/types.js";
+import { AGENT_HOOK_PATH, CHECKS_PATH, CONFIG_PATH, HOOKS_DIR, KNOWLEDGE_DIR, MANIFEST_PATH, MAP_PATH, ONBOARDING_PATH } from "../domain/constants.js";
+import { CHECK_NAMES, type CheckName, type HarnessConfig, type ManagedManifest, type NamedChecksConfig } from "../domain/types.js";
+import { detectProject, type Detection } from "../map/detect.js";
+import { mapFiles, readMarker, writeMap } from "../map/map.js";
+import { pendingOnboarding, readOnboarding, writeOnboarding } from "../onboard/state.js";
+import { readChecksFile, sameCommand, writeChecksFile, type CheckEntry } from "../run/checks-file.js";
+import { detectedCandidates, entryOf, validateCandidates, type Validation } from "../run/validate.js";
+import { gitDirs } from "../runtime/runtime.js";
+import { renderAgentsMd } from "./agents-md.js";
 import { validateConfig, validationDetails } from "../domain/validation.js";
 import { sha256, stableJson, writeAtomic } from "../fs/files.js";
 import { GitRepository } from "../git/git.js";
@@ -15,11 +22,14 @@ export const DEFAULT_AGENTS = ["claude", "pi"] as const;
 
 export interface BootstrapOptions {
   cwd: string;
-  testCommand: string[];
+  /** The test command the human chose; without it (and without `commands`) ways detects the checks and validates them by running them. */
+  testCommand?: string[];
   commands?: NamedChecksConfig;
   force?: boolean;
   /** Adapters to install; defaults to Claude Code and pi. An empty list installs none. */
   agents?: readonly string[];
+  /** Progress while detected checks run, for the human. */
+  onProgress?: (line: string) => void;
 }
 
 export interface BootstrapResult {
@@ -28,6 +38,44 @@ export interface BootstrapResult {
   files: string[];
   /** What the human should fix for the installation to work in CI, each with the command. */
   warnings: string[];
+  /** Detected checks ways ran: what it kept and what it rejected. Empty when the human gave the commands. */
+  validation: Validation;
+}
+
+/** When nothing that runs was found: a test check that says how to configure one, so `ways done` cannot pass on nothing. */
+export const NO_TEST_COMMAND = ["sh", "-c", "echo 'ways: no test command is configured; add one with: ways check add test -- <command>' >&2; exit 1"];
+
+/**
+ * The checks of a new installation. Given by the human: taken as they are.
+ * Otherwise detected from manifests and CI and run once each: the first
+ * candidate per check that works is kept with its line base, the rest are
+ * reported. An existing config is kept (a second bootstrap re-detects nothing).
+ */
+async function chooseChecks(root: string, options: BootstrapOptions, detection: Detection): Promise<{ testCommand: string[]; commands?: NamedChecksConfig; validation: Validation; entries: Partial<Record<CheckName, CheckEntry>>; existing?: HarnessConfig }> {
+  const none: Validation = { accepted: [], rejected: [] };
+  if (options.testCommand || options.commands) {
+    const testCommand = options.testCommand ?? options.commands?.test ?? NO_TEST_COMMAND;
+    const entries: Partial<Record<CheckName, CheckEntry>> = {};
+    const given = options.commands ?? { required: ["test"], test: testCommand };
+    for (const name of CHECK_NAMES) if (given[name]) entries[name] = { command: [...given[name]!], source: "ways bootstrap (given)" };
+    return { testCommand: [...testCommand], ...(options.commands ? { commands: structuredClone(options.commands) } : {}), validation: none, entries };
+  }
+  if (!options.force && await exists(join(root, CONFIG_PATH))) {
+    const existing = JSON.parse(await readFile(join(root, CONFIG_PATH), "utf8")) as HarnessConfig;
+    return { testCommand: existing.testCommand, ...(existing.commands ? { commands: existing.commands } : {}), validation: none, entries: readChecksFile(root).checks, existing };
+  }
+  const dirs = gitDirs(root);
+  const validation = await validateCandidates(dirs, detectedCandidates(detection.candidates), { onRun: (candidate) => options.onProgress?.(`  running ${candidate.name}: ${candidate.command.join(" ")}`) });
+  const entries: Partial<Record<CheckName, CheckEntry>> = {};
+  for (const accepted of validation.accepted) entries[accepted.name] = entryOf(accepted);
+  const test = validation.accepted.find((entry) => entry.name === "test")?.command;
+  const testCommand = test ?? NO_TEST_COMMAND;
+  const names = validation.accepted.map((entry) => entry.name);
+  if (names.length === 0 || (names.length === 1 && test)) return { testCommand, validation, entries };
+  // The named checks decide what runs; `testCommand` is only the fallback the schema keeps.
+  const commands: NamedChecksConfig = { required: CHECK_NAMES.filter((name) => names.includes(name)) };
+  for (const entry of validation.accepted) commands[entry.name] = [...entry.command];
+  return { testCommand, commands, validation, entries };
 }
 
 export const INSTALL_COMMAND = "npm install --save-dev @develatter/ways --registry=https://npm.pkg.github.com";
@@ -54,7 +102,6 @@ export const MANAGED_ASSETS: Array<[string, string, number?]> = [
 
 /** Files ways writes once when missing and then leaves to the project. */
 export const SEEDED_ASSETS: Array<[string, string]> = [
-  ["AGENTS.md", "AGENTS.md"],
   [`${KNOWLEDGE_DIR}/index.md`, "knowledge-index.md"],
   // The CI job that judges every pull request with `ways verify`.
   [".github/workflows/ways.yml", "ways.yml"],
@@ -116,18 +163,20 @@ export async function bootstrap(options: BootstrapOptions): Promise<BootstrapRes
   const root = await realpath(resolve(options.cwd));
   const git = new GitRepository(root);
   if (await realpath(await git.root()) !== root) throw new Error("Bootstrap must run at the Git repository root");
-  if (!Array.isArray(options.testCommand) || options.testCommand.length === 0 || options.testCommand.some((part) => typeof part !== "string" || !part)) {
-    throw new Error("A non-empty test command is required, e.g. --test-command='[\"npm\",\"test\"]'");
+  if (options.testCommand !== undefined && (!Array.isArray(options.testCommand) || options.testCommand.length === 0 || options.testCommand.some((part) => typeof part !== "string" || !part))) {
+    throw new Error("The test command must be a non-empty JSON array of words, e.g. --test-command='[\"npm\",\"test\"]' (or leave it out: ways detects the checks and runs each once)");
   }
   const agents = [...new Set(options.agents ?? DEFAULT_AGENTS)];
   for (const agent of agents) providerById(agent);
   const force = options.force ?? false;
-  const config: HarnessConfig = {
+  const detection = detectProject(root, await mapFiles(root));
+  const chosen = await chooseChecks(root, options, detection);
+  const config: HarnessConfig = chosen.existing ?? {
     schemaVersion: 2,
     harnessVersion: HARNESS_VERSION,
     enforcement: "observe",
-    testCommand: [...options.testCommand],
-    ...(options.commands ? { commands: structuredClone(options.commands) } : {}),
+    testCommand: [...chosen.testCommand],
+    ...(chosen.commands ? { commands: structuredClone(chosen.commands) } : {}),
   };
   if (!validateConfig(config)) throw new Error(`Invalid checks configuration: ${validationDetails("config", config).errors.join("; ")}`);
 
@@ -173,6 +222,36 @@ export async function bootstrap(options: BootstrapOptions): Promise<BootstrapRes
     const result = await installAdapter(root, agent, force);
     written.push(...result.files, ...result.merged);
   }
+
+  // The three layers' deterministic part: what ways observed of the checks, AGENTS.md, MAP.md; the rest waits for `ways onboard`.
+  const checksFile = readChecksFile(root);
+  const before = JSON.stringify(checksFile.checks);
+  for (const [name, entry] of Object.entries(chosen.entries) as Array<[CheckName, CheckEntry]>) {
+    if (!checksFile.checks[name] || !sameCommand(checksFile.checks[name]!.command, entry.command)) checksFile.checks[name] = entry;
+  }
+  if (!await exists(join(root, CHECKS_PATH)) || JSON.stringify(checksFile.checks) !== before) {
+    writeChecksFile(root, checksFile);
+    written.push(CHECKS_PATH);
+  }
+  if (!await exists(join(root, "AGENTS.md"))) {
+    const checks: Partial<Record<CheckName, string[]>> = {};
+    for (const name of CHECK_NAMES) {
+      const command = config.commands ? config.commands[name] : name === "test" ? config.testCommand : undefined;
+      if (command && (config.commands?.required.includes(name) ?? true) && !sameCommand(command, NO_TEST_COMMAND)) checks[name] = command;
+    }
+    await writeAtomic(join(root, "AGENTS.md"), renderAgentsMd({ detection, checks }));
+    written.push("AGENTS.md");
+  }
+  if (!readOnboarding(root)) {
+    writeOnboarding(root, pendingOnboarding());
+    written.push(ONBOARDING_PATH);
+  }
+  const map = join(root, MAP_PATH);
+  // A MAP.md the project wrote itself (no ways marker) is left alone.
+  if (!await exists(map) || readMarker(await readFile(map, "utf8"))) {
+    await writeMap(root);
+    written.push(MAP_PATH);
+  }
   const final = JSON.parse(await readFile(join(root, MANIFEST_PATH), "utf8")) as ManagedManifest;
-  return { manifest: final, files: [...new Set(written)].sort(), warnings: await dependencyWarnings(root) };
+  return { manifest: final, files: [...new Set(written)].sort(), warnings: await dependencyWarnings(root), validation: chosen.validation };
 }
