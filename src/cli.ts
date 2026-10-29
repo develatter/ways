@@ -278,6 +278,24 @@ async function dispatch(command: string, args: string[], cwd: string): Promise<n
     return 0;
   }
 
+  if (command === "verify") {
+    const base = option(args, "--base");
+    if (!base) throw new Error("Usage: ways verify --base=<sha> [--head=<sha>] [--in-place] [--json=<file>] [--markdown=<file>]   (in a pull request: --base=${{ github.event.pull_request.base.sha }})");
+    const head = option(args, "--head");
+    const { renderVerifyMarkdown, verifyRange } = await import("./work/verify.js");
+    const report = await verifyRange(cwd, { base, ...(head ? { head } : {}), inPlace: args.includes("--in-place") });
+    const { appendFile, writeFile } = await import("node:fs/promises");
+    const json = option(args, "--json");
+    if (json) await writeFile(userPath(cwd, json), `${JSON.stringify(report, null, 2)}\n`);
+    const markdown = renderVerifyMarkdown(report);
+    const summary = option(args, "--markdown") ?? process.env.GITHUB_STEP_SUMMARY;
+    if (summary) await appendFile(userPath(cwd, summary), markdown);
+    for (const failure of report.failures) console.error(failure);
+    const backed = Object.entries(report.strength).map(([strength, count]) => `${count} ${strength}`).join(", ");
+    console.log(`ways verify ${report.passed ? "passed" : "failed"} for ${report.base.slice(0, 12)}..${report.head.slice(0, 12)}: ${report.checks.filter((check) => check.status === "passed").length} check(s) passed, ${report.works.length} work(s)${backed ? `, criteria backed by ${backed}` : ""}.`);
+    return report.passed ? 0 : 1;
+  }
+
   if (command === "remember") {
     const fact = args.filter((arg, index) => !arg.startsWith("--") && args[index - 1] !== "--path").join(" ");
     const { remember, MEMORY_TYPES } = await import("./memory/memory.js");

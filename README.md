@@ -105,9 +105,10 @@ The contract can add a `setup` command and `services` (`{"name", "command", "rea
 | `ways done` | Finish the active work: run integrity, checks and verifiers once, record the evidence, close when nothing is missing | `ways done` |
 | `ways block` | Stop on purpose when the task cannot be done as asked: record what is missing and what would unblock it, for the human | `ways block "AC2 needs the payments sandbox key; set PAYMENTS_KEY in .env.test or drop AC2"` |
 | `ways review` | Launch an independent read-only reviewer of the evaluated commit and record its verdict; closes the work when nothing else is missing | `ways review` |
-| `ways approve` | Human approval (needs a real terminal; agents cannot run it); closes the work when nothing else is missing | `ways approve` |
+| `ways approve` | Human approval (a real terminal, signed with the human's SSH key when configured); closes the work when nothing else is missing | `ways approve` |
 | `ways cancel` | Drop the active work; commits stay, an open record is marked cancelled | `ways cancel` |
 | `ways check` | Run integrity and the configured checks (what CI runs); --history audits work records and trailers | `ways check` |
+| `ways verify` | The CI's judgement of a range: re-run the base's checks and every criterion's verifier clean, require changed tests to be approved, audit the records | `ways verify --base=origin/main` |
 | `ways remember` | Write one short memory (a convention, decision, pitfall or how-to), tied to the code it is about | `ways remember "Tokens refresh 60 s before expiry" --path=src/auth/**` |
 | `ways memory` | Validate the OKF memory under .ways/knowledge (and flag possibly stale concepts), or rebuild its search index | `ways memory check` |
 | `ways query` | Search the memory; read-only | `ways query token refresh` |

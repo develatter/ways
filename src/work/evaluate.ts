@@ -119,6 +119,8 @@ export interface EvaluationInput {
   notes?: Readonly<Record<string, string>>;
   /** Evaluate this commit instead of HEAD (`ways verify`). */
   input?: string;
+  /** Only integrity and the criteria's verifiers: `ways verify` runs the checks once for the whole range. */
+  skipChecks?: boolean;
 }
 
 function output(run: CapturedResult & { attempts?: number }): Partial<CriterionEvidence> {
@@ -139,8 +141,24 @@ function output(run: CapturedResult & { attempts?: number }): Partial<CriterionE
  */
 async function testsBaseline(cwd: string, git: GitRepository, base: string): Promise<{ commit: string; ran: number } | undefined> {
   const commits = (await git.run(["rev-list", "--first-parent", "--max-count=20", base])).split("\n").filter(Boolean);
+  // Committed evidence counts too: in CI the local ledger is empty.
+  const committed = new Map<string, number>();
+  let names: string[] = [];
+  try {
+    names = (await git.run(["ls-tree", "--name-only", `${base}:${WORK_DIR}`])).split("\n").filter((name) => name.endsWith(".json"));
+  } catch {
+    // No records at the base.
+  }
+  for (const name of names) {
+    try {
+      const evidence = (JSON.parse(await git.run(["show", `${base}:${WORK_DIR}/${name}`])) as { evidence?: Evidence }).evidence;
+      if (evidence?.tests && evidence.passed) committed.set(evidence.input.commit, evidence.tests.ran);
+    } catch {
+      // An unreadable record says nothing about tests.
+    }
+  }
   for (const commit of commits) {
-    const ran = testsRanAt(cwd, commit);
+    const ran = testsRanAt(cwd, commit) ?? committed.get(commit);
     if (ran !== undefined) return { commit, ran };
     const touched = (await git.run(["diff-tree", "--no-commit-id", "--name-only", "-r", "--root", commit])).split("\n").filter(Boolean);
     if (touched.some((path) => !path.startsWith(`${WAYS_DIR}/`))) return undefined;
@@ -206,7 +224,7 @@ async function baselines(cwd: string, git: GitRepository, base: string, criteria
  * result is the evidence; the agent never writes it, except a note per
  * criterion.
  */
-export async function evaluate({ cwd, git, base, criteria, work, mode = "clean", notes = {}, input: requested }: EvaluationInput): Promise<Evidence> {
+export async function evaluate({ cwd, git, base, criteria, work, mode = "clean", notes = {}, input: requested, skipChecks = false }: EvaluationInput): Promise<Evidence> {
   const config = await loadConfig(cwd);
   const input = requested ?? await git.head();
   const tree = await git.treeId(input);
@@ -226,6 +244,8 @@ export async function evaluate({ cwd, git, base, criteria, work, mode = "clean",
   try {
     if (setupResult && setupResult.status !== "passed") {
       result = { issues: [], checks: [], environment: [setupResult], passed: false };
+    } else if (skipChecks) {
+      result = await runChecks(dir, { integrityOnly: true });
     } else {
       const cachedDetail = checkout?.setupCached ? checkout.dependencies : setupResult?.detail;
       result = await runChecks(dir, { services: true, capture: true, contract, retries: RETRIES, ...(cachedDetail && setup ? { setupCached: cachedDetail } : {}) });

@@ -110,6 +110,16 @@ export const COMMANDS: readonly CommandSpec[] = [
     actions: ["check", "check --history"],
   },
   {
+    name: "verify",
+    summary: "The CI's judgement of a range: re-run the base's checks and every criterion's verifier clean, require changed tests to be approved, audit the records",
+    usage: [
+      "ways verify --base=<sha> [--head=<sha>] [--in-place] [--json=<report.json>] [--markdown=<report.md>]",
+      "  --in-place runs in the current checkout when it is clean and at the head (a fresh CI checkout); the Markdown also goes to $GITHUB_STEP_SUMMARY",
+    ],
+    examples: ["ways verify --base=origin/main", "ways verify --base=$BASE_SHA --in-place --json=ways-report.json"],
+    actions: ["verify"],
+  },
+  {
     name: "remember",
     summary: "Write one short memory (a convention, decision, pitfall or how-to), tied to the code it is about",
     usage: ["ways remember \"<fact>\" [--path=<glob>]... [--type=convention|decision|pitfall|howto] [--id=<slug>]"],

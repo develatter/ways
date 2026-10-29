@@ -1,0 +1,33 @@
+# Written once by `ways bootstrap`; it is yours to adapt (install step, Node version).
+# It is the final judge: ways verify re-runs, from scratch, the base's checks and every
+# criterion's verifier of the works this range touched, requires changed existing tests
+# to be approved, and audits the work records. Make this job a required check.
+# Editing this file later is a change of the checks: it needs the human's approval.
+name: ways
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: ways verify
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          # A new branch pushed without a previous commit: verify its first commit's range.
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then BASE="$(git rev-list --max-parents=0 HEAD | tail -n 1)"; fi
+          npx --no-install ways verify --base="$BASE" --in-place --json=ways-report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ways-report
+          path: ways-report.json

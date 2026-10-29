@@ -40,6 +40,8 @@ export const MANAGED_ASSETS: Array<[string, string, number?]> = [
 export const SEEDED_ASSETS: Array<[string, string]> = [
   ["AGENTS.md", "AGENTS.md"],
   [`${KNOWLEDGE_DIR}/index.md`, "knowledge-index.md"],
+  // The CI job that judges every pull request with `ways verify`.
+  [".github/workflows/ways.yml", "ways.yml"],
 ];
 
 export function assetPath(relative: string): string {
