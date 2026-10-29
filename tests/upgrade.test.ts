@@ -1,4 +1,4 @@
-import { copyFile, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -49,11 +49,15 @@ describe("upgrade from ways 0.2.x", () => {
     const concept = await readFile(join(cwd, ".ways/knowledge/conventions/token-refresh.md"), "utf8");
     expect(concept).toContain("paths:\n  - src/**");
     expect(concept).toContain("Access tokens are refreshed 60 seconds before they expire");
-    for (const gone of [".ways/knowledge/coverage/auth.json", ".ways/knowledge/state.json", ".ways/knowledge/system/index.md", ".ways/memory/discovery.json", ".ways/state/current.json", ".ways/status.json", "MAP.md", ".ways/.gitignore", ".claude/ways-guard.sh", ".codex/ways-guard.sh", ".claude/commands/ways-sdd.md", ".claude/agents/ways-implementer.md"]) {
+    for (const gone of [".ways/knowledge/coverage/auth.json", ".ways/knowledge/state.json", ".ways/knowledge/system/index.md", ".ways/memory/discovery.json", ".ways/state/current.json", ".ways/status.json", ".ways/.gitignore", ".claude/ways-guard.sh", ".codex/ways-guard.sh", ".claude/commands/ways-sdd.md", ".claude/agents/ways-implementer.md"]) {
       expect(await exists(join(cwd, gone)), gone).toBe(false);
     }
     expect((await checkMemory(cwd)).issues).toEqual([]);
     expect((await relevantConcepts(cwd, ["src/auth.js"])).map((entry) => entry.path)).toEqual([".ways/knowledge/conventions/token-refresh.md"]);
+    // The 0.2 MAP.md template is replaced by one generated from the repository, and AGENTS.md by one that links to it.
+    expect(await readFile(join(cwd, "MAP.md"), "utf8")).toMatch(/^# MAP\.md\n\n<!-- ways-map /);
+    expect(await readFile(join(cwd, "AGENTS.md"), "utf8")).toContain("[MAP.md](MAP.md)");
+    expect(JSON.parse(await readFile(join(cwd, ".ways/onboarding.json"), "utf8"))).toMatchObject({ status: "pending" });
 
     // The active quick work continues as a change on the same base; the edit in progress is untouched.
     expect(readActive(cwd)).toMatchObject({ id: "padding", kind: "change", base });
@@ -100,8 +104,42 @@ describe("upgrade from ways 0.2.x", () => {
     expect(await readFile(join(cwd, "scripts/check.sh"), "utf8")).toContain("ways check");
   });
 
+  it("moves a 0.3.0-dev.0 AGENTS.md map into MAP.md and its notes, keeping every line the person wrote", async () => {
+    const { cwd, git } = await installed({ layers: true });
+    await mkdir(join(cwd, "api"));
+    await writeFile(join(cwd, "api/server.js"), "\n");
+    const old = (await readFile(resolve("assets/upgrade/agents-0.3.md"), "utf8"))
+      .replace("(One or two sentences: what the project does and who uses it.)", "Inventory service for the shop floor.")
+      .replace("| `(path)` | (application code) |", "| `api/` | HTTP handlers; no business logic here |")
+      .replace("- (Naming, error handling, logging.)", "- Errors are returned, never thrown, across api/.");
+    await writeFile(join(cwd, "AGENTS.md"), old);
+    // What 0.3.0-dev.0 did not have.
+    for (const path of ["MAP.md", ".ways/checks.json", ".ways/onboarding.json"]) await rm(join(cwd, path), { force: true });
+    await git.run(["add", "-A"]);
+    await git.run(["-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "chore: a 0.3.0-dev.0 repository"]);
+    expect((await planUpgrade(cwd)).notes.join("\n")).toMatch(/moves the "## Map" table of AGENTS\.md into \.ways\/map-notes\.json/);
+
+    const applied = await applyUpgrade(cwd, new Set());
+    const agents = await readFile(join(cwd, "AGENTS.md"), "utf8");
+    expect(agents).not.toContain("## Map");
+    expect(agents).not.toMatch(/\(path\)|\(npm ci\)|\(Language, style/);
+    expect(agents).toContain("Inventory service for the shop floor.");
+    expect(agents).toContain("- Errors are returned, never thrown, across api/.");
+    expect(agents).toContain("[MAP.md](MAP.md)");
+    expect(agents).toContain("## Working with ways");
+    expect(JSON.parse(await readFile(join(cwd, ".ways/map-notes.json"), "utf8"))).toEqual({ "api/": "HTTP handlers; no business logic here" });
+    expect(await readFile(join(cwd, "MAP.md"), "utf8")).toContain("| `api/` | 1 | HTTP handlers; no business logic here |");
+    expect(JSON.parse(await readFile(join(cwd, ".ways/onboarding.json"), "utf8"))).toMatchObject({ status: "pending" });
+    expect(applied.notes.join("\n")).toMatch(/your own lines are unchanged/);
+    expect(await checkIntegrity(cwd)).toEqual([]);
+    await git.run(["add", "-A"]);
+    await git.run(["-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "chore: upgrade"]);
+    await applyUpgrade(cwd, new Set());
+    expect(await git.run(["status", "--porcelain"])).toBe("");
+  });
+
   it("is a no-op on a repository installed by this version", async () => {
-    const { cwd, git } = await installed();
+    const { cwd, git } = await installed({ layers: true });
     const before = await readFile(join(cwd, ".ways/manifest.json"), "utf8");
     await applyUpgrade(cwd, new Set());
     expect(await readFile(join(cwd, ".ways/manifest.json"), "utf8")).toBe(before);

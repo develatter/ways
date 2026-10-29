@@ -2,6 +2,7 @@ import { chmod, lstat, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { installAdapter, renderProvider, providerById } from "../adapters/install.js";
 import { assetPath, installHooks, MANAGED_ASSETS, SEEDED_ASSETS } from "../bootstrap/bootstrap.js";
+import { migrateLayers } from "./layers.js";
 import { CONFIG_PATH, MANIFEST_PATH } from "../domain/constants.js";
 import type { ManagedManifest } from "../domain/types.js";
 import { validateManifest } from "../domain/validation.js";
@@ -73,6 +74,7 @@ export async function planUpgrade(cwd: string): Promise<UpgradePlan> {
   }
   const config = await readFile(join(cwd, CONFIG_PATH), "utf8").then((text) => JSON.parse(text) as { schemaVersion?: number }).catch(() => undefined);
   if (config?.schemaVersion === 1) notes.push("Moves the 0.2 model (SDD, plan, quick, tasks, attempts, discovery) to start/done and outcomes with verifiable criteria; see docs/decisions/0003-what-stays-and-what-goes.md.");
+  if (!await exists(join(cwd, "MAP.md"))) notes.push("Writes MAP.md from the repository and moves the \"## Map\" table of AGENTS.md into .ways/map-notes.json (your other lines stay), lists the checks in .ways/checks.json and leaves onboarding pending; see docs/decisions/0012-three-layers-of-the-first-session.md.");
   return { from: installed.harnessVersion, to: HARNESS_VERSION, modifiedManagedFiles: modified.sort(), notes };
 }
 
@@ -95,15 +97,9 @@ export async function applyUpgrade(cwd: string, overwrite: Set<string>): Promise
   for (const [path, expected] of Object.entries(installed.managedFiles)) {
     if (owned.has(path)) continue;
     if (await hashOf(cwd, path) !== expected) continue;
-    const seeded = SEEDED_ASSETS.find(([target]) => target === path);
-    if (seeded) {
-      // An untouched 0.2 AGENTS.md is the old harness manual: it becomes the new project map template.
-      await writeAtomic(join(cwd, path), await readFile(assetPath(seeded[1]), "utf8"));
-      notes.push(`${path} replaced with the new template (it was untouched); describe your project in it.`);
-    } else {
-      await rm(join(cwd, path), { force: true });
-      notes.push(`Removed ${path}, which ways no longer installs.`);
-    }
+    // An untouched 0.2 AGENTS.md was the old harness manual: it is removed here and rewritten from the repository below.
+    await rm(join(cwd, path), { force: true });
+    notes.push(path === "AGENTS.md" ? "AGENTS.md (the untouched 0.2 harness manual) replaced by one written from the repository." : `Removed ${path}, which ways no longer installs.`);
   }
   for (const [target, asset] of SEEDED_ASSETS) {
     if (!await exists(join(cwd, target))) await writeAtomic(join(cwd, target), await readFile(assetPath(asset), "utf8"));
@@ -131,5 +127,7 @@ export async function applyUpgrade(cwd: string, overwrite: Set<string>): Promise
     notes.push(...result.notes.map((note) => `${provider}: ${note}`));
   }
   await installHooks(new GitRepository(cwd));
+  // The three layers (ADR 0012): MAP.md apart from AGENTS.md, .ways/checks.json, the first session's onboarding.
+  notes.push(...(await migrateLayers(cwd, migrated.config)).notes);
   return { ...plan, notes };
 }

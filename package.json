@@ -1,6 +1,6 @@
 {
   "name": "@develatter/ways",
-  "version": "0.3.0-dev.0",
+  "version": "0.3.0-dev.1",
   "description": "A lean harness for coding agents: one-line criteria with executable verifiers, evidence the harness records, short memory that travels with the change",
   "type": "module",
   "bin": {
@@ -24,7 +24,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pretest": "npm run build",
     "test": "vitest run",
-    "test:e2e": "npm run build && vitest run tests/smoke-e2e.test.ts tests/baseline-e2e.test.ts",
+    "test:e2e": "npm run build && vitest run tests/smoke-e2e.test.ts tests/baseline-e2e.test.ts tests/layers-e2e.test.ts",
     "check": "npm run typecheck && npm test"
   },
   "engines": {
