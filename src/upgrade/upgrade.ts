@@ -1,83 +1,113 @@
-import { chmod, readFile } from "node:fs/promises";
+import { chmod, lstat, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { installAdapter } from "../adapters/install.js";
-import { assetPath, installHooks, MANAGED_ASSETS } from "../bootstrap/bootstrap.js";
-import { GitRepository } from "../git/git.js";
-import { loadConfig } from "../config/config.js";
-import { MANIFEST_PATH } from "../domain/constants.js";
+import { installAdapter, renderProvider, providerById } from "../adapters/install.js";
+import { assetPath, installHooks, MANAGED_ASSETS, SEEDED_ASSETS } from "../bootstrap/bootstrap.js";
+import { CONFIG_PATH, MANIFEST_PATH } from "../domain/constants.js";
 import type { ManagedManifest } from "../domain/types.js";
-import { HARNESS_VERSION } from "../index.js";
-import { sha256, stableJson, writeAtomic } from "../fs/files.js";
 import { validateManifest } from "../domain/validation.js";
-import { diagnose } from "../repair/repair.js";
-import { runMigrations } from "./migrations.js";
+import { sha256, stableJson, writeAtomic } from "../fs/files.js";
+import { GitRepository } from "../git/git.js";
+import { compareVersions, HARNESS_VERSION } from "../version.js";
+import { migrateConfig, migrateFromLegacy, writeConfig } from "./migrations.js";
 
 export interface UpgradePlan {
   from: string;
   to: string;
+  /** Files ways will rewrite that differ from what it installed; each needs `--overwrite=<path>`. */
   modifiedManagedFiles: string[];
-  /** Compatibility notes about the active work; upgrade never rewrites its state or history. */
-  activeWork: string[];
-  /** Active state the upgrade cannot safely proceed over; apply refuses while non-empty. */
-  incompatible: string[];
+  notes: string[];
 }
 
 async function manifest(cwd: string): Promise<ManagedManifest> {
-  const value: unknown = JSON.parse(await readFile(join(cwd, MANIFEST_PATH), "utf8"));
-  if (!validateManifest(value)) throw new Error("Installed manifest is invalid");
+  let value: unknown;
+  try {
+    value = JSON.parse(await readFile(join(cwd, MANIFEST_PATH), "utf8"));
+  } catch {
+    throw new Error(`${MANIFEST_PATH} is missing; this repository has no ways installation to upgrade. Run \`ways bootstrap\``);
+  }
+  if (!validateManifest(value)) throw new Error(`${MANIFEST_PATH} is invalid; restore it from Git or rerun \`ways bootstrap --force\``);
   return value;
 }
 
-/**
- * Upgrade never migrates work in flight: an active legacy SDD work completes
- * under its original workflow and assurance policies, and its certifications,
- * approvals and remediation records are left untouched. Divergent or unreadable
- * state is reported instead of being repaired implicitly.
- */
-async function diagnoseActiveWork(cwd: string): Promise<Pick<UpgradePlan, "activeWork" | "incompatible">> {
-  let result;
+async function hashOf(cwd: string, path: string): Promise<string | undefined> {
   try {
-    result = await diagnose(cwd);
-  } catch (error) {
-    return { activeWork: [], incompatible: [`Active state is unreadable: ${error instanceof Error ? error.message : String(error)}; run ways repair diagnose`] };
+    return sha256(await readFile(join(cwd, path)));
+  } catch {
+    return undefined;
   }
-  const state = result.state;
-  if (!state) return { activeWork: [], incompatible: [] };
-  if (!result.consistent) return { activeWork: [], incompatible: [`Active ${state.mode} work ${state.id} diverges from Git: ${result.message}; run ways repair diagnose`] };
-  if (state.mode === "sdd") {
-    return {
-      activeWork: [`Active SDD work ${state.id} (workflow v${state.workflowVersion ?? 1}, phase ${state.phase}) continues under its original SDD workflow and assurance policies; SDD is deprecated, so open new work with ways outcome open.`],
-      incompatible: [],
-    };
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch {
+    return false;
   }
-  return { activeWork: [`Active ${state.mode} work ${state.id} is compatible and continues unchanged.`], incompatible: [] };
+}
+
+/** Every path ways will own after the upgrade: managed assets plus the re-rendered adapters. */
+async function nextOwned(installed: ManagedManifest): Promise<Set<string>> {
+  const owned = new Set(MANAGED_ASSETS.map(([target]) => target));
+  for (const provider of Object.keys(installed.adapters ?? {})) {
+    for (const file of await renderProvider(providerById(provider))) owned.add(file.path);
+  }
+  return owned;
 }
 
 export async function planUpgrade(cwd: string): Promise<UpgradePlan> {
   const installed = await manifest(cwd);
-  const modified: string[] = [];
-  const tracked = Object.entries(installed.managedFiles);
-  for (const files of Object.values(installed.adapters ?? {})) tracked.push(...Object.entries(files));
-  for (const [path, expected] of tracked) {
-    try {
-      if (sha256(await readFile(join(cwd, path))) !== expected) modified.push(path);
-    } catch {
-      modified.push(path);
-    }
+  if (compareVersions(installed.harnessVersion, HARNESS_VERSION) > 0) {
+    throw new Error(`This repository was installed by ways ${installed.harnessVersion}, newer than ${HARNESS_VERSION}; upgrade the package instead`);
   }
-  return { from: installed.harnessVersion, to: HARNESS_VERSION, modifiedManagedFiles: modified.sort(), ...await diagnoseActiveWork(cwd) };
+  const owned = await nextOwned(installed);
+  const tracked: Array<[string, string]> = Object.entries(installed.managedFiles);
+  for (const files of Object.values(installed.adapters ?? {})) tracked.push(...Object.entries(files));
+  const modified: string[] = [];
+  const notes: string[] = [];
+  for (const [path, expected] of tracked) {
+    const actual = await hashOf(cwd, path);
+    if (actual === undefined || actual === expected) continue;
+    if (owned.has(path)) modified.push(path);
+    else notes.push(`${path} is no longer managed by ways and you edited it, so it is kept as is${path === "AGENTS.md" ? "; replace its ways bullets with the short \"Working here\" section of the new template (see the README)" : ""}.`);
+  }
+  const config = await readFile(join(cwd, CONFIG_PATH), "utf8").then((text) => JSON.parse(text) as { schemaVersion?: number }).catch(() => undefined);
+  if (config?.schemaVersion === 1) notes.push("Moves the 0.2 model (SDD, plan, quick, tasks, attempts, discovery) to start/done and outcomes with verifiable criteria; see docs/decisions/0003-what-stays-and-what-goes.md.");
+  return { from: installed.harnessVersion, to: HARNESS_VERSION, modifiedManagedFiles: modified.sort(), notes };
 }
 
 export async function applyUpgrade(cwd: string, overwrite: Set<string>): Promise<UpgradePlan> {
   const plan = await planUpgrade(cwd);
-  if (plan.incompatible.length > 0) throw new Error(`Upgrade refused over incompatible active state:\n${plan.incompatible.map((issue) => `- ${issue}`).join("\n")}`);
   const refused = plan.modifiedManagedFiles.filter((path) => !overwrite.has(path) && !overwrite.has("*"));
-  if (refused.length > 0) throw new Error(`Modified managed files require overwrite approval:\n${refused.map((path) => `- [ ] ${path}`).join("\n")}`);
+  if (refused.length > 0) {
+    throw new Error(`These files differ from what ways installed and would be overwritten:\n${refused.map((path) => `- ${path}`).join("\n")}\nKeep a copy of your edits, then rerun with ${refused.map((path) => `--overwrite=${path}`).join(" ")} (or --overwrite-all).`);
+  }
+  const installed = await manifest(cwd);
+  const notes = [...plan.notes];
 
-  const config = await loadConfig(cwd);
-  if (config.harnessVersion !== HARNESS_VERSION) await runMigrations({ cwd, config }, HARNESS_VERSION);
-  config.harnessVersion = HARNESS_VERSION;
-  await writeAtomic(join(cwd, ".ways/config.json"), stableJson(config));
+  const migrated = migrateConfig(JSON.parse(await readFile(join(cwd, CONFIG_PATH), "utf8")), HARNESS_VERSION);
+  await writeConfig(cwd, migrated.config);
+  notes.push(...migrated.notes);
+  notes.push(...(await migrateFromLegacy(cwd)).notes);
+
+  // Files 0.2 managed that ways no longer owns: removed when untouched, kept when edited.
+  const owned = await nextOwned(installed);
+  for (const [path, expected] of Object.entries(installed.managedFiles)) {
+    if (owned.has(path)) continue;
+    if (await hashOf(cwd, path) !== expected) continue;
+    const seeded = SEEDED_ASSETS.find(([target]) => target === path);
+    if (seeded) {
+      // An untouched 0.2 AGENTS.md is the old harness manual: it becomes the new project map template.
+      await writeAtomic(join(cwd, path), await readFile(assetPath(seeded[1]), "utf8"));
+      notes.push(`${path} replaced with the new template (it was untouched); describe your project in it.`);
+    } else {
+      await rm(join(cwd, path), { force: true });
+      notes.push(`Removed ${path}, which ways no longer installs.`);
+    }
+  }
+  for (const [target, asset] of SEEDED_ASSETS) {
+    if (!await exists(join(cwd, target))) await writeAtomic(join(cwd, target), await readFile(assetPath(asset), "utf8"));
+  }
 
   const managedFiles: Record<string, string> = {};
   for (const [target, asset, mode] of MANAGED_ASSETS) {
@@ -86,7 +116,6 @@ export async function applyUpgrade(cwd: string, overwrite: Set<string>): Promise
     if (mode !== undefined) await chmod(join(cwd, target), mode);
     managedFiles[target] = sha256(content);
   }
-  const installed = await manifest(cwd);
   const unchanged = installed.harnessVersion === HARNESS_VERSION && stableJson(installed.managedFiles) === stableJson(managedFiles);
   const next: ManagedManifest = {
     schemaVersion: 1,
@@ -97,7 +126,10 @@ export async function applyUpgrade(cwd: string, overwrite: Set<string>): Promise
     ...(installed.adapters ? { adapters: installed.adapters } : {}),
   };
   await writeAtomic(join(cwd, MANIFEST_PATH), stableJson(next));
-  for (const provider of Object.keys(installed.adapters ?? {})) await installAdapter(cwd, provider, true);
+  for (const provider of Object.keys(installed.adapters ?? {})) {
+    const result = await installAdapter(cwd, provider, true);
+    notes.push(...result.notes.map((note) => `${provider}: ${note}`));
+  }
   await installHooks(new GitRepository(cwd));
-  return plan;
+  return { ...plan, notes };
 }
