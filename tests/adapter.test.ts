@@ -15,7 +15,8 @@ import { startChange } from "../src/work/work.js";
 import { repository } from "./helpers.js";
 
 const ROLES = ["reviewer"];
-const COMMANDS = ["outcome", "remember", "status"];
+const COMMANDS = ["outcome", "remember"];
+const AGENT_EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd"];
 const OLD_GUARD = { matcher: "Bash", hooks: [{ type: "command", command: "\"$CLAUDE_PROJECT_DIR\"/.claude/ways-guard.sh" }] };
 
 describe("canonical adapter source", () => {
@@ -40,22 +41,29 @@ describe("canonical adapter source", () => {
 });
 
 describe("claude renderer", () => {
-  it("renders commands, a read-only reviewer and the status line", async () => {
+  it("renders optional procedures as skills, a read-only reviewer and the status line", async () => {
     const files = renderClaude(await loadAdapterSource());
     const byPath = new Map(files.map((file) => [file.path, file]));
-    expect([...byPath.keys()].sort()).toEqual([".claude/agents/ways-reviewer.md", ".claude/commands/ways-outcome.md", ".claude/commands/ways-remember.md", ".claude/commands/ways-status.md", ".claude/ways-statusline.sh"]);
-    expect(byPath.get(".claude/commands/ways-outcome.md")?.content).toMatch(/^---\ndescription: .*\nargument-hint: <id> \[what to deliver\]\n---\n/);
+    expect([...byPath.keys()].sort()).toEqual([".claude/agents/ways-reviewer.md", ".claude/skills/ways-outcome/SKILL.md", ".claude/skills/ways-remember/SKILL.md", ".claude/ways-statusline.sh"]);
+    expect(byPath.get(".claude/skills/ways-outcome/SKILL.md")?.content).toMatch(/^---\nname: ways-outcome\ndescription: .*\nargument-hint: <id> \[what to deliver\]\n---\n/);
     expect(byPath.get(".claude/agents/ways-reviewer.md")?.content).toContain("permissionMode: plan");
     expect(byPath.get(".claude/ways-statusline.sh")?.mode).toBe(0o755);
   });
 
-  it("merges settings without dropping user keys, removes the 0.2 guard and stays idempotent", () => {
-    const once = mergeClaudeSettings({ theme: "dark", hooks: { PreToolUse: [{ matcher: "Write", hooks: [{ type: "command", command: "mine.sh" }] }, OLD_GUARD] } });
+  it("merges the agent hooks without dropping user keys or hooks, removes the 0.2 guard and stays idempotent", () => {
+    const mine = { matcher: "Write", hooks: [{ type: "command", command: "mine.sh" }] };
+    const once = mergeClaudeSettings({ theme: "dark", hooks: { PreToolUse: [mine, OLD_GUARD], Notification: [{ hooks: [{ type: "command", command: "notify.sh" }] }] } });
     expect(once.notes).toContain("removed the retired ways guard hook");
     expect(once.settings.theme).toBe("dark");
-    expect(once.settings.hooks).toEqual({ PreToolUse: [{ matcher: "Write", hooks: [{ type: "command", command: "mine.sh" }] }] });
+    const hooks = once.settings.hooks as Record<string, Array<{ matcher?: string; hooks: Array<{ command: string; timeout?: number }> }>>;
+    expect(Object.keys(hooks).sort()).toEqual([...AGENT_EVENTS, "Notification"].sort());
+    expect(hooks.PreToolUse![0]).toEqual(mine);
+    expect(hooks.PreToolUse![1]).toMatchObject({ matcher: "Write|Edit|MultiEdit|NotebookEdit|Bash", hooks: [{ type: "command", command: "\"$CLAUDE_PROJECT_DIR\"/.ways/hooks/agent-hook claude PreToolUse" }] });
+    expect(hooks.PostToolUse![0]?.matcher).toBe("Write|Edit|MultiEdit|NotebookEdit");
+    for (const event of AGENT_EVENTS) expect(hooks[event]!.at(-1)!.hooks[0]!.command).toBe(`"$CLAUDE_PROJECT_DIR"/.ways/hooks/agent-hook claude ${event}`);
+    expect(hooks.Stop![0]).not.toHaveProperty("matcher");
     expect(mergeClaudeSettings(once.settings).settings).toEqual(once.settings);
-    expect(mergeClaudeSettings({ hooks: { PreToolUse: [OLD_GUARD] } }).settings.hooks).toBeUndefined();
+    expect(() => mergeClaudeSettings({ hooks: [] })).toThrow(/hooks must contain a JSON object/);
   });
 
   it("wraps a user-defined statusline instead of replacing it, idempotently", () => {
@@ -101,15 +109,16 @@ describe("adapter installation", () => {
   it("refuses to overwrite unmanaged files unless forced, and upgrade re-renders", async () => {
     const { cwd } = await repository();
     await bootstrap({ cwd, testCommand: [process.execPath, "-e", "process.exit(0)"], agents: [] });
-    await mkdir(join(cwd, ".claude", "commands"), { recursive: true });
-    await writeFile(join(cwd, ".claude/commands/ways-outcome.md"), "mine\n");
+    const skill = ".claude/skills/ways-outcome/SKILL.md";
+    await mkdir(join(cwd, ".claude", "skills", "ways-outcome"), { recursive: true });
+    await writeFile(join(cwd, skill), "mine\n");
     await expect(installAdapter(cwd, "claude")).rejects.toThrow(/Refusing to overwrite/);
     await installAdapter(cwd, "claude", true);
-    await writeFile(join(cwd, ".claude/commands/ways-outcome.md"), "tampered\n");
-    expect((await planUpgrade(cwd)).modifiedManagedFiles).toEqual([".claude/commands/ways-outcome.md"]);
-    await expect(applyUpgrade(cwd, new Set())).rejects.toThrow(/--overwrite=\.claude\/commands\/ways-outcome\.md/);
-    await applyUpgrade(cwd, new Set([".claude/commands/ways-outcome.md"]));
-    expect(await readFile(join(cwd, ".claude/commands/ways-outcome.md"), "utf8")).not.toBe("tampered\n");
+    await writeFile(join(cwd, skill), "tampered\n");
+    expect((await planUpgrade(cwd)).modifiedManagedFiles).toEqual([skill]);
+    await expect(applyUpgrade(cwd, new Set())).rejects.toThrow(/--overwrite=\.claude\/skills\/ways-outcome\/SKILL\.md/);
+    await applyUpgrade(cwd, new Set([skill]));
+    expect(await readFile(join(cwd, skill), "utf8")).not.toBe("tampered\n");
     expect(await checkIntegrity(cwd)).toEqual([]);
   });
 
@@ -145,12 +154,25 @@ describe("codex, cursor and pi renderers", () => {
     expect(cursor.get(".cursor/skills/ways-outcome/SKILL.md")?.content).toContain("disable-model-invocation: true");
     expect(cursor.get(".cursor/agents/ways-reviewer.md")?.content).toContain("readonly: true");
     const pi = new Map(renderPi(source).map((file) => [file.path, file]));
-    expect(pi.get(".pi/prompts/ways-outcome.md")?.content).toContain("$ARGUMENTS");
-    expect(pi.get(".pi/prompts/ways-outcome.md")?.content).toContain("argument-hint:");
+    // pi and Codex read the same `.agents/skills`; both write it byte for byte the same.
+    expect([...pi.keys()].filter((path) => path.startsWith(".agents/skills/")).sort()).toEqual(COMMANDS.map((name) => `.agents/skills/ways-${name}/SKILL.md`));
+    for (const name of COMMANDS) expect(pi.get(`.agents/skills/ways-${name}/SKILL.md`)?.content).toBe(codex.get(`.agents/skills/ways-${name}/SKILL.md`)?.content);
+    expect([...pi.keys()].some((path) => path.startsWith(".pi/prompts/"))).toBe(false);
     expect(pi.get(".pi/agents/ways-reviewer.md")?.content).toContain("tools: read, grep, find, ls");
-    expect(pi.get(".pi/extensions/ways/index.ts")?.content).toContain("setStatus");
-    expect(pi.get(".pi/extensions/ways/index.ts")?.content).toContain("active.json");
-    expect(pi.get(".pi/extensions/ways/index.ts")?.content).not.toContain("tool_call");
+    const extension = pi.get(".pi/extensions/ways/index.ts")?.content ?? "";
+    expect(extension).toContain("setStatus");
+    expect(extension).toContain("active.json");
+    for (const event of ["session_start", "before_agent_start", "tool_call", "tool_result", "agent_end", "session_shutdown"]) expect(extension).toContain(`on("${event}"`);
+    expect(extension).toContain(".ways/hooks/agent-hook");
+  });
+
+  it("lets pi and Codex share the skills they both read", async () => {
+    const { cwd } = await repository();
+    await bootstrap({ cwd, testCommand: [process.execPath, "-e", "process.exit(0)"], agents: ["pi", "codex"] });
+    expect(await checkIntegrity(cwd)).toEqual([]);
+    await installAdapter(cwd, "pi");
+    await installAdapter(cwd, "codex");
+    await expect(readFile(join(cwd, ".agents/skills/ways-outcome/SKILL.md"), "utf8")).resolves.toContain("name: ways-outcome");
   });
 
   it("rejects malformed hook containers instead of discarding them", () => {

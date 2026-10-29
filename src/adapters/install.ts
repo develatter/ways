@@ -64,15 +64,19 @@ export async function installAdapter(cwd: string, providerId: string, force = fa
   const adapter = providerById(providerId);
   const manifest = await readManifest(cwd);
   const owned = new Set(Object.keys(manifest.adapters?.[adapter.id] ?? {}));
+  // Several providers read `.agents/skills`: a file another adapter owns is shared, never deleted by this one.
+  const sharedWith = new Set(Object.entries(manifest.adapters ?? {}).filter(([id]) => id !== adapter.id).flatMap(([, files]) => Object.keys(files)));
   const files = await renderProvider(adapter);
   if (!force) {
     for (const file of files) {
-      if (!owned.has(file.path) && await exists(join(cwd, file.path))) throw new Error(`Refusing to overwrite ${file.path}; use --force`);
+      if (owned.has(file.path) || !await exists(join(cwd, file.path))) continue;
+      if (sharedWith.has(file.path) && sha256(await readFile(join(cwd, file.path))) === sha256(file.content)) continue;
+      throw new Error(`Refusing to overwrite ${file.path}; use --force`);
     }
   }
   const hashes = await writeRendered(cwd, files);
   for (const orphan of owned) {
-    if (!(orphan in hashes)) await rm(join(cwd, orphan), { force: true });
+    if (!(orphan in hashes) && !sharedWith.has(orphan)) await rm(join(cwd, orphan), { force: true });
   }
   const merged = adapter.merge ? await adapter.merge(cwd) : { files: [], notes: [] };
   // A re-render that changes nothing keeps the manifest byte-identical, so upgrades stay idempotent.

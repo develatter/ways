@@ -1,16 +1,20 @@
 import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { CLAUDE_MD_CONTENT, CLAUDE_MD_PATH, withAgentsImport } from "../bootstrap/claude-md.js";
+import { AGENT_HOOK_PATH } from "../domain/constants.js";
 import { stableJson, writeAtomic } from "../fs/files.js";
 import { isWaysGuardEntry } from "./hook-file.js";
 import { resolveWith, SLASH_NAMES } from "./render.js";
 import type { AdapterIssue, AdapterSource, MergeResult, ProviderAdapter, RenderedFile } from "./types.js";
 
 /**
- * Claude Code: commands in `.claude/commands/`, roles as subagents in
- * `.claude/agents/` (read roles get read-only tools), and a status line
- * merged into `.claude/settings.json`. Claude Code reads `CLAUDE.md`, which
- * bootstrap makes import `AGENTS.md`.
+ * Claude Code: optional procedures as skills in `.claude/skills/` (Claude Code
+ * merged commands into skills and does not read `.agents/skills`), roles as
+ * subagents in `.claude/agents/` (read roles get read-only tools), and in
+ * `.claude/settings.json` a status line and the agent hooks: every event runs
+ * `.ways/hooks/agent-hook claude <event>`. Path-scoped memory rules are
+ * written to `.claude/rules/` (see src/context/rules.ts). Claude Code reads
+ * `CLAUDE.md`, which bootstrap makes import `AGENTS.md`.
  */
 export const CLAUDE_DIR = ".claude";
 const STATUSLINE_PATH = `${CLAUDE_DIR}/ways-statusline.sh`;
@@ -27,12 +31,40 @@ export function resolveNames(text: string): string {
   return resolveWith(text, SLASH_NAMES);
 }
 
+/** Tools the guard looks at (writes and the shell) and those whose paths are logged (writes). */
+const GUARDED_TOOLS = "Write|Edit|MultiEdit|NotebookEdit|Bash";
+const WRITE_TOOLS = "Write|Edit|MultiEdit|NotebookEdit";
+const HOOK_TIMEOUT_SECONDS = 10;
+
+function hookGroup(event: string, matcher?: string): Settings {
+  return {
+    ...(matcher ? { matcher } : {}),
+    hooks: [{ type: "command", command: `"$CLAUDE_PROJECT_DIR"/${AGENT_HOOK_PATH} claude ${event}`, timeout: HOOK_TIMEOUT_SECONDS }],
+  };
+}
+
+/** The hook groups ways adds to `.claude/settings.json`, by event. */
+export const CLAUDE_HOOKS: Readonly<Record<string, Settings[]>> = {
+  SessionStart: [hookGroup("SessionStart")],
+  UserPromptSubmit: [hookGroup("UserPromptSubmit")],
+  PreToolUse: [hookGroup("PreToolUse", GUARDED_TOOLS)],
+  PostToolUse: [hookGroup("PostToolUse", WRITE_TOOLS)],
+  Stop: [hookGroup("Stop")],
+  SessionEnd: [hookGroup("SessionEnd")],
+};
+
+/** A hook group whose every command is the ways agent hook. */
+export function isWaysAgentGroup(group: unknown): boolean {
+  if (!isObject(group) || !Array.isArray(group.hooks) || group.hooks.length === 0) return false;
+  return group.hooks.every((hook) => isObject(hook) && typeof hook.command === "string" && hook.command.includes(AGENT_HOOK_PATH));
+}
+
 export function renderClaude(source: AdapterSource): RenderedFile[] {
   const files: RenderedFile[] = [];
   for (const command of source.commands) {
     files.push({
-      path: `${CLAUDE_DIR}/commands/ways-${command.name}.md`,
-      content: `${frontmatter([["description", command.description], ["argument-hint", command.usage]])}\n${resolveNames(command.body)}\n`,
+      path: `${CLAUDE_DIR}/skills/ways-${command.name}/SKILL.md`,
+      content: `${frontmatter([["name", `ways-${command.name}`], ["description", command.description], ["argument-hint", command.usage]])}\n${resolveNames(command.body)}\n`,
     });
   }
   for (const role of source.roles) {
@@ -83,17 +115,17 @@ export function mergeClaudeSettings(settings: Settings): { settings: Settings; n
     next.statusLine = { ...(statusLine as Settings), type: "command", command: `${STATUSLINE_PATH} ${shellQuote(current)}` };
     notes.push(`wrapped existing statusLine (${current}); the ways status is appended after it`);
   }
-  if (isObject(next.hooks) && Array.isArray(next.hooks.PreToolUse)) {
-    const kept = (next.hooks.PreToolUse as unknown[]).filter((group) => !isWaysGuardEntry(group));
-    if (kept.length !== next.hooks.PreToolUse.length) {
-      const hooks: Settings = { ...next.hooks };
-      if (kept.length > 0) hooks.PreToolUse = kept;
-      else delete hooks.PreToolUse;
-      if (Object.keys(hooks).length > 0) next.hooks = hooks;
-      else delete next.hooks;
-      notes.push("removed the retired ways guard hook");
-    }
+  if (next.hooks !== undefined && !isObject(next.hooks)) throw new Error(`${SETTINGS_PATH}: hooks must contain a JSON object`);
+  const hooks: Settings = { ...(next.hooks ?? {}) };
+  if (Array.isArray(hooks.PreToolUse) && (hooks.PreToolUse as unknown[]).some(isWaysGuardEntry)) notes.push("removed the retired ways guard hook");
+  // The ways groups are replaced as a whole, so a re-merge picks up new matchers; the user's groups stay, in order.
+  for (const [event, groups] of Object.entries(hooks)) {
+    if (!Array.isArray(groups)) throw new Error(`${SETTINGS_PATH}: hooks.${event} must contain an array`);
+    hooks[event] = groups.filter((group) => !isWaysGuardEntry(group) && !isWaysAgentGroup(group));
   }
+  for (const [event, groups] of Object.entries(CLAUDE_HOOKS)) hooks[event] = [...(hooks[event] as unknown[] | undefined ?? []), ...groups];
+  for (const [event, groups] of Object.entries(hooks)) if ((groups as unknown[]).length === 0) delete hooks[event];
+  next.hooks = hooks;
   return { settings: next, notes };
 }
 
@@ -116,7 +148,10 @@ async function ensureClaudeMd(cwd: string): Promise<boolean> {
 async function mergeSettingsFile(cwd: string): Promise<MergeResult> {
   const { settings, notes } = mergeClaudeSettings(await readSettings(cwd));
   await writeAtomic(join(cwd, SETTINGS_PATH), stableJson(settings));
-  return { files: [SETTINGS_PATH, ...(await ensureClaudeMd(cwd) ? [CLAUDE_MD_PATH] : [])], notes };
+  // Rules follow the memory, not the harness version, so they are not hashed in the manifest.
+  const { syncRules } = await import("../context/rules.js");
+  const rules = await syncRules(cwd, { always: true });
+  return { files: [SETTINGS_PATH, ...rules.written, ...(await ensureClaudeMd(cwd) ? [CLAUDE_MD_PATH] : [])], notes };
 }
 
 async function verifySettings(cwd: string): Promise<AdapterIssue[]> {
@@ -128,6 +163,11 @@ async function verifySettings(cwd: string): Promise<AdapterIssue[]> {
   }
   if (!isObject(settings.statusLine) || typeof settings.statusLine.command !== "string") {
     return [{ code: "adapter-statusline-missing", path: SETTINGS_PATH, message: "statusLine is not configured; run ways adapter install claude" }];
+  }
+  const hooks = isObject(settings.hooks) ? settings.hooks : {};
+  const missing = Object.keys(CLAUDE_HOOKS).filter((event) => !(Array.isArray(hooks[event]) && (hooks[event] as unknown[]).some(isWaysAgentGroup)));
+  if (missing.length > 0) {
+    return [{ code: "adapter-hooks-missing", path: SETTINGS_PATH, message: `the ways agent hooks are missing for ${missing.join(", ")}; run \`ways adapter install claude\`` }];
   }
   return [];
 }

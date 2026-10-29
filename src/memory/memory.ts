@@ -126,7 +126,14 @@ export interface MemoryCheck {
 
 export async function checkMemory(cwd: string): Promise<MemoryCheck> {
   const inspection = await inspectOkf(cwd);
-  return { issues: inspection.issues, warnings: [...inspection.warnings, ...await staleConcepts(cwd, inspection.documents)], concepts: inspection.documents.length };
+  const warnings = [...inspection.warnings, ...await staleConcepts(cwd, inspection.documents)];
+  const { claudeInstalled, rulesDrift } = await import("../context/rules.js");
+  if (await claudeInstalled(cwd)) {
+    const drift = await rulesDrift(cwd, inspection.documents);
+    for (const path of drift.outdated) warnings.push({ code: "rule-outdated", path, message: "the Claude Code rule no longer matches its concept; run `ways memory index` and commit the result" });
+    for (const path of drift.orphaned) warnings.push({ code: "rule-orphaned", path, message: "no concept with paths generates this rule any more; run `ways memory index` and commit the result" });
+  }
+  return { issues: inspection.issues, warnings, concepts: inspection.documents.length };
 }
 
 export interface RememberOptions {

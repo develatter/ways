@@ -1,16 +1,17 @@
 import { isWaysGuardEntry, removeHookEntries } from "./hook-file.js";
-import { renderSkill, resolveWith, type NameStyle } from "./render.js";
+import { renderAgentSkill, resolveWith, type NameStyle } from "./render.js";
 import type { AdapterSource, ProviderAdapter, RenderedFile } from "./types.js";
 
 /**
  * OpenAI Codex CLI, best effort (opt-in with `--agents=codex`). Per the
  * official docs (2026-09): project prompts are not supported, so commands
  * become repository skills in `.agents/skills/<name>/SKILL.md` invoked with
- * `$name`; roles become `.codex/agents/<name>.toml` with
- * `sandbox_mode = "read-only"` for read roles. Codex reads `AGENTS.md`.
+ * `$name` (shared with pi, which reads the same directory); roles become
+ * `.codex/agents/<name>.toml` with `sandbox_mode = "read-only"` for read
+ * roles. Codex reads `AGENTS.md`. Its hooks are not installed: `ways hook
+ * --agent=codex` answers in the Claude-compatible format if you wire it.
  */
 export const CODEX_DIR = ".codex";
-const SKILLS_DIR = ".agents/skills";
 const HOOKS_PATH = `${CODEX_DIR}/hooks.json`;
 const NAMES: NameStyle = { command: (name) => `$ways-${name}`, role: (name) => `ways-${name}` };
 
@@ -25,7 +26,7 @@ function tomlMultiline(value: string): string {
 export function renderCodex(source: AdapterSource): RenderedFile[] {
   const files: RenderedFile[] = [];
   for (const command of source.commands) {
-    files.push({ path: `${SKILLS_DIR}/ways-${command.name}/SKILL.md`, content: renderSkill(command, NAMES) });
+    files.push(renderAgentSkill(command));
   }
   for (const role of source.roles) {
     const lines = [
