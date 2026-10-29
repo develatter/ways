@@ -19,7 +19,7 @@ describe("the PreToolUse guard", () => {
       for (const enforcement of ["observe", "enforce"] as const) {
         const verdict = guard({ tool, toolInput: input, top: TOP, cwd: TOP, enforcement });
         expect(verdict.code, `${tool} ${enforcement}`).toBe("record-write");
-        expect(verdict.deny).toMatch(/^ways: refused: \.ways\/work\/x\.json is a work record.*`ways done`.*`ways review submit <file>`.*`ways approve`/);
+        expect(verdict.deny).toMatch(/^ways: refused: \.ways\/work\/x\.json is a work record.*`ways done`.*`ways review`.*`ways approve`/);
       }
     }
   });

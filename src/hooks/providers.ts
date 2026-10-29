@@ -7,12 +7,14 @@
  * Claude Code (code.claude.com/docs/en/hooks, read 2026-10-29): JSON on stdin
  * with `session_id`, `cwd`, `hook_event_name` and per-event fields (`source`,
  * `prompt`, `tool_name`, `tool_input`, `tool_response`, `stop_hook_active`,
- * `reason`). Exit 0 with JSON on stdout: `hookSpecificOutput.additionalContext`
- * (SessionStart, UserPromptSubmit, PostToolUse; capped by Claude Code at
- * 10,000 characters), `hookSpecificOutput.permissionDecision: "deny"` with
+ * `reason`; inside a subagent also `agent_id` and `agent_type`; SubagentStop
+ * adds `last_assistant_message`). Exit 0 with JSON on stdout:
+ * `hookSpecificOutput.additionalContext` (SessionStart, UserPromptSubmit,
+ * PostToolUse, SubagentStart; capped by Claude Code at 10,000 characters),
+ * `hookSpecificOutput.permissionDecision: "deny"` with
  * `permissionDecisionReason` (PreToolUse), top-level `decision: "block"` with
- * `reason` (Stop: Claude continues with the reason) and `systemMessage`
- * (shown to the user). Empty stdout means nothing to say.
+ * `reason` (Stop and SubagentStop: the agent continues with the reason) and
+ * `systemMessage` (shown to the user). Empty stdout means nothing to say.
  *
  * pi has no command hooks: the ways extension (`.pi/extensions/ways`) maps
  * pi events onto these names, sends the same snake_case payload, and applies
@@ -22,7 +24,7 @@
  * payloads and outputs, and Cursor runs Claude Code's project hooks, so both
  * get the Claude format. Neither is installed by default.
  */
-export const AGENT_EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd"] as const;
+export const AGENT_EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd", "SubagentStart", "SubagentStop"] as const;
 export type AgentEvent = (typeof AGENT_EVENTS)[number];
 
 export const AGENT_IDS = ["claude", "pi", "codex", "cursor"] as const;
@@ -50,6 +52,11 @@ export interface HookPayload {
   stopActive: boolean;
   /** SessionEnd reason. */
   reason?: string;
+  /** Claude Code: the subagent a tool call or SubagentStart/Stop belongs to. */
+  agentId?: string;
+  agentType?: string;
+  /** SubagentStop: the subagent's final answer. Read for the reviewer's verdict, never logged. */
+  lastMessage?: string;
 }
 
 function text(value: unknown): string | undefined {
@@ -72,6 +79,11 @@ export function normalizePayload(value: unknown): HookPayload {
   if (input.is_error === true || response?.is_error === true || response?.success === false || response?.interrupted === true) payload.toolFailed = true;
   const reason = text(input.reason);
   if (reason) payload.reason = reason;
+  const agentId = text(input.agent_id);
+  if (agentId) payload.agentId = agentId;
+  const agentType = text(input.agent_type);
+  if (agentType) payload.agentType = agentType;
+  if (typeof input.last_assistant_message === "string") payload.lastMessage = input.last_assistant_message;
   return payload;
 }
 
@@ -105,10 +117,10 @@ export function formatOutput(agent: AgentId, event: AgentEvent, decision: HookDe
   const out: Record<string, unknown> = {};
   if (event === "PreToolUse" && decision.deny) {
     out.hookSpecificOutput = { hookEventName: event, permissionDecision: "deny", permissionDecisionReason: decision.deny };
-  } else if (decision.context && (event === "SessionStart" || event === "UserPromptSubmit" || event === "PostToolUse")) {
+  } else if (decision.context && (event === "SessionStart" || event === "UserPromptSubmit" || event === "PostToolUse" || event === "SubagentStart")) {
     out.hookSpecificOutput = { hookEventName: event, additionalContext: decision.context };
   }
-  if (event === "Stop" && decision.remind) {
+  if ((event === "Stop" || event === "SubagentStop") && decision.remind) {
     out.decision = "block";
     out.reason = decision.remind;
   }

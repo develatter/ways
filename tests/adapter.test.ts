@@ -27,7 +27,7 @@ describe("canonical adapter source", () => {
     for (const role of source.roles) expect(nonEmptyLines(role.body).length).toBeLessThanOrEqual(MAX_ROLE_LINES);
     for (const command of source.commands) expect(nonEmptyLines(command.body).length, command.name).toBeLessThanOrEqual(2);
     expect(source.roles[0]).toMatchObject({ name: "reviewer", access: "read" });
-    expect(source.roles[0]?.body).toContain("ways review submit");
+    expect(source.roles[0]?.body).toContain("ways records it");
   });
 
   it("rejects prompts longer than six lines", async () => {
@@ -56,7 +56,10 @@ describe("claude renderer", () => {
     expect(once.notes).toContain("removed the retired ways guard hook");
     expect(once.settings.theme).toBe("dark");
     const hooks = once.settings.hooks as Record<string, Array<{ matcher?: string; hooks: Array<{ command: string; timeout?: number; if?: string; async?: boolean }> }>>;
-    expect(Object.keys(hooks).sort()).toEqual([...AGENT_EVENTS, "Notification"].sort());
+    expect(Object.keys(hooks).sort()).toEqual([...AGENT_EVENTS, "SubagentStart", "SubagentStop", "Notification"].sort());
+    // Only the ways-reviewer subagent is handed the review and has its answer recorded.
+    expect(hooks.SubagentStart).toEqual([{ matcher: "ways-reviewer", hooks: [expect.objectContaining({ command: "\"$CLAUDE_PROJECT_DIR\"/.ways/hooks/agent-hook claude SubagentStart" })] }]);
+    expect(hooks.SubagentStop).toEqual([{ matcher: "ways-reviewer", hooks: [expect.objectContaining({ command: "\"$CLAUDE_PROJECT_DIR\"/.ways/hooks/agent-hook claude SubagentStop", timeout: 60 })] }]);
     expect(hooks.PreToolUse![0]).toEqual(mine);
     // The guard runs only on calls that could touch a record or switch the hooks off.
     expect(hooks.PreToolUse!.slice(1).map((group) => [group.matcher, group.hooks.map((entry) => entry.if)])).toEqual([

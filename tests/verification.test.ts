@@ -102,6 +102,13 @@ describe("criteria verified from red to green", () => {
     expect(result.pending.review).toMatch(/AC1 has no verifier that fails without the work/);
   });
 
+  it("puts the script a verifier runs on the verifier surface, but not the files it only reads", async () => {
+    const { verifierFiles } = await import("../src/work/evaluate.js");
+    const { git } = await project(node("process.exit(0)"), { "checks/ac1.mjs": "process.exit(1)\n", "src/a.js": "a\n" });
+    const criteria = buildCriteria({ criteria: ["AC1:a", "AC2:b", "AC3:c"], verify: ["AC1:node checks/ac1.mjs --strict", "AC2:grep -q x src/a.js", "AC3:./checks/ac1.mjs"], strength: [] });
+    expect(await verifierFiles(git, "HEAD", criteria)).toEqual(["checks/ac1.mjs"]);
+  });
+
   it("skips red-on-base with --fast and leaves it to CI", async () => {
     const { cwd, git } = await project(node("process.exit(0)"));
     await openOutcome(cwd, "quick", { goal: "Quick", criteria: ["AC1:q exists"], verify: ["AC1:test -f q.txt"], strength: [], review: "none" });

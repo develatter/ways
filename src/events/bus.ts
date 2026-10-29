@@ -28,12 +28,15 @@ export const EVENT_TYPES = [
   "tool.finished",
   "agent.stopped",
   "session.ended",
+  "subagent.started",
+  "subagent.stopped",
+  "review.recorded",
   "hook.error",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 
 /** What ways answered: context injected, nothing to say, a refusal, a stop reminder, or an internal error. */
-export type EventResult = "ok" | "injected" | "silent" | "denied" | "reminded" | "error";
+export type EventResult = "ok" | "injected" | "silent" | "denied" | "reminded" | "recorded" | "refused" | "error";
 
 export interface WaysEvent {
   v: typeof EVENT_SCHEMA_VERSION;
@@ -51,6 +54,9 @@ export interface WaysEvent {
   /** The active ways work, if any. */
   work: string | null;
   tool?: string;
+  /** Claude Code: the subagent the event happened in (its own context and transcript). */
+  agentId?: string;
+  agentType?: string;
   /** Repository-relative paths the tool call names, normalized and confined to the worktree. */
   paths?: string[];
   result: EventResult;

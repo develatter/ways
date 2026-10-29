@@ -103,7 +103,8 @@ The contract can add a `setup` command and `services` (`{"name", "command", "rea
 | `ways start` | Start a small change (optional in observe mode: the first commit starts one from the branch) | `ways start fix-button-padding` |
 | `ways outcome` | Open a delivery whose definition of done is one-line criteria, each with an executable verifier | `ways outcome open greeting --goal="Greet users" --criterion="AC1:greeting.txt says hi" --verify="AC1:grep -q hi greeting.txt"` |
 | `ways done` | Finish the active work: run integrity, checks and verifiers once, record the evidence, close when nothing is missing | `ways done` |
-| `ways review` | Record an independent review of the evaluated commit; closes the work when nothing else is missing | `ways review submit /tmp/review.json` |
+| `ways block` | Stop on purpose when the task cannot be done as asked: record what is missing and what would unblock it, for the human | `ways block "AC2 needs the payments sandbox key; set PAYMENTS_KEY in .env.test or drop AC2"` |
+| `ways review` | Launch an independent read-only reviewer of the evaluated commit and record its verdict; closes the work when nothing else is missing | `ways review` |
 | `ways approve` | Human approval (needs a real terminal; agents cannot run it); closes the work when nothing else is missing | `ways approve` |
 | `ways cancel` | Drop the active work; commits stay, an open record is marked cancelled | `ways cancel` |
 | `ways check` | Run integrity and the configured checks (what CI runs); --history audits work records and trailers | `ways check` |

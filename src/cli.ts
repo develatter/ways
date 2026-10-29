@@ -175,9 +175,15 @@ async function dispatch(command: string, args: string[], cwd: string): Promise<n
       ...(review ? { review } : {}),
       ...(approval ? { approval } : {}),
     });
+    const { formatCommandLine } = await import("./work/argv.js");
     const weak = record.criteria.filter((criterion) => criterion.strength === "review-only").map((criterion) => criterion.id);
-    console.log(`Outcome ${id} opened with ${record.criteria.length} criteria (review ${record.policy.review}, human approval ${record.policy.approval}).`);
-    if (weak.length > 0) console.log(`No executable verifier for ${weak.join(", ")}: they are review-only, so an independent review is required. Add --verify=<ID>:<command> when a check exists.`);
+    const width = Math.max(...record.criteria.map((criterion) => criterion.text.length));
+    console.log(`Outcome ${id} opened: ${record.goal}`);
+    for (const criterion of record.criteria) {
+      console.log(`  ${criterion.id}  ${criterion.text.padEnd(width)}  [${criterion.verify ? `${criterion.strength}: ${formatCommandLine(criterion.verify)}` : "review-only: no verifier, an independent review decides"}]`);
+    }
+    console.log(`This is what done means; the human reviews these lines, not the diff. Review ${record.policy.review}, human approval ${record.policy.approval}. Each verifier must fail on the base and pass on your commit.`);
+    if (weak.length > 0) console.log(`No executable verifier for ${weak.join(", ")}: an independent review is required. Add --verify=<ID>:<command> when a check exists.`);
     console.log("Implement and commit as you go; run `ways done` when it is finished.");
     return 0;
   }
@@ -193,10 +199,29 @@ async function dispatch(command: string, args: string[], cwd: string): Promise<n
 
   if (command === "review") {
     const [action, path] = args;
-    if (action !== "submit" || !path) throw new Error("Usage: ways review submit <review.json>");
-    const { submitReview } = await import("./work/work.js");
-    const result = await submitReview(cwd, userPath(cwd, path));
-    console.log(result.blockers.length > 0 ? `Review recorded; it blocks: ${result.blockers.join(", ")}. Fix them, commit, run \`ways done\` and get a fresh review.` : "Review recorded: pass.");
+    let result: Awaited<ReturnType<typeof import("./work/work.js").submitReview>>;
+    if (action === "submit") {
+      if (!path) throw new Error("Usage: ways review submit <review.json>   (a human at a terminal; agents run `ways review`)");
+      const { submitReview } = await import("./work/work.js");
+      result = await submitReview(cwd, userPath(cwd, path));
+    } else if (action === undefined || action.startsWith("--")) {
+      const agent = option(args, "--agent");
+      if (args.includes("--print")) {
+        const { describeReview } = await import("./work/review.js");
+        const { prompt, commands } = await describeReview(cwd, agent);
+        process.stdout.write(prompt.text);
+        console.log(`\n# To launch it yourself, save the prompt above and run one of:\n${Object.entries(commands).map(([name, line]) => `#   ${name}: ${line}`).join("\n")}\n# then record the answer at a terminal with \`ways review submit <file>\`.`);
+        return 0;
+      }
+      const { launchReview } = await import("./work/review.js");
+      console.log("Launching an independent read-only reviewer; this can take a few minutes.");
+      const launched = await launchReview(cwd, agent === undefined ? {} : { agent });
+      console.log(`Reviewed by ${launched.reviewer} in a new read-only process.`);
+      result = launched;
+    } else {
+      throw new Error("Usage: ways review [--agent=claude|pi] [--print]   or   ways review submit <review.json> (a human at a terminal)");
+    }
+    console.log(result.blockers.length > 0 ? `Review recorded; it blocks: ${result.blockers.join(", ")}. Fix them, commit, run \`ways done\` and \`ways review\` again.` : "Review recorded: pass.");
     for (const note of result.notes) console.log(`  non-blocking ${note}`);
     if (result.status === "closed") console.log("Work closed.");
     else if (result.pending.approval) console.log(`Human approval needed (${result.pending.approval}): ask the human to run \`ways approve\` in their own terminal.`);

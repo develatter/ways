@@ -211,7 +211,7 @@ export function readShell(command: string): ShellReading {
   return { writes, ...(bypass ? { bypass } : {}) };
 }
 
-const RECORD_REFUSAL = (paths: string[]): string => `ways: refused: ${paths.join(", ")} ${paths.length === 1 ? "is a work record" : "are work records"}: the criteria fixed at open, the evidence ways ran, reviews and human approvals. Only ways writes ${WORK_DIR}/, and a commit that changes it is refused in every mode. Evidence comes from \`ways done\`; a review from \`ways review submit <file>\` with the review JSON written outside ${WORK_DIR}/; an approval from the human running \`ways approve\`.`;
+const RECORD_REFUSAL = (paths: string[]): string => `ways: refused: ${paths.join(", ")} ${paths.length === 1 ? "is a work record" : "are work records"}: the criteria fixed at open, the evidence ways ran, reviews and human approvals. Only ways writes ${WORK_DIR}/, and a commit that changes it is refused in every mode. Evidence comes from \`ways done\`; a review from \`ways review\` (an independent reviewer whose verdict ways records itself); an approval from the human running \`ways approve\`.`;
 
 const BYPASS_REFUSAL = (how: string): string => `ways: refused: ${how} switches off the ways commit hooks, and enforcement is \`enforce\` in this repository. Commit without it; if the hook refuses a commit, its message says why and what to run.`;
 

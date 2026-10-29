@@ -74,10 +74,15 @@ export const COMMANDS: readonly CommandSpec[] = [
   },
   {
     name: "review",
-    summary: "Record an independent review of the evaluated commit; closes the work when nothing else is missing",
-    usage: ["ways review submit <review.json>"],
-    examples: ["ways review submit /tmp/review.json"],
-    actions: ["review submit"],
+    summary: "Launch an independent read-only reviewer of the evaluated commit and record its verdict; closes the work when nothing else is missing",
+    usage: [
+      "ways review [--agent=claude|pi] [--print]",
+      "  starts a new read-only process with a prompt ways builds (criteria, evidence, diff); --print shows it instead",
+      "  in Claude Code the ways-reviewer subagent works too: ways records its final answer itself",
+      "ways review submit <review.json>   (a human at an interactive terminal)",
+    ],
+    examples: ["ways review", "ways review --agent=pi", "ways review --print"],
+    actions: ["review", "review submit"],
   },
   {
     name: "approve",

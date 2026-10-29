@@ -43,6 +43,11 @@ describe("CLI", () => {
       return execFileSync(process.execPath, [process.env.WAYS_CLI!, ...args], { cwd, encoding: "utf8" });
     };
     ways("bootstrap", "--test-command=[\"node\",\"-e\",\"0\"]");
+    // A stand-in for `claude -p` / `pi -p`: reads ways' prompt on stdin, answers with the review JSON.
+    const reviewer = join(cwd, "..", "fake-reviewer.mjs");
+    await writeFile(reviewer, "let t='';process.stdin.on('data',(c)=>t+=c).on('end',()=>{const c=/\"commit\": \"([0-9a-f]{40})\"/.exec(t)[1];console.log('Looks fine.\\n```json\\n'+JSON.stringify({reviewer:'fake',commit:c,verdict:'pass',findings:[]})+'\\n```')});\n");
+    const configPath = join(cwd, ".ways/config.json");
+    await writeFile(configPath, JSON.stringify({ ...JSON.parse(await readFile(configPath, "utf8")) as object, reviewer: { command: [process.execPath, reviewer] } }, null, 2));
     await git.run(["add", "-A"]);
     await git.run(["commit", "-q", "-m", "chore: install ways"]);
     invocations.length = 0;
@@ -55,18 +60,19 @@ describe("CLI", () => {
     expect(ways("done")).toContain("Done: change fix-typo closed");
     expect(invocations).toHaveLength(1);
 
-    // A delivery with criteria and an independent review: open, done, review submit.
+    // A delivery with criteria and an independent review: open, done, review.
     invocations.length = 0;
-    ways("outcome", "open", "greeting", "--goal=Greet users", "--criterion=AC1:greeting.txt says hi", "--verify=AC1:grep -q hi greeting.txt");
+    const opened = ways("outcome", "open", "greeting", "--goal=Greet users", "--criterion=AC1:greeting.txt says hi", "--verify=AC1:grep -q hi greeting.txt");
+    // The human reviews the criteria, not the diff: one short block.
+    expect(opened).toContain("  AC1  greeting.txt says hi  [test: grep -q hi greeting.txt]");
     await writeFile(join(cwd, "greeting.txt"), "hi\n");
     await git.run(["add", "greeting.txt"]);
     await git.run(["commit", "-q", "-m", "feat: greet"]);
     const verifying = ways("done");
-    const commit = /"commit": "([0-9a-f]{40})"/.exec(verifying)?.[1];
-    expect(commit).toBe(await git.parent("HEAD"));
-    const review = join(cwd, "..", "acceptance-review.json");
-    await writeFile(review, JSON.stringify({ reviewer: "ways-reviewer", commit, verdict: "pass", findings: [] }));
-    expect(ways("review", "submit", review)).toContain("Work closed.");
+    expect(verifying).toMatch(/Verifying: greeting passed on [0-9a-f]{12}[\s\S]*Run `ways review`[\s\S]*Backed by: 1 test\./);
+    const reviewed = ways("review");
+    expect(reviewed).toContain("Review recorded: pass.");
+    expect(reviewed).toContain("Work closed.");
     expect(invocations.length).toBeLessThanOrEqual(4);
     expect(ways("check", "--history")).toContain("History checks passed.");
   });

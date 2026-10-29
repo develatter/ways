@@ -79,15 +79,24 @@ export async function baseVerifierPaths(git: GitRepository, base: string, curren
   return Array.isArray(globs) && globs.every((glob) => typeof glob === "string") ? globs as string[] : DEFAULT_VERIFIER_PATHS;
 }
 
-/** Repository paths a verifier's arguments name that exist in `ref`: a script or test it runs is on the surface. */
+const INTERPRETERS = new Set(["node", "bash", "sh", "zsh", "python", "python3", "deno", "bun", "ruby", "perl", "tsx", "ts-node", "php"]);
+
+/**
+ * The script a verifier runs, when it is a file of the repository that exists
+ * in `ref`: the program itself (`./scripts/verify.sh`) or an interpreter's
+ * script (`node test/ac1.mjs`). Editing it changes what the criterion checks,
+ * so it is on the verifier surface. Files a verifier only reads (`grep x
+ * src/a.js`) are the code under test and are not.
+ */
 export async function verifierFiles(git: GitRepository, ref: string, criteria: readonly Criterion[]): Promise<string[]> {
   const files = new Set<string>();
   for (const criterion of criteria) {
-    for (const arg of criterion.verify?.slice(1) ?? []) {
-      const path = arg.replace(/^\.\//, "");
-      if (!/^[\w@.][\w@./-]*$/.test(path) || path.includes("..") || !path.includes("/") && !path.includes(".")) continue;
-      if (await git.pathExists(ref, path)) files.add(path);
-    }
+    const [program = "", ...args] = criterion.verify ?? [];
+    const name = program.slice(program.lastIndexOf("/") + 1);
+    const script = INTERPRETERS.has(name) ? args.find((arg) => !arg.startsWith("-")) : program.includes("/") ? program : undefined;
+    const path = script?.replace(/^\.\//, "");
+    if (!path || !/^[\w@.][\w@./-]*$/.test(path) || path.split("/").includes("..")) continue;
+    if (await git.pathExists(ref, path)) files.add(path);
   }
   return [...files].sort();
 }

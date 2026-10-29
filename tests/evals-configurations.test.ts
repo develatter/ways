@@ -64,7 +64,7 @@ async function open(input: AdapterInput, policy: Partial<OutcomeEvalPolicy> = in
 
 /** Opens without a review requirement and with an executable verifier, so `done` alone can close. */
 async function openVerified(input: AdapterInput, approval: "required" | "none" = "none"): Promise<void> {
-  await openOutcome(input.repo, input.task.id, { goal: input.task.description, criteria: ["AC1:the environment checks pass"], verify: ["AC1:node -e 0"], strength: [], review: "none", approval });
+  await openOutcome(input.repo, input.task.id, { goal: input.task.description, criteria: ["AC1:the environment checks pass"], verify: [`AC1:${JSON.stringify(input.task.success[0]!.command)}`], strength: [], review: "none", approval });
 }
 
 /** Stands in for the human at the terminal; the eval counts the approval it leaves in the record. */
@@ -115,7 +115,7 @@ describe("an outcome (E)", { timeout: 180_000 }, () => {
       "const bin = process.env.WAYS_EVAL_WAYS_BIN;",
       "const id = process.env.WAYS_EVAL_TASK_ID;",
       "const policy = JSON.parse(process.env.WAYS_EVAL_OUTCOME_POLICY);",
-      "execFileSync(bin, ['outcome', 'open', id, '--goal=Add summarize', '--criterion=AC1:summarize returns strings', '--verify=AC1:test -f src/summary.js', `--review=${policy.review}`, `--approval=${policy.approval}`]);",
+      "execFileSync(bin, ['outcome', 'open', id, '--goal=Add summarize', '--criterion=AC1:summarize returns strings', '--verify=AC1:grep -q summarize src/summary.js', `--review=${policy.review}`, `--approval=${policy.approval}`]);",
       "writeFileSync('src/summary.js', 'export function summarize(value) { return String(value); }\\nexport default function summary(value) { return String(value); }\\n');",
       "execFileSync('git', ['add', 'src/summary.js']);",
       "execFileSync('git', ['commit', '-q', '-m', 'feat: add summarize']);",

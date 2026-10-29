@@ -19,7 +19,8 @@ import type { AdapterIssue, AdapterSource, MergeResult, ProviderAdapter, Rendere
 export const CLAUDE_DIR = ".claude";
 const STATUSLINE_PATH = `${CLAUDE_DIR}/ways-statusline.sh`;
 const SETTINGS_PATH = `${CLAUDE_DIR}/settings.json`;
-const READ_TOOLS = "Read, Grep, Glob, Bash";
+/** Read roles get no shell: a Bash tool could write, and the reviewer's independence rests on being read-only. */
+const READ_TOOLS = "Read, Grep, Glob";
 
 function frontmatter(entries: Array<[string, string | undefined]>): string {
   const lines = entries.filter((entry): entry is [string, string] => Boolean(entry[1])).map(([key, value]) => `${key}: ${value}`);
@@ -60,6 +61,9 @@ export const CLAUDE_HOOKS: Readonly<Record<string, Settings[]>> = {
   PostToolUse: [{ matcher: WRITE_TOOLS, hooks: [handler("PostToolUse", { async: true })] }],
   Stop: [{ hooks: [handler("Stop")] }],
   SessionEnd: [{ hooks: [handler("SessionEnd")] }],
+  // The independent reviewer: ways hands it the review prompt and records its final answer itself.
+  SubagentStart: [{ matcher: "ways-reviewer", hooks: [handler("SubagentStart")] }],
+  SubagentStop: [{ matcher: "ways-reviewer", hooks: [handler("SubagentStop", { timeout: 60 })] }],
 };
 
 /** A hook group whose every command is the ways agent hook. */

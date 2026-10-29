@@ -70,7 +70,7 @@ describe("command registry", () => {
   });
 
   it("points usage errors at the command help", async () => {
-    await expect(run(["review"])).rejects.toThrow(/Usage: ways review submit[\s\S]*ways review --help/);
+    await expect(run(["review", "bogus"])).rejects.toThrow(/Usage: ways review \[--agent=claude\|pi\][\s\S]*ways review --help/);
     await expect(run(["outcome", "open", "x"])).rejects.toThrow(/Missing required option --goal[\s\S]*ways outcome --help/);
   });
 

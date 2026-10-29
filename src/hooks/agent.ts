@@ -124,7 +124,63 @@ const TYPES: Record<AgentEvent, EventType> = {
   PostToolUse: "tool.finished",
   Stop: "agent.stopped",
   SessionEnd: "session.ended",
+  SubagentStart: "subagent.started",
+  SubagentStop: "subagent.stopped",
 };
+
+const REVIEWER = "ways-reviewer";
+const WRITE_TOOL = /^(write|edit|multiedit|notebookedit|bash|apply_patch)$/i;
+
+/** SubagentStart of the reviewer: it gets ways' own review prompt, and the session remembers which one. */
+async function startReviewer(dirs: GitDirs, payload: HookPayload, state: SessionState): Promise<{ decision: HookDecision; detail: string }> {
+  const { reviewPrompt } = await import("../work/review.js");
+  try {
+    const prompt = await reviewPrompt(dirs.top);
+    const { sha256 } = await import("../fs/digest.js");
+    state.reviews = { ...state.reviews, [payload.agentId!]: { commit: prompt.commit, promptSha256: sha256(prompt.text), at: new Date().toISOString() } };
+    return { decision: { context: prompt.text }, detail: `review of ${prompt.commit.slice(0, 12)}` };
+  } catch (error) {
+    return { decision: { context: `ways: ${error instanceof Error ? error.message : String(error)}. Say so and stop; there is nothing to review.` }, detail: "nothing to review" };
+  }
+}
+
+/**
+ * SubagentStop of the reviewer: its final answer is the review, recorded by
+ * ways with the subagent's provenance. It counts only if this session started
+ * it with ways' prompt and its tool calls show no writes; an answer without
+ * the JSON gets one request to answer again.
+ */
+async function stopReviewer(dirs: GitDirs, payload: HookPayload, state: SessionState): Promise<{ decision: HookDecision; result: EventResult; detail: string }> {
+  const ticket = payload.agentId ? state.reviews?.[payload.agentId] : undefined;
+  if (!ticket) return { decision: { notify: "ways: the ways-reviewer's answer was not recorded: ways did not start it with its review prompt (is the SubagentStart hook installed? `ways adapter install claude`)." }, result: "refused", detail: "no review prompt" };
+  const writes = readRecentSessionEvents(dirs, payload.session).filter((event) => event.agentId === payload.agentId && (event.type === "tool.started" || event.type === "tool.finished" || event.type === "tool.denied") && WRITE_TOOL.test(event.tool ?? ""));
+  if (writes.length > 0) return { decision: { notify: `ways: the ways-reviewer's review was not recorded: it used ${[...new Set(writes.map((event) => event.tool))].join(", ")}, so it was not read-only.` }, result: "refused", detail: "not read-only" };
+  const { completeReview, extractReview } = await import("../work/review.js");
+  const value = extractReview(payload.lastMessage ?? "");
+  if (!value) {
+    if (payload.stopActive) return { decision: { notify: "ways: the ways-reviewer gave no review JSON; nothing was recorded. Run `ways review` instead." }, result: "refused", detail: "no review JSON" };
+    return { decision: { remind: `ways: your answer has no review JSON. Answer again with the JSON object only: {"reviewer": "ways-reviewer", "commit": "${ticket.commit}", "verdict": "pass"|"fail", "findings": [...]}` }, result: "reminded", detail: "no review JSON" };
+  }
+  const { recordReview } = await import("../work/work.js");
+  try {
+    const outcome = await recordReview(dirs.top, completeReview(value, ticket.commit, REVIEWER), {
+      via: "subagent",
+      agent: "claude",
+      session: payload.session,
+      agentId: payload.agentId!,
+      agentType: REVIEWER,
+      promptSha256: ticket.promptSha256,
+      tools: ["Read", "Grep", "Glob"],
+    }, "the ways-reviewer's answer");
+    delete state.reviews![payload.agentId!];
+    const verdict = outcome.blockers.length > 0 ? `it blocks: ${outcome.blockers.join(", ")}` : "pass";
+    return { decision: { notify: `ways recorded the independent review of ${ticket.commit.slice(0, 12)}: ${verdict}${outcome.status === "closed" ? "; the work is closed" : ""}.` }, result: "recorded", detail: verdict };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!payload.stopActive && /Invalid review/.test(message)) return { decision: { remind: `ways: ${message}` }, result: "reminded", detail: "invalid review" };
+    return { decision: { notify: `ways: the ways-reviewer's review was not recorded: ${message}` }, result: "refused", detail: message.split("\n")[0]! };
+  }
+}
 
 export async function runAgentHook(event: AgentEvent, agent: AgentId, stdin: string, cwd: string): Promise<AgentHookResult> {
   const started = performance.now();
@@ -152,6 +208,8 @@ export async function runAgentHook(event: AgentEvent, agent: AgentId, stdin: str
       branch: currentBranchOf(dirs) ?? null,
       work: readActive(dirs.top)?.id ?? null,
       ...(payload.tool ? { tool: payload.tool } : {}),
+      ...(payload.agentId ? { agentId: payload.agentId } : {}),
+      ...(payload.agentType ? { agentType: payload.agentType } : {}),
     };
     const state = readSession(dirs, payload.session, agent, dirs.top);
     let decision: HookDecision = {};
@@ -195,11 +253,17 @@ export async function runAgentHook(event: AgentEvent, agent: AgentId, stdin: str
       save = decision.remind !== undefined || decision.notify !== undefined;
     } else if (event === "SessionEnd") {
       detail = payload.reason;
+    } else if (event === "SubagentStart" && payload.agentType === REVIEWER && payload.agentId) {
+      ({ decision, detail } = await startReviewer(dirs, payload, state));
+      save = true;
+    } else if (event === "SubagentStop" && payload.agentType === REVIEWER) {
+      ({ decision, result, detail } = await stopReviewer(dirs, payload, state));
+      if (result === "recorded") base.type = "review.recorded";
+      save = true;
     }
     if (save) writeSession(dirs, state);
     const injected = (decision.context ?? "").length + (decision.remind ?? "").length;
-    if (result === "ok") result = decision.remind || decision.notify ? "reminded" : decision.context ? "injected" : event === "SessionStart" || event === "UserPromptSubmit" ? "silent" : "ok";
-    appendEvent(dirs, { ...base, ts: new Date().toISOString(), result, ms: Math.round(performance.now() - started), ...(paths.length > 0 ? { paths } : {}), ...(detail ? { detail } : {}), ...(injected > 0 ? { chars: injected } : {}) });
+    if (result === "ok") result = decision.remind || decision.notify ? "reminded" : decision.context ? "injected" : event === "SessionStart" || event === "UserPromptSubmit" ? "silent" : "ok";    appendEvent(dirs, { ...base, ts: new Date().toISOString(), result, ms: Math.round(performance.now() - started), ...(paths.length > 0 ? { paths } : {}), ...(detail ? { detail } : {}), ...(injected > 0 ? { chars: injected } : {}) });
     mark(`${event} done`);
     return { stdout: formatOutput(agent, event, decision), exitCode: 0 };
   } catch (error) {

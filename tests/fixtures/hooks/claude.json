@@ -82,5 +82,39 @@
     "permission_mode": "default",
     "hook_event_name": "SessionEnd",
     "reason": "prompt_input_exit"
+  },
+  "SubagentStart.reviewer": {
+    "session_id": "abc123-claude-session",
+    "transcript_path": "/home/user/.claude/projects/-home-user-project/abc123-claude-session.jsonl",
+    "cwd": "/home/user/project",
+    "hook_event_name": "SubagentStart",
+    "agent_id": "agent-rev01",
+    "agent_type": "ways-reviewer"
+  },
+  "PostToolUse.Read.reviewer": {
+    "session_id": "abc123-claude-session",
+    "transcript_path": "/home/user/.claude/projects/-home-user-project/abc123-claude-session.jsonl",
+    "cwd": "/home/user/project",
+    "hook_event_name": "PostToolUse",
+    "agent_id": "agent-rev01",
+    "agent_type": "ways-reviewer",
+    "tool_name": "Read",
+    "tool_input": { "file_path": "/home/user/project/src/greeting.ts" },
+    "tool_response": { "type": "text" },
+    "tool_use_id": "toolu_01REV"
+  },
+  "SubagentStop.reviewer": {
+    "session_id": "abc123-claude-session",
+    "transcript_path": "/home/user/.claude/projects/-home-user-project/abc123-claude-session.jsonl",
+    "cwd": "/home/user/project",
+    "permission_mode": "default",
+    "hook_event_name": "SubagentStop",
+    "stop_hook_active": false,
+    "agent_id": "agent-rev01",
+    "agent_type": "ways-reviewer",
+    "agent_transcript_path": "/home/user/.claude/projects/-home-user-project/abc123-claude-session/subagents/agent-agent-rev01.jsonl",
+    "last_assistant_message": "I read the diff and the test.\n\n```json\n{\"reviewer\": \"ways-reviewer\", \"commit\": \"<COMMIT>\", \"verdict\": \"pass\", \"findings\": [{\"id\": \"F1\", \"severity\": \"low\", \"summary\": \"greeting is not localised\"}]}\n```",
+    "background_tasks": [],
+    "session_crons": []
   }
 }

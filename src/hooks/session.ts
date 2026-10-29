@@ -22,6 +22,8 @@ export interface SessionState {
   memory: string[];
   /** Blocker keys already reminded at Stop. */
   reminded: string[];
+  /** Reviewer subagents this session started, by agent id: the commit and the prompt ways gave each. */
+  reviews?: Record<string, { commit: string; promptSha256: string; at: string }>;
   updatedAt: string;
 }
 

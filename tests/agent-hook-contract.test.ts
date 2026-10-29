@@ -44,7 +44,7 @@ function events(cwd: string, session: string): ReturnType<typeof parseEvents> {
 async function verifyingOutcome(options: { review?: "required" | "none"; approval?: "required" | "none" } = {}): Promise<string> {
   const { cwd, git } = await installed({ agents: ["claude", "pi"] });
   await mkdir(join(cwd, "src"), { recursive: true });
-  await openOutcome(cwd, "greeting", { goal: "Configurable greeting", criteria: ["AC1:the greeting reads config"], verify: ["AC1:true"], strength: [], review: options.review ?? "required", approval: options.approval ?? "none" });
+  await openOutcome(cwd, "greeting", { goal: "Configurable greeting", criteria: ["AC1:the greeting reads config"], verify: ["AC1:test -f src/greeting.ts"], strength: [], review: options.review ?? "required", approval: options.approval ?? "none" });
   await remember(cwd, "Greetings come from config/greeting.json, never hard-coded", { paths: ["src/**"], type: "convention" });
   await git.run(["add", "-A"]);
   await commitFile(git, cwd, "src/greeting.ts", "export const greeting = 'hi';\n", "feat: greeting");
@@ -66,7 +66,7 @@ describe("Claude Code contract", () => {
     expect(context).toContain("Work: outcome greeting — Configurable greeting");
     expect(context).toContain("- AC1 [test] passed: the greeting reads config");
     expect(context).toContain("Waiting on: an independent review of");
-    expect(context).toMatch(/Next: an independent read-only review of `git diff [0-9a-f]{12} [0-9a-f]{12}`/);
+    expect(context).toMatch(/Next: `ways review` \(an independent read-only reviewer of [0-9a-f]{12}; or the ways-reviewer subagent, whose verdict ways records\)/);
     expect(context).toContain("[convention] Greetings come from config/greeting.json, never hard-coded — src/** (.ways/knowledge/conventions/");
 
     // Nothing changed: the prompt hook stays silent.
@@ -110,10 +110,21 @@ describe("Claude Code contract", () => {
     const cwd = await verifyingOutcome();
     const claude = fixtures("claude", cwd);
     hook(cwd, "claude", "SessionStart", claude.SessionStart);
-    const review = join(tmpdir(), `review-${process.pid}-${Date.now()}.json`);
     const status = JSON.parse(spawnSync(process.execPath, [process.env.WAYS_CLI!, "status", "--json"], { cwd, encoding: "utf8" }).stdout) as { active: { evidence: { input: string } } };
-    await writeFile(review, JSON.stringify({ reviewer: "independent-reviewer", commit: status.active.evidence.input, verdict: "pass", findings: [] }));
-    expect(spawnSync(process.execPath, [process.env.WAYS_CLI!, "review", "submit", review], { cwd, encoding: "utf8" }).status).toBe(0);
+    const input = status.active.evidence.input;
+    // The ways-reviewer subagent: ways hands it the review and records its final answer.
+    const started = JSON.parse(hook(cwd, "claude", "SubagentStart", claude["SubagentStart.reviewer"]).stdout) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
+    expect(started.hookSpecificOutput.hookEventName).toBe("SubagentStart");
+    expect(started.hookSpecificOutput.additionalContext).toContain("# Independent review of outcome greeting");
+    expect(started.hookSpecificOutput.additionalContext).toContain(`"commit": "${input}"`);
+    expect(hook(cwd, "claude", "PostToolUse", claude["PostToolUse.Read.reviewer"])).toMatchObject({ status: 0, stdout: "" });
+    const answer = claude["SubagentStop.reviewer"]!;
+    const stopped = JSON.parse(hook(cwd, "claude", "SubagentStop", { ...answer, last_assistant_message: String(answer.last_assistant_message).replace("<COMMIT>", input) }).stdout) as Record<string, string>;
+    expect(stopped.systemMessage).toMatch(/^ways recorded the independent review of [0-9a-f]{12}: pass; the work is closed\.$/);
+    const { committedRecord } = await import("../src/work/record.js");
+    const { GitRepository } = await import("../src/git/git.js");
+    expect((await committedRecord(new GitRepository(cwd), "greeting"))?.review).toMatchObject({ commit: input, verdict: "pass", provenance: { via: "subagent", agentId: "agent-rev01", agentType: "ways-reviewer", session: "abc123-claude-session" } });
+    expect(events(cwd, "abc123-claude-session").filter((event) => event.agentId === "agent-rev01").map((event) => event.type)).toEqual(["subagent.started", "tool.finished", "review.recorded"]);
     const prompt = JSON.parse(hook(cwd, "claude", "UserPromptSubmit", claude.UserPromptSubmit).stdout) as { hookSpecificOutput: { additionalContext: string } };
     const delta = prompt.hookSpecificOutput.additionalContext;
     expect(delta).toContain("Work: none active now (closed or cancelled).");

@@ -24,7 +24,7 @@ export const CHANGE_PROMPT: HarnessPrompt = {
   resume: `Run \`npx ways status\`, continue the task's work (starting it with \`npx ways start <task-id>\` if none is active), and finish it with \`npx ways done\`. ${GUARDRAILS}`,
 };
 
-const OUTCOME_FINISH = "implement and commit as you go, then run `npx ways done`; if it asks for an independent review, have a reviewer who did not implement the change review the commit it prints and record it with `npx ways review submit <file>`";
+const OUTCOME_FINISH = "implement and commit as you go, then run `npx ways done`; if it asks for an independent review, run `npx ways review` (or, in Claude Code, use the ways-reviewer subagent). If the task cannot be done as asked, run `npx ways block \"<what is missing; what would unblock it>\"` and stop";
 
 export const OUTCOME_PROMPT: HarnessPrompt = {
   initial: `Deliver this task as a ways outcome: open it with \`npx ways outcome open <task-id> --goal=<goal> --criterion=AC1:<one line> --verify=AC1:<command>... <policy-flags>\`, then ${OUTCOME_FINISH}. If the task asks you to stop early, leave the outcome open for the next session. ${GUARDRAILS}`,
