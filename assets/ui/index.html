@@ -218,7 +218,7 @@ function card(c) {
   const head = h("button", { type: "button", "aria-expanded": String(open), "data-focus": `card:${c.key}`, onclick: () => { open ? expanded.delete(c.key) : expanded.add(c.key); render(); } },
     h("div", { class: "row" }, h("span", { class: "work" }, c.work ? c.work.id : t("noWork")), c.work && h("span", { class: "badge" }, c.work.kind), state.repos.length > 1 && h("span", { class: "badge" }, c.repoName)),
     c.work && c.work.goal && h("p", { class: "goal" }, c.work.goal),
-    h("div", { class: "row" }, c.agent && h("span", { class: `badge agent-${c.agent}` }, c.agent), c.session && h("span", { class: "mono", title: c.session }, short(c.session)), h("span", { class: "meta", title: c.worktree }, `⎇ ${c.branch || short(c.head, 12)}`)),
+    h("div", { class: "row" }, c.agent && h("span", { class: `badge agent-${c.agent}` }, c.agent), c.role && h("span", { class: "badge", title: "launched by ways for this job" }, c.role), c.session && h("span", { class: "mono", title: c.session }, short(c.session)), h("span", { class: "meta", title: c.worktree }, `⎇ ${c.branch || short(c.head, 12)}`)),
     c.last && h("div", { class: live ? "last on" : "last" }, h("span", { class: "dot", "aria-hidden": "true" }), `${c.last.tool || c.last.type}`, " · ", h("span", { "data-ts": c.last.ts }, ago(c.last.ts))),
     c.criteria.length > 0 && h("div", { class: "crit", role: "img", "aria-label": t("criteria", passed, c.criteria.length) }, c.criteria.map((entry) => h("i", { class: entry.state, title: `${entry.id}: ${entry.state}` })), h("span", null, `${passed}/${c.criteria.length}`)),
     c.failing.length > 0 && h("ul", { class: "fail", "aria-label": t("failing") }, c.failing.slice(0, 3).map((line) => h("li", null, line))),

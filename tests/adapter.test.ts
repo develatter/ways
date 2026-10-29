@@ -14,7 +14,7 @@ import { applyUpgrade, planUpgrade } from "../src/upgrade/upgrade.js";
 import { startChange } from "../src/work/work.js";
 import { repository } from "./helpers.js";
 
-const ROLES = ["reviewer"];
+const ROLES = ["documentalist", "reviewer"];
 const COMMANDS = ["orchestrator", "outcome", "remember"];
 const AGENT_EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd"];
 const OLD_GUARD = { matcher: "Bash", hooks: [{ type: "command", command: "\"$CLAUDE_PROJECT_DIR\"/.claude/ways-guard.sh" }] };
@@ -26,8 +26,14 @@ describe("canonical adapter source", () => {
     expect(source.commands.map((command) => command.name).sort()).toEqual(COMMANDS);
     for (const role of source.roles) expect(nonEmptyLines(role.body).length).toBeLessThanOrEqual(MAX_ROLE_LINES);
     for (const command of source.commands) expect(nonEmptyLines(command.body).length, command.name).toBeLessThanOrEqual(2);
-    expect(source.roles[0]).toMatchObject({ name: "reviewer", access: "read" });
-    expect(source.roles[0]?.body).toContain("ways records it");
+    const reviewer = source.roles.find((role) => role.name === "reviewer");
+    expect(reviewer).toMatchObject({ name: "reviewer", access: "read" });
+    expect(reviewer?.body).toContain("ways records it");
+    // The documentalist writes the wiki for humans and says it must leave code and the memory alone.
+    const documentalist = source.roles.find((role) => role.name === "documentalist");
+    expect(documentalist).toMatchObject({ access: "write" });
+    expect(documentalist?.body).toMatch(/docs\/wiki/);
+    expect(documentalist?.body).toMatch(/Never touch code.*\.ways\/knowledge/);
   });
 
   it("rejects prompts longer than six lines", async () => {
@@ -44,7 +50,7 @@ describe("claude renderer", () => {
   it("renders optional procedures as skills, a read-only reviewer and the status line", async () => {
     const files = renderClaude(await loadAdapterSource());
     const byPath = new Map(files.map((file) => [file.path, file]));
-    expect([...byPath.keys()].sort()).toEqual([".claude/agents/ways-reviewer.md", ".claude/skills/ways-orchestrator/SKILL.md", ".claude/skills/ways-outcome/SKILL.md", ".claude/skills/ways-remember/SKILL.md", ".claude/ways-statusline.sh"]);
+    expect([...byPath.keys()].sort()).toEqual([".claude/agents/ways-documentalist.md", ".claude/agents/ways-reviewer.md",".claude/skills/ways-orchestrator/SKILL.md", ".claude/skills/ways-outcome/SKILL.md", ".claude/skills/ways-remember/SKILL.md", ".claude/ways-statusline.sh"]);
     expect(byPath.get(".claude/skills/ways-outcome/SKILL.md")?.content).toMatch(/^---\nname: ways-outcome\ndescription: .*\nargument-hint: <id> \[what to deliver\]\n---\n/);
     expect(byPath.get(".claude/agents/ways-reviewer.md")?.content).toContain("permissionMode: plan");
     expect(byPath.get(".claude/ways-statusline.sh")?.mode).toBe(0o755);

@@ -14,7 +14,7 @@ export interface CommandSpec {
 }
 
 /** The lean target: no more distinct CLI actions than this. */
-export const ACTION_BUDGET = 33;
+export const ACTION_BUDGET = 37;
 
 export const COMMANDS: readonly CommandSpec[] = [
   {
@@ -201,6 +201,20 @@ export const COMMANDS: readonly CommandSpec[] = [
     actions: ["hook prepare-commit-msg", "hook commit-msg", "hook <agent event>"],
   },
   {
+    name: "wiki",
+    summary: "A wiki for humans in docs/wiki, apart from the agents' memory: create it, check it (links, frontmatter, freshness by source hash, coverage), list stale pages, or launch the documentalist agent to update it",
+    usage: [
+      "ways wiki init",
+      "ways wiki update [--agent=claude|pi|<command>] [--dry-run]",
+      "ways wiki update --stamp <page>...",
+      "ways wiki check [--json]",
+      "ways wiki stale [--json]",
+      "  update launches the documentalist with a brief ways builds (stale pages, gaps, broken links), allowed to write only under docs/wiki/; --stamp records that pages you checked match their sources",
+    ],
+    examples: ["ways wiki check", "ways wiki update --dry-run", "ways wiki update --stamp reference/commands.md"],
+    actions: ["wiki init", "wiki update", "wiki check", "wiki stale"],
+  },
+  {
     name: "evals",
     summary: "Run or compare the harness evaluation corpus",
     usage: [
@@ -254,6 +268,32 @@ export function renderCommandHelp(command: CommandSpec): string {
 
 export const README_COMMANDS_START = "<!-- commands:start (generated from src/commands.ts; run `UPDATE_README=1 npx vitest run tests/commands.test.ts`) -->";
 export const README_COMMANDS_END = "<!-- commands:end -->";
+
+export const WIKI_COMMANDS_START = "<!-- commands:start (generated from src/commands.ts; run `UPDATE_README=1 npx vitest run tests/commands.test.ts`, then `ways wiki update --stamp reference/commands.md`) -->";
+export const WIKI_COMMANDS_END = "<!-- commands:end -->";
+
+/**
+ * The body of the wiki's command reference (docs/wiki/reference/commands.md),
+ * one section per command, kept in sync with the registry by
+ * tests/commands.test.ts. Its examples are `ways-check` blocks: `ways wiki
+ * check` verifies them against this same registry.
+ */
+export function renderWikiReference(): string {
+  const sections = COMMANDS.map((command) => [
+    `## \`ways ${command.name}\``,
+    "",
+    command.summary,
+    "",
+    "```text",
+    ...command.usage,
+    "```",
+    "",
+    "```sh ways-check",
+    ...command.examples,
+    "```",
+  ].join("\n"));
+  return sections.join("\n\n");
+}
 
 /** The README command table, kept in sync with the registry by tests/commands.test.ts. */
 export function renderReadmeTable(): string {

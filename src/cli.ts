@@ -423,6 +423,11 @@ async function dispatch(command: string, args: string[], cwd: string): Promise<n
     return 0;
   }
 
+  if (command === "wiki") {
+    const { runWiki } = await import("./wiki/command.js");
+    return runWiki(args, cwd, { option, options });
+  }
+
   if (command === "evals") {
     return (await import("./evals/cli.js")).runEvalsCommand(args, cwd, { option, options, requiredOption, userPath, relative });
   }

@@ -25,6 +25,8 @@ export const IDLE_SESSION_MS = 60 * 60 * 1000;
 export interface SessionSummary {
   session: string;
   agent: string;
+  /** The job ways launched it for (`documentalist`), when it did. */
+  role?: string;
   worktree: string;
   branch: string | null;
   work: string | null;
@@ -55,6 +57,7 @@ export function foldEvent(summary: SessionSummary | undefined, event: WaysEvent)
     startedAt: event.ts, lastTs: event.ts, last, stopTs: "", activeTs: "", endTs: "", errors: 0,
   };
   if (event.ts < next.startedAt) next.startedAt = event.ts;
+  if (event.role) next.role = event.role;
   if (!summary || event.ts >= next.lastTs) {
     next.lastTs = event.ts;
     next.last = last;
@@ -137,6 +140,8 @@ export interface Card {
   branch: string | null;
   head: string | null;
   agent: string | null;
+  /** `documentalist` when the latest session is the wiki agent ways launched; the page shows it next to the agent. */
+  role: string | null;
   session: string | null;
   /** Sessions seen in this worktree that are still live. */
   liveSessions: number;
@@ -224,6 +229,7 @@ function cardFor(repo: RepoSnapshot, worktree: WorktreeSnapshot, record: WorkRec
     branch: worktree.branch,
     head: worktree.head,
     agent: latest?.agent ?? null,
+    role: latest?.role ?? null,
     session: latest?.session ?? null,
     liveSessions: sessions.filter((session) => phaseOf(session, now) === "live").length,
     phase,

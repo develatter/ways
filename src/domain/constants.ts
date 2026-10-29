@@ -5,6 +5,16 @@ export const KNOWLEDGE_DIR = `${WAYS_DIR}/knowledge`;
 /** Committed work records, one JSON file per outcome (and per change that needed an approval). */
 export const WORK_DIR = `${WAYS_DIR}/work`;
 export const HOOKS_DIR = `${WAYS_DIR}/hooks`;
+/** The wiki for humans (Markdown, no generator). It is not part of the agents' memory: nothing in `.ways/knowledge` or the hooks reads it. */
+export const WIKI_DIR = "docs/wiki";
+export const WIKI_CONFIG_PATH = `${WAYS_DIR}/wiki.json`;
+/** The role `ways wiki update` gives the agent it launches (environment `WAYS_ROLE`, trailer `Harness-Role`). */
+export const DOCUMENTALIST_ROLE = "documentalist";
+
+/** True for `docs/wiki` and everything under it. */
+export function isWikiPath(path: string): boolean {
+  return path === WIKI_DIR || path.startsWith(`${WIKI_DIR}/`);
+}
 /** The coding-agent hook wrapper: `agent-hook <agent> <event>` runs `ways hook <event> --agent=<agent>`. */
 export const AGENT_HOOK_PATH = `${HOOKS_DIR}/agent-hook`;
 

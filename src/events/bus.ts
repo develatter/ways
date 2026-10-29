@@ -57,6 +57,8 @@ export interface WaysEvent {
   /** Claude Code: the subagent the event happened in (its own context and transcript). */
   agentId?: string;
   agentType?: string;
+  /** The job ways launched the session for, when it did (`documentalist`); a session started by hand has none. */
+  role?: string;
   /** Repository-relative paths the tool call names, normalized and confined to the worktree. */
   paths?: string[];
   result: EventResult;
