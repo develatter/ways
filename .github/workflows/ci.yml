@@ -34,7 +34,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           registry-url: https://npm.pkg.github.com
           scope: '@develatter'
       - run: npm ci
@@ -44,8 +44,10 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           version=$(node -p "require('./package.json').version")
+          # A pre-release (0.3.0-dev.0) goes to the `next` tag, never to `latest`.
+          case "$version" in *-*) tag=next ;; *) tag=latest ;; esac
           if npm view "@develatter/ways@${version}" version --registry=https://npm.pkg.github.com >/dev/null 2>&1; then
             echo "@develatter/ways@${version} already exists; skipping publish."
           else
-            npm publish --registry=https://npm.pkg.github.com
+            npm publish --tag "$tag" --registry=https://npm.pkg.github.com
           fi
