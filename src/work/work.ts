@@ -174,13 +174,17 @@ export async function openOutcome(cwd: string, id: string, options: OpenOptions)
   return record;
 }
 
-/** The evidence still certifies HEAD: nothing but the record changed since its input, and nothing is uncommitted. */
+/**
+ * The evidence still certifies HEAD: no commit changed anything but the record
+ * since its input. Uncommitted edits are not part of what closes; `done`
+ * refuses them on its own.
+ */
 async function evidenceFresh(git: GitRepository, record: WorkRecord): Promise<boolean> {
   const evidence = record.evidence;
   if (!evidence) return false;
   try {
     const changed = (await git.run(["diff", "--name-only", evidence.input.commit, "HEAD", "--"])).split("\n").filter(Boolean);
-    return changed.every((path) => path === workRecordPath(record.id)) && (await git.dirtyPaths()).length === 0;
+    return changed.every((path) => path === workRecordPath(record.id));
   } catch {
     return false;
   }

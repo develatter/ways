@@ -171,6 +171,8 @@ describe("an outcome", () => {
     await expect(submitReview(cwd, await writeReview(cwd, { reviewer: "Ways Test <ways@example.test>", commit: input, verdict: "pass", findings: [] }))).rejects.toThrow(/authored or committed/);
     await expect(submitReview(cwd, await writeReview(cwd, { reviewer: "x", commit: input }))).rejects.toThrow(/Invalid review/);
 
+    // Uncommitted scratch files are not part of what closes and do not get in the way.
+    await writeFile(join(cwd, "scratch.txt"), "notes\n");
     const blocked = await submitReview(cwd, await writeReview(cwd, { reviewer: "ways-reviewer", commit: input, verdict: "pass", findings: [{ id: "F1", severity: "high", summary: "unclear" }, { id: "F2", severity: "low", summary: "typo" }] }));
     expect(blocked).toMatchObject({ status: "verifying", blockers: ["F1"], notes: ["F2 (low): typo"] });
     const passed = await submitReview(cwd, await writeReview(cwd, { reviewer: "ways-reviewer", commit: input.slice(0, 12), verdict: "pass", findings: [{ id: "F1", severity: "high", summary: "unclear", disposition: "fixed" }] }));
