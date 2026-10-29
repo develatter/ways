@@ -9,7 +9,7 @@ sources:
 reviewed: 2026-10-29
 source_hashes:
   src/work/review.ts: b5a2d2e93ac0
-  src/work/policy.ts: 5cdc82f1e53d
+  src/work/policy.ts: 79e59809a124
   src/work/signature.ts: 6ee11de63cd0
   src/commands.ts: ed6b4c0f3337
 ---
@@ -45,7 +45,8 @@ What a review can say: a verdict, and findings with a severity. Only `critical` 
 A human approval is needed when:
 
 - the work was opened with `--approval=required` (or the config says `"approvals": {"criteria": "required"}`), or
-- the work modifies or deletes an existing test or check file, or runs fewer tests than its base did, and no independent review accepted it. A review accepts by naming the file in a finding's `accepts` list, and only a review that ways launched can. Adding tests never needs anything.
+- the work removes or changes lines of an existing test, skips or focuses tests, touches the check configuration, or runs fewer tests than its base did, and no independent review accepted it. A review accepts by naming the file in a finding's `accepts` list, and only a review that ways launched can. Adding tests never needs anything, also to an existing test file. The exact rule is in [docs/VERIFICATION.md](../../VERIFICATION.md#what-needs-approval-on-the-verifier-surface), or
+- the required review was typed in at a terminal (see below).
 
 The human runs this in their own terminal, never the agent:
 
@@ -64,4 +65,4 @@ alex@example.com namespaces="ways-approval" sk-ssh-ed25519@openssh.com AAAA...
 
 The signature is checked against that file as committed in the work's base, so the change being approved cannot add its own key. With `"approvals": {"signature": "required"}` an unsigned approval does not count, and no review can stand in for one on a test change. Use a hardware key (`ed25519-sk`): a key an agent can use can sign for the agent too. To sign somewhere else, `ways approve --payload` prints what to sign and `ways approve --signature=<file>` records the result.
 
-A review typed in by a person at a terminal (`ways review submit <file>`) can satisfy a required review but never accepts a test change.
+A review typed in by a person at a terminal (`ways review submit <file>`) never accepts a test change, and it satisfies a required review only together with the person's approval: a pseudo-terminal would give an agent the same terminal. Run `ways approve` right after it.

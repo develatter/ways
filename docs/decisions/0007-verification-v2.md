@@ -1,6 +1,6 @@
 # 0007 — Verification v2: the harness produces the evidence
 
-- Status: accepted
+- Status: accepted; amended by [0011](0011-verifier-surface-by-content.md) (the checkpoint by content, coverage by content, terminal reviews need the human)
 - Date: 2026-10-29
 - Decided by: the implementing agent, within the maintainer's brief (results verifiable, the agent cannot pass what did not pass, no new ceremony; CI is the final judge; reviews by configuration; signed approvals with OpenSSH)
 

@@ -12,8 +12,8 @@ source_hashes:
   src/hooks/hook.ts: fd41f9993c45
   src/hooks/guard.ts: 4d3ff1f5e49b
   src/integrity/history.ts: 7dc05c41c7b6
-  src/work/policy.ts: 5cdc82f1e53d
-  src/config/config.ts: 073d361893c0
+  src/work/policy.ts: 79e59809a124
+  src/config/config.ts: 4cbe2b4bb94f
 ---
 
 # What ways guarantees
@@ -27,8 +27,8 @@ So the question for each rule is: what real guarantee does it buy that a hook, t
 | The definition of done does not move | The goal and criteria are committed when an outcome opens. The commit hook refuses a commit that adds, changes or deletes a work record by hand, in every mode; the agent guard refuses the edit before it is made; the history audit flags a record whose criteria changed after they were opened. |
 | Evidence is the harness's | `ways done` runs the checks and writes the evidence for the exact commit and tree it ran on. The agent can add a note per criterion and nothing else. The audit refuses evidence that names another commit, another tree or other commands than the base's check configuration. |
 | A criterion shows the work did something | Its verifier must fail on the base and pass on the commit; otherwise the criterion counts as review-only and needs an independent review. |
-| Tests are not weakened silently | Modifying or deleting an existing test or check file, or running fewer tests than the base did, needs a human approval or an independent review that accepts it by name. Adding tests needs nothing. |
-| Reviews are independent | Only a reviewer that ways started, with read-only tools, or the subagent it handed the prompt to, counts. ways records the answer itself. |
+| Tests are not weakened silently | Removing or changing lines of an existing test, skipping or focusing tests, touching the check configuration, or running fewer tests than the base did, needs a human approval or an independent review that accepts it by name; in CI the approval covers only the content it was given for. Adding tests needs nothing, also to an existing file. |
+| Reviews are independent | A reviewer that ways started, with read-only tools, or the subagent it handed the prompt to, counts on its own. ways records the answer itself. A review typed in at a terminal counts only with the person's approval. |
 | Approvals come from a person | `ways approve` needs a real terminal. With the person's SSH key in `.ways/allowed_signers`, the approval is signed and CI re-verifies the signature; the policy can require one. |
 
 ## What is not blocked
@@ -42,7 +42,8 @@ Everything above runs on the machine of the agent, as the same user with the sam
 ## What it does not guarantee
 
 - A verifier is only as good as its test. An agent can write a new test for its own criterion that is red before and green after without testing the criterion. Writing the criteria so that a person can read them in thirty seconds, labelling the verifier's strength, and the independent review are the mitigation; mutation testing is not built in.
-- A key an agent can use can sign. Only a hardware key that needs a touch per signature separates the person's approval from the agent's.
+- A key an agent can use can sign. Only a hardware key that needs a touch per signature separates the person's approval from the agent's. Without required signatures, a pseudo-terminal passes the terminal check of `ways approve`, and a closed record an agent wrote by hand with the harness's commit trailers is not caught by CI.
+- The Claude Code reviewer subagent runs in the implementer's session; ways tells it apart by its agent id, not by a separate session.
 - A review's provenance is local: it is as strong as the hooks that recorded it, and an agent with a shell could fake one. With signed approvals required, a review is not accepted for a test change at all.
 
 The mechanics are in [How verification works](verification.md).

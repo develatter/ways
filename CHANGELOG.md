@@ -32,6 +32,11 @@ ways lean: less ceremony, context through the agents' own hooks, evidence the ha
 
 - The package ships only what `src/` compiles to: earlier tarballs carried stale compiled modules from previous builds. No source maps are shipped.
 - `ways --version` matches the package version.
+- Adding a test to an existing test file no longer needs an approval: the verifier checkpoint is judged by what changed inside each file, with `testMarkers` for extra disabling markers, and dependency and build directories are off it ([0011](docs/decisions/0011-verifier-surface-by-content.md)).
+- `ways verify` binds an approved test change to the content approved, so a later commit cannot weaken the same file again under the old approval; it reads `enforcement` from the base.
+- A review typed in at a terminal (`ways review submit`) no longer satisfies a required review on its own: it also needs the human's `ways approve`.
+- The board's columns share the width instead of growing to the longest card text, and stack on phones.
+- `ways bootstrap` warns, with the install command, when `package.json` lacks `@develatter/ways` (the CI job needs it); the agent hook uses V8's compile cache.
 
 ### Migrating from 0.2.x
 

@@ -47,7 +47,7 @@ npx ways review      # an independent read-only reviewer (required by default); 
 npx ways block "AC2 needs the payments sandbox key; set PAYMENTS_KEY in .env.test or drop AC2"
 ```
 
-**Your approval** is needed when you ask for it, and when a work modifies or deletes an existing test, changes the check configuration or runs fewer tests (unless the independent review accepted that change; adding tests never needs one). You run, in your own terminal, `npx ways approve` (or `--key=~/.ssh/id_ed25519_sk` to sign it).
+**Your approval** is needed when you ask for it, and when a work removes or changes lines of an existing test, skips or focuses tests, changes the check configuration or runs fewer tests (unless the independent review accepted that change). Adding tests never needs one, also to an existing test file. You run, in your own terminal, `npx ways approve` (or `--key=~/.ssh/id_ed25519_sk` to sign it). The exact rule is in [docs/VERIFICATION.md](docs/VERIFICATION.md#what-needs-approval-on-the-verifier-surface).
 
 **Memory.** When the agent (or you) learns something durable, a convention, a decision, a pitfall, how to check something:
 
@@ -80,11 +80,11 @@ A local page (127.0.0.1 only, with a token in the URL it prints) with a live kan
 | The definition of done does not move | The goal and criteria are committed when the outcome opens; the commit hook refuses any hand edit of `.ways/work/`, and the history audit flags one that bypassed the hook |
 | The evidence is the harness's | `ways done` writes it (commands, exit codes, durations, output digests, attempts) for the exact commit and tree it ran on, in a clean checkout, with the checks as the base commit configured them |
 | A criterion shows the work did something | Its verifier must fail on the base and pass on the commit; otherwise it is review-only |
-| Tests are not weakened silently | Modifying or deleting an existing test or check file, or running fewer tests, needs your approval or an independent review that accepts it |
-| Reviews are independent | Only a reviewer ways launched (or the `ways-reviewer` subagent it handed the prompt to) counts; it has read tools only and ways records its answer itself |
+| Tests are not weakened silently | Removing or changing lines of an existing test, skipping or focusing tests, touching check configuration, or running fewer tests needs your approval or an independent review that accepts it; in CI the approval covers only the content it was given for |
+| Reviews are independent | A reviewer ways launched (or the `ways-reviewer` subagent it handed the prompt to) counts on its own; it has read tools only and ways records its answer itself. A review typed in at a terminal (`ways review submit`) counts only together with your approval |
 | Approvals come from a person | `ways approve` needs a real terminal; with `.ways/allowed_signers` it is SSH-signed, and the policy can require that |
 
-**What it does not guarantee.** Locally, an agent with a shell can bypass any hook (`WAYS_DISABLE=1`, or pointing `core.hooksPath` elsewhere). A criterion is only as good as its verifier: ways proves the verifier went from red to green, not that it tests the right thing; that is what you review. **The CI is the final judge**: the `ways verify` job bootstrap writes re-runs everything from scratch on every pull request; make it a required check ([docs/BRANCH_PROTECTION.md](docs/BRANCH_PROTECTION.md)). The threat model is in [docs/VERIFICATION.md](docs/VERIFICATION.md).
+**What it does not guarantee.** Locally, an agent with a shell can bypass any hook (`WAYS_DISABLE=1`, or pointing `core.hooksPath` elsewhere), and a pseudo-terminal (`script -qc`) passes the terminal check of `ways approve` and `ways review submit`: only `"approvals": {"signature": "required"}` with your key in `.ways/allowed_signers` makes an approval yours for certain. With signatures optional, a closed record the agent wrote by hand with the harness's commit trailers is not caught by CI either. The `ways-reviewer` subagent shares the implementer's session; ways tells it apart by its agent id, not by a separate session. A criterion is only as good as its verifier: ways proves the verifier went from red to green, not that it tests the right thing; that is what you review. **The CI is the final judge**: the `ways verify` job bootstrap writes re-runs everything from scratch on every pull request; make it a required check ([docs/BRANCH_PROTECTION.md](docs/BRANCH_PROTECTION.md)). The threat model is in [docs/VERIFICATION.md](docs/VERIFICATION.md).
 
 ## A wiki for people
 
@@ -138,6 +138,7 @@ Each page lists the files it documents with a hash of each, so `check` fails (in
 | `commands` | `.ways/config.json` (`bootstrap --commands=<json>`) | Your checks: `test`, `lint`, `typecheck`, `build`, `e2e`; only names in `required` run, in that order. Plus `setup` (e.g. `["npm","ci"]`, how the clean checkout gets its dependencies) and `services` (started around the checks) |
 | `evaluation` | `.ways/config.json` | `clean` (default) or `fast`: run `ways done` in your working tree and leave the clean run to CI (`ways done --fast` for once) |
 | `review`, `approvals`, `reviewer` | `.ways/config.json` | Default review policy of new outcomes; `approvals.signature: required` for SSH-signed approvals only; which agent or command reviews |
+| `verifierPaths`, `testMarkers` | `.ways/config.json` | The globs of tests and check configuration whose weakening needs approval, and extra regular expressions for lines that disable tests (both read from the base) |
 | agents | `ways bootstrap --agents=claude,pi[,codex,cursor]`, `ways adapter install <agent>` | Which coding agents get hooks, skills and roles. Claude Code and pi by default |
 | `lang` | `~/.config/ways/config.json` (`{"lang": "es"}`) or `ways serve --lang=es` | Language of the board: `en` or `es` |
 | `WAYS_DISABLE=1` | environment | Skips the Git and agent hooks for one command. CI still judges the result |

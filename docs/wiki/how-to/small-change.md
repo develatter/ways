@@ -8,9 +8,9 @@ sources:
   - src/hooks/hook.ts
 reviewed: 2026-10-29
 source_hashes:
-  src/cli.ts: 9d31d48e1830
+  src/cli.ts: 53c9b3354e5a
   src/work/work.ts: 6cf798d8e5c6
-  src/work/evaluate.ts: 6abdbb69b336
+  src/work/evaluate.ts: 9d05e6a07de2
   src/hooks/hook.ts: fd41f9993c45
 ---
 
@@ -46,4 +46,4 @@ A small change has no criteria of its own: its judge is your check suite. You co
 
 ## When it needs a person
 
-Modifying or deleting an existing test, changing the check configuration, or running fewer tests than the base did is not blocked locally, but it cannot close without either a human's `ways approve` or an independent review that accepts the change. Adding tests never needs one. See [Get a review, and an approval](review.md).
+Removing or changing lines of an existing test, skipping or focusing tests, changing the check configuration, or running fewer tests than the base did is not blocked locally, but it cannot close without either a human's `ways approve` or an independent review that accepts the change. Adding tests never needs one, also to an existing test file. See [Get a review, and an approval](review.md).
