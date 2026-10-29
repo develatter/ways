@@ -20,6 +20,17 @@ async function tracked(cwd: string): Promise<string[]> {
 }
 
 describe("bootstrap", () => {
+  it("warns, with the exact command, when the CI job could not find ways in the dev dependencies", async () => {
+    const bare = await repository();
+    expect((await bootstrap({ cwd: bare.cwd, testCommand: ["npm", "test"], agents: [] })).warnings).toEqual([expect.stringMatching(/no readable package\.json[\s\S]*npm init -y && npm install --save-dev @develatter\/ways --registry=https:\/\/npm\.pkg\.github\.com/)]);
+    const missing = await repository();
+    await writeFile(join(missing.cwd, "package.json"), "{\"name\":\"app\"}\n");
+    expect((await bootstrap({ cwd: missing.cwd, testCommand: ["npm", "test"], agents: [] })).warnings).toEqual([expect.stringMatching(/does not list @develatter\/ways[\s\S]*npx --no-install ways verify[\s\S]*npm install --save-dev @develatter\/ways/)]);
+    const present = await repository();
+    await writeFile(join(present.cwd, "package.json"), "{\"name\":\"app\",\"devDependencies\":{\"@develatter/ways\":\"^0.3.0\"}}\n");
+    expect((await bootstrap({ cwd: present.cwd, testCommand: ["npm", "test"], agents: [] })).warnings).toEqual([]);
+  });
+
   it("installs Claude Code and pi by default in at most 30 files, and passes integrity", async () => {
     const { cwd } = await repository();
     const result = await bootstrap({ cwd, testCommand: ["npm", "test"] });

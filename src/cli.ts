@@ -453,6 +453,7 @@ async function dispatch(command: string, args: string[], cwd: string, invoked = 
       agents,
     });
     console.log(`ways installed (${result.files.length} files, agents: ${agents.join(", ") || "none"}). Describe your project in AGENTS.md, commit, and work as usual: \`ways done\` finishes a change.`);
+    for (const warning of result.warnings) console.error(`Warning: ${warning}`);
     return 0;
   }
 

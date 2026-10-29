@@ -4,9 +4,11 @@ Local checks prove content and topology; they cannot stop a direct push, and an 
 
 ## Minimum
 
-1. Run `ways verify --base=<base sha>` in CI on every pull request, with complete Git history (`fetch-depth: 0` on GitHub Actions). It re-runs, from scratch, the base's checks on the head and every criterion verifier of the works the range touched (green on the head, red on each work's base); it fails when the range modifies or deletes an existing test or check file that no closed work had approved or accepted; and it audits the work records (criteria unchanged since open, evidence bound to the commit it was recorded on and to the base's checks, every closed tree equal to its evaluated tree, reviews attested, approvals bound and their signatures valid). With `"enforcement": "enforce"` it also flags commits without a `Harness-Work` trailer.
+1. Run `ways verify --base=<base sha>` in CI on every pull request, with complete Git history (`fetch-depth: 0` on GitHub Actions). It re-runs, from scratch, the base's checks on the head and every criterion verifier of the works the range touched (green on the head, red on each work's base); it fails when the range weakens an existing test or check file (the rule is in [VERIFICATION.md](VERIFICATION.md#what-needs-approval-on-the-verifier-surface)) and no closed work had that version approved or accepted; and it audits the work records (criteria unchanged since open, evidence bound to the commit it was recorded on and to the base's checks, every closed tree equal to its evaluated tree, reviews attested, approvals bound and their signatures valid). With `"enforcement": "enforce"` it also flags commits without a `Harness-Work` trailer.
 2. Make that CI job a required check on the release branch.
 3. Deny direct pushes and force pushes to it; require pull/merge requests.
+
+The repository needs `@develatter/ways` as a dev dependency (`npm i -D @develatter/ways`), committed in `package.json` and the lockfile: the workflow runs `npx --no-install ways`, which fails without it rather than downloading whatever version the registry has. `ways bootstrap` warns when the dependency is missing.
 
 `ways bootstrap` writes `.github/workflows/ways.yml` for GitHub Actions; its core is:
 

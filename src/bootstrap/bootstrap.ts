@@ -26,6 +26,22 @@ export interface BootstrapResult {
   manifest: ManagedManifest;
   /** Every file bootstrap wrote or merged, repository-relative. */
   files: string[];
+  /** What the human should fix for the installation to work in CI, each with the command. */
+  warnings: string[];
+}
+
+export const INSTALL_COMMAND = "npm install --save-dev @develatter/ways --registry=https://npm.pkg.github.com";
+
+/** The CI job runs `npx --no-install ways`, which needs ways in the repository's own dev dependencies. */
+async function dependencyWarnings(root: string): Promise<string[]> {
+  let manifest: { dependencies?: Record<string, unknown>; devDependencies?: Record<string, unknown> };
+  try {
+    manifest = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as typeof manifest;
+  } catch {
+    return [`There is no readable package.json, so the CI job (.github/workflows/ways.yml runs \`npx --no-install ways verify\`) cannot find ways. Run \`npm init -y && ${INSTALL_COMMAND}\` and commit package.json and the lockfile.`];
+  }
+  if (manifest.devDependencies?.["@develatter/ways"] !== undefined || manifest.dependencies?.["@develatter/ways"] !== undefined) return [];
+  return [`package.json does not list @develatter/ways, so the CI job (.github/workflows/ways.yml runs \`npx --no-install ways verify\`) will fail. Run \`${INSTALL_COMMAND}\` and commit package.json and the lockfile.`];
 }
 
 /** Files ways owns and hashes: integrity reports any edit, `ways upgrade` re-renders them. */
@@ -158,5 +174,5 @@ export async function bootstrap(options: BootstrapOptions): Promise<BootstrapRes
     written.push(...result.files, ...result.merged);
   }
   const final = JSON.parse(await readFile(join(root, MANIFEST_PATH), "utf8")) as ManagedManifest;
-  return { manifest: final, files: [...new Set(written)].sort() };
+  return { manifest: final, files: [...new Set(written)].sort(), warnings: await dependencyWarnings(root) };
 }
