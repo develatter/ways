@@ -36,5 +36,5 @@
 - Commit as you go; `npx ways done` checks and closes the change; `npx ways context` shows what is active and the next command.
 - For a delivery with acceptance criteria: `npx ways outcome open <id> --goal="..." --criterion="AC1:..." --verify="AC1:<command>"`.
 - `.ways/work/` is written only by ways; changing an existing test or check needs the human's `npx ways approve`.
-- If the task cannot be done as asked, run `npx ways block "<what is missing; what would unblock it>"` and stop; never weaken a test or check to pass.
+- If the task cannot be done as asked, run `npx ways block "<what is missing; what would unblock it>"` and stop; never weaken a test or check to pass. A question for the human that does not stop you: `npx ways ask "<question>"` (the answer comes back by itself).
 - Learned something durable? `npx ways remember "<fact>" --path=<glob>` and commit it with the change.

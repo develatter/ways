@@ -31,8 +31,8 @@ describe("bootstrap", () => {
     expect(files.some((path) => path.startsWith(".codex/") || path.startsWith(".cursor/"))).toBe(false);
     // pi reads the Agent Skills directory; Claude Code only its own.
     expect(files.filter((path) => path.includes("/skills/")).sort()).toEqual([
-      ".agents/skills/ways-outcome/SKILL.md", ".agents/skills/ways-remember/SKILL.md",
-      ".claude/skills/ways-outcome/SKILL.md", ".claude/skills/ways-remember/SKILL.md",
+      ".agents/skills/ways-orchestrator/SKILL.md", ".agents/skills/ways-outcome/SKILL.md", ".agents/skills/ways-remember/SKILL.md",
+      ".claude/skills/ways-orchestrator/SKILL.md", ".claude/skills/ways-outcome/SKILL.md", ".claude/skills/ways-remember/SKILL.md",
     ]);
     expect(await readFile(join(cwd, "CLAUDE.md"), "utf8")).toBe("@AGENTS.md\n");
     const config = JSON.parse(await readFile(join(cwd, ".ways/config.json"), "utf8"));
