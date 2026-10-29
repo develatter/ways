@@ -24,16 +24,24 @@ describe("integrity", () => {
     expect(await checkIntegrity(await installed())).toEqual([]);
   });
 
-  it("detects a modified managed file", async () => {
+  it("detects a modified managed file, but leaves AGENTS.md to the project", async () => {
     const cwd = await installed();
     await writeFile(join(cwd, "AGENTS.md"), "changed\n");
-    expect((await checkIntegrity(cwd)).map((issue) => issue.code)).toContain("managed-file-modified");
+    expect(await checkIntegrity(cwd)).toEqual([]);
+    await writeFile(join(cwd, ".ways/hooks/prepare-commit-msg"), "#!/bin/sh\nexit 0\n");
+    expect(await checkIntegrity(cwd)).toEqual([expect.objectContaining({ code: "managed-file-modified", path: ".ways/hooks/prepare-commit-msg", message: expect.stringContaining("ways upgrade --apply --overwrite=") })]);
   });
 
   it("verifies adapter settings structurally", async () => {
     const cwd = await installed();
     await writeFile(join(cwd, ".claude/settings.json"), "{}\n");
-    expect((await checkIntegrity(cwd)).map((issue) => issue.code)).toContain("adapter-guard-missing");
+    expect((await checkIntegrity(cwd)).map((issue) => issue.code)).toContain("adapter-statusline-missing");
+  });
+
+  it("tells a 0.2 configuration to upgrade", async () => {
+    const cwd = await installed();
+    await writeFile(join(cwd, ".ways/config.json"), JSON.stringify({ schemaVersion: 1, harnessVersion: "0.2.2", testCommand: ["npm", "test"] }));
+    expect(await checkIntegrity(cwd)).toEqual([expect.objectContaining({ code: "outdated-config", message: expect.stringContaining("ways upgrade --apply") })]);
   });
 
   it("accepts a CLAUDE.md import or a legacy symlink and rejects a file without the import", async () => {

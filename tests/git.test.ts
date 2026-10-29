@@ -41,22 +41,32 @@ describe("GitRepository", () => {
     expect(await git.isMergeCommit()).toBe(false);
   });
 
-  it("creates and reads a commit with canonical trailers", async () => {
-    await writeFile(join(cwd, "work.txt"), "done\n");
-    await git.commit(["work.txt"], "feat: complete exploration", {
-      work: "auth-refresh",
-      phase: "explore",
-      state: "completed",
-    });
+  it("makes a harness commit of only the given paths, with trailers and without hooks", async () => {
+    await git.run(["config", "core.hooksPath", ".hooks"]);
+    await writeFile(join(cwd, "record.json"), "{}\n");
+    await writeFile(join(cwd, "other.txt"), "staged\n");
+    await git.run(["add", "other.txt"]);
+    await git.harnessCommit(["record.json"], "chore(ways): close x", { work: "x", state: "closed" });
     const commit = await git.lastCommit();
-    expect(commit.subject).toBe("feat: complete exploration");
-    expect(commit.trailers).toEqual({ work: "auth-refresh", phase: "explore", state: "completed" });
+    expect(commit.subject).toBe("chore(ways): close x");
+    expect(commit.trailers).toEqual({ work: "x", state: "closed" });
+    expect(await git.run(["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"])).toBe("record.json");
+    expect(await git.dirtyPaths()).toEqual(["other.txt"]);
+  });
+
+  it("lists modified, staged, untracked and renamed paths", async () => {
+    await writeFile(join(cwd, "README.md"), "changed\n");
+    await writeFile(join(cwd, "new file.txt"), "x\n");
+    expect(await git.dirtyPaths()).toEqual(["README.md", "new file.txt"]);
   });
 });
 
 describe("trailers", () => {
-  it("round trips metadata including remediation attempts", () => {
-    const text = formatTrailers({ work: "x", phase: "plan", state: "completed", task: "api", attempt: "1" });
-    expect(parseTrailers(text)).toEqual({ work: "x", phase: "plan", state: "completed", task: "api", attempt: "1" });
+  it("round trip and are read only from the final trailer block", () => {
+    const text = formatTrailers({ work: "x", state: "closed" });
+    expect(text).toBe("Harness-Work: x\nHarness-State: closed");
+    expect(parseTrailers(text)).toEqual({ work: "x", state: "closed" });
+    expect(parseTrailers("Harness-Work: quoted in the body\n\nreal text\n\nHarness-Work: y")).toEqual({ work: "y" });
+    expect(parseTrailers("Harness-Work: early\n\njust a paragraph")).toEqual({});
   });
 });

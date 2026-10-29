@@ -2,6 +2,8 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { GitRepository } from "../src/git/git.js";
+import { indexDir } from "../src/knowledge/indexes.js";
 import { queryKnowledge, queryKnowledgeResult } from "../src/query/query.js";
 
 async function concept(cwd: string, path: string, frontmatter: string, body: string): Promise<void> {
@@ -13,12 +15,14 @@ async function concept(cwd: string, path: string, frontmatter: string, body: str
 describe("queryKnowledge", () => {
   it("uses a lazily-created search index without creating workflow state", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "ways-query-"));
+    await new GitRepository(cwd).run(["init", "-q"]);
     await concept(cwd, "faq/auth.md", "type: faq\nstatus: draft", "# Auth\nTokens use rotation.");
     const hits = await queryKnowledge(cwd, "token rotation");
     expect(hits[0]?.path).toContain("auth.md");
     expect(hits[0]?.score).toBe(2);
     expect(hits[0]?.labels).toEqual(["draft", "unverified"]);
-    expect(JSON.parse(await readFile(join(cwd, ".ways/indexes/search.json"), "utf8")).terms.rotation).toEqual(["faq/auth"]);
+    expect(JSON.parse(await readFile(join(indexDir(cwd), "search.json"), "utf8")).terms.rotation).toEqual(["faq/auth"]);
+    expect(await new GitRepository(cwd).dirtyPaths()).toEqual([".ways/knowledge/faq/auth.md"]);
   });
 
   it("excludes deprecated material and labels auxiliary material", async () => {
@@ -32,7 +36,7 @@ describe("queryKnowledge", () => {
     expect(hits[1]?.labels).toEqual(["draft", "unverified", "roadmap"]);
   });
 
-  it("exposes freshness warnings from the code-tree watermark owner", async () => {
+  it("passes on warnings from a freshness provider", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "ways-query-"));
     await concept(cwd, "faq/auth.md", "type: faq\nstatus: draft", "Token rotation.");
     const freshness = vi.fn(async () => ["memory may be stale for src/auth/**"]);

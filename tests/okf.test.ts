@@ -25,9 +25,16 @@ describe("OKF", () => {
     expect((await inspectOkf(cwd)).issues).toEqual([]);
   });
 
-  it("rejects unverified stable knowledge", async () => {
-    const cwd = await bundle("---\ntype: faq\n---\n\n# Answer\n");
-    expect((await inspectOkf(cwd)).issues.map((issue) => issue.code)).toContain("unverified-stable");
+  it("accepts an unverified concept (queries label it) and only warns on a passed stale_after or a long body", async () => {
+    expect((await inspectOkf(await bundle("---\ntype: faq\n---\n\n# Answer\n"))).issues).toEqual([]);
+    const stale = await inspectOkf(await bundle(`---\ntype: faq\nstale_after: 2020-01-01T00:00:00Z\n---\n\n${"line\n".repeat(20)}`));
+    expect(stale.issues).toEqual([]);
+    expect(stale.warnings.map((warning) => warning.code)).toEqual(["stale-after-passed", "long-concept"]);
+  });
+
+  it("rejects malformed paths and missing local sources", async () => {
+    const result = await inspectOkf(await bundle("---\ntype: faq\npaths: [../outside/**]\nsources:\n  - resource: /missing.ts\n---\n\nx\n"));
+    expect(result.issues.map((issue) => issue.code).sort()).toEqual(["missing-source", "okf-paths"]);
   });
 
   it("allows agent-authored drafts with provenance", async () => {
