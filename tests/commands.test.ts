@@ -2,7 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { run } from "../src/cli.js";
-import { ACTION_BUDGET, actionCount, COMMANDS, README_COMMANDS_END, README_COMMANDS_START, renderReadmeTable } from "../src/commands.js";
+import { ACTION_BUDGET, actionCount, COMMANDS, README_COMMANDS_END, README_COMMANDS_START, renderReadmeTable, renderWikiReference, WIKI_COMMANDS_END, WIKI_COMMANDS_START } from "../src/commands.js";
 
 const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
 const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -102,5 +102,17 @@ describe("command registry", () => {
     const expected = `${README_COMMANDS_START}\n${renderReadmeTable()}\n${README_COMMANDS_END}`;
     if (process.env.UPDATE_README === "1") await writeFile(path, `${readme.slice(0, start)}${expected}${readme.slice(end + README_COMMANDS_END.length)}`);
     else expect(readme.slice(start, end + README_COMMANDS_END.length), "run `UPDATE_README=1 npx vitest run tests/commands.test.ts`").toBe(expected);
+  });
+
+  it("keeps the wiki's command reference generated from the registry", async () => {
+    const path = join(process.cwd(), "docs/wiki/reference/commands.md");
+    const page = await readFile(path, "utf8");
+    const start = page.indexOf(WIKI_COMMANDS_START);
+    const end = page.indexOf(WIKI_COMMANDS_END);
+    expect(start, "docs/wiki/reference/commands.md is missing the commands markers").toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const expected = `${WIKI_COMMANDS_START}\n\n${renderWikiReference()}\n\n${WIKI_COMMANDS_END}`;
+    if (process.env.UPDATE_README === "1") await writeFile(path, `${page.slice(0, start)}${expected}${page.slice(end + WIKI_COMMANDS_END.length)}`);
+    else expect(page.slice(start, end + WIKI_COMMANDS_END.length), "run `UPDATE_README=1 npx vitest run tests/commands.test.ts`, then `ways wiki update --stamp reference/commands.md`").toBe(expected);
   });
 });

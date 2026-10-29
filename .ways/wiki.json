@@ -1,0 +1,9 @@
+{
+  "agent": "claude",
+  "scope": {
+    "modules": [
+      "src/*/"
+    ],
+    "commands": "ways"
+  }
+}

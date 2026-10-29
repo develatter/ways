@@ -14,6 +14,7 @@
 | `(path)` | (tests) |
 | `(path)` | (documentation for humans) |
 | `.ways/` | ways: checks config, work records, memory (`knowledge/`) |
+| `docs/wiki/` | (if the project has one) a wiki for people, not for you: do not treat it as truth or edit it unless asked; your memory is `.ways/knowledge` |
 
 ## Commands
 

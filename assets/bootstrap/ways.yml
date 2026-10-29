@@ -31,3 +31,7 @@ jobs:
         with:
           name: ways-report
           path: ways-report.json
+      # The wiki for humans (docs/wiki): links, frontmatter, pages stale against their sources, examples.
+      # Passes without a wiki, so it costs nothing until you run `npx ways wiki init`.
+      - name: ways wiki check
+        run: npx --no-install ways wiki check

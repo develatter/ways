@@ -20,6 +20,8 @@ jobs:
       - run: npm ci
       # `npm test` builds once through its pretest hook.
       - run: npm run check
+      # The wiki in docs/wiki: links, frontmatter, pages stale against their sources, examples, coverage.
+      - run: node dist/cli.js wiki check
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'

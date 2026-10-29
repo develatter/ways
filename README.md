@@ -16,7 +16,7 @@ npx ways bootstrap --test-command='["npm","test"]'
 git add -A && git commit -m "chore: install ways"
 ```
 
-Bootstrap writes 21 files: `.ways/config.json`, two commit hooks and the agent-hook wrapper, `scripts/check.sh`, a CI job (`.github/workflows/ways.yml`, running `ways verify`), an `AGENTS.md` for you to fill in as a map of your project, a `CLAUDE.md` that imports it, the memory index, and the Claude Code and pi adapters (hooks, three skills, a reviewer agent). Codex and Cursor are available with `--agents=claude,pi,codex,cursor`.
+Bootstrap writes 23 files: `.ways/config.json`, two commit hooks and the agent-hook wrapper, `scripts/check.sh`, a CI job (`.github/workflows/ways.yml`, running `ways verify` and `ways wiki check`), an `AGENTS.md` for you to fill in as a map of your project, a `CLAUDE.md` that imports it, the memory index, and the Claude Code and pi adapters (hooks, three skills, a reviewer and a documentalist agent). Codex and Cursor are available with `--agents=claude,pi,codex,cursor`.
 
 Fill in `AGENTS.md` (what the project is, where things live, the commands): that is the part only you can write.
 
@@ -81,6 +81,16 @@ npx ways serve --open      # or: npx ways serve --demo, to see it with made-up d
 
 A local page (127.0.0.1, with a token in the URL it prints) with a live kanban of every worktree's work across your repositories (Preparing, Working, Verifying, Blocked, Waiting for you, Done), derived from the hooks, the records and `git worktree list`, and an inbox. Agents put questions there with `npx ways ask "<question>"` (or `--wait` for the answer now) and `ways block`; you answer on the page or with `npx ways inbox answer <id> "<answer>"`, and you tell an agent something with *Tell the agent* or `npx ways inbox tell "<instruction>" --work=<id>`. The agent gets each answer or instruction once, at its next prompt, stop or session start. Every inbox command takes `--json`, so an orchestrating agent can run the whole loop. See [docs/CONTROL_PLANE.md](docs/CONTROL_PLANE.md).
 
+**A wiki for people, kept honest.** The memory above is for agents. For humans, `docs/wiki/` is a plain-Markdown wiki (tutorials, guides, reference, explanation; GitHub renders it, nothing to build) that agents never get as truth:
+
+```bash
+npx ways wiki init       # the entry page, the folders, .ways/wiki.json
+npx ways wiki check      # links, frontmatter, examples, coverage, and pages stale against their sources
+npx ways wiki update     # a documentalist agent (claude -p, pi -p or your own command) writes or catches up pages
+```
+
+Each page lists the files it documents and a hash of each from when it was written, so `check` fails (for CI) the day one of them changes. `update` hands the agent a brief of what is stale, missing or broken, lets it write only under `docs/wiki/`, and afterwards fails the run if anything outside it changed. The memory ignores the wiki and cannot cite it, and the documentalist cannot write or commit `.ways/knowledge`. See [docs/WIKI.md](docs/WIKI.md); the wiki of ways itself starts at [docs/wiki](docs/wiki/index.md).
+
 ## What ways guarantees, and what it does not
 
 | Guarantee | How |
@@ -137,6 +147,7 @@ The contract can add a `setup` command and `services` (`{"name", "command", "rea
 | `ways adapter` | List or (re)install agent adapters: claude and pi by default, codex and cursor best effort | `ways adapter list` |
 | `ways upgrade` | Move a repository to this version of ways (including 0.2.x); never overwrites edits silently | `ways upgrade` |
 | `ways hook` | Entry point of the managed Git hooks and the coding-agent hooks (not called by hand) | `ways hook prepare-commit-msg .git/COMMIT_EDITMSG` |
+| `ways wiki` | A wiki for humans in docs/wiki, apart from the agents' memory: create it, check it (links, frontmatter, freshness by source hash, coverage), list stale pages, or launch the documentalist agent to update it | `ways wiki check` |
 | `ways evals` | Run or compare the harness evaluation corpus | `ways evals run --harness=outcome --output=result.json` |
 <!-- commands:end -->
 
@@ -149,6 +160,7 @@ The contract can add a `setup` command and `services` (`{"name", "command", "rea
 | `.ways/work/<id>.json` | One record per outcome (and per change that needed an approval or was blocked): criteria, evidence, review, approval (written only by ways) | yes |
 | `.github/workflows/ways.yml` | The CI job running `ways verify` (written once; yours to adapt) | yes |
 | `.ways/knowledge/` | Memory: short OKF concepts | yes |
+| `docs/wiki/`, `.ways/wiki.json` | The wiki for humans, and its settings (agent, coverage); see [docs/WIKI.md](docs/WIKI.md) | yes |
 | `.ways/hooks/`, `scripts/check.sh` | Managed Git hooks, agent-hook wrapper and check script (hashed in `.ways/manifest.json`) | yes |
 | `.claude/rules/ways-*.md` | Memory as Claude Code path rules (generated; `ways memory index`) | yes |
 | `.git/ways/` | Active work, run log, flaky quarantine, test counts, base-run cache, search index, service logs, context caches, agent sessions, the [event log](docs/EVENTS.md), the [inbox](docs/CONTROL_PLANE.md) and `serve.json` (the board's token, mode 0600) | no |
@@ -173,6 +185,7 @@ The check contract and the memory carry over (coverage globs become `paths:` on 
 ```bash
 npm ci
 npm run check        # typecheck, build and the whole test suite (what CI runs on Node 22 and 24)
+node dist/cli.js wiki check   # the wiki in docs/wiki, which CI also runs: edit a file a page cites and it fails until the page is caught up
 npm run test:e2e     # only the packed-tarball consumer test
 ```
 

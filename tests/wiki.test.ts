@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { COMMANDS } from "../src/commands.js";
 import { run } from "../src/cli.js";
+import { checkWiki } from "../src/wiki/check.js";
 import { blobHash } from "../src/wiki/sources.js";
 import { summarizeSessions } from "../src/serve/board.js";
 import type { WaysEvent } from "../src/events/bus.js";
@@ -295,6 +296,20 @@ describe("coverage", () => {
     expect(result.code).toBe(1);
     expect(result.out).toMatch(/config\s+\.ways\/wiki\.json\s+\.ways\/wiki\.json: "agent" must be "claude", "pi" or "command"/);
     expect(result.out).toMatch(/"scope\.modules" must be an array/);
+  });
+});
+
+describe("the wiki of ways itself", () => {
+  it("has working links, frontmatter, examples and coverage (freshness is CI's `ways wiki check`)", async () => {
+    const report = await checkWiki(process.cwd());
+    expect(report.exists).toBe(true);
+    expect(report.pages).toBeGreaterThanOrEqual(10);
+    expect(report.issues.filter((issue) => issue.code !== "stale").map((issue) => `${issue.code} ${issue.path}: ${issue.message}`)).toEqual([]);
+  });
+
+  it("is checked in CI, and bootstrap gives consumers the same step without failing when there is no wiki", async () => {
+    expect(await readFile(join(process.cwd(), ".github/workflows/ci.yml"), "utf8")).toContain("node dist/cli.js wiki check");
+    expect(await readFile(join(process.cwd(), "assets/bootstrap/ways.yml"), "utf8")).toContain("npx --no-install ways wiki check");
   });
 });
 

@@ -28,11 +28,14 @@ Still open from it: the adversarial corpus has not been run with real models (ta
 
 Still open from it: the round trip is tested with Claude Code and pi hook payloads, not yet with live agents; liveness depends on hook events, and Claude Code only reports guarded and file-writing tools, so a long shell command reads as stalled after 10 minutes; an idle agent gets an answer only at its next prompt; inbox transitions are not in the event bus.
 
+## Done: wiki for humans and the documentalist
+
+`docs/wiki/` in plain Markdown (Diátaxis folders, no generator) whose pages carry the files they document and a hash of each, so `ways wiki check` finds stale pages, broken links and anchors, bad `ways-check` examples and uncovered modules or commands; `ways wiki stale`; `ways wiki update`, which launches a documentalist agent (`claude -p`, `pi -p` or any command) with a brief and a minimal tool set, compares the tree and HEAD afterwards and stamps what it wrote; a session with role `documentalist` on the event bus and the board. The wiki is mechanically apart from the OKF memory: context and indexes ignore it, the role cannot write or commit outside it, and a memory cannot cite it. The wiki of ways itself is `docs/wiki`, checked in CI. See [decision 0009](decisions/0009-wiki-and-documentalist.md) and [docs/WIKI.md](WIKI.md).
+
+Still open from it: the `claude -p` and `pi -p` invocations are tested with fake agents, not yet run against the real binaries; no `wiki.stale` nudge to the inbox when a work closes; example blocks are checked against the registry, not executed; external links are not checked.
+
 ## Next phases and their exit criteria
 
-### Documentalist
-
-- An agent role that writes only under `docs/wiki/`, in plain Markdown for humans and separate from the OKF memory.
-- Pages carry the hashes of the sources they cite, so stale pages are detected mechanically.
+Nothing is committed beyond closing the "still open" items above.
 
 Out of scope for now: a Symphony-style dispatcher, an MCP server, ACP/A2A clients, OTLP, SQLite, remote access, GitHub Issues sync, LLM-generated `AGENTS.md`, and mutation testing by default.
