@@ -1,10 +1,9 @@
-import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { KNOWLEDGE_DIR } from "../domain/constants.js";
 import { matchesAny } from "../memory/glob.js";
-import { headCommitOf, type GitDirs } from "../runtime/runtime.js";
+import { childProcess, fastHash } from "../runtime/lazy.js";
+import { headCommitOf, writeFileAtomic, type GitDirs } from "../runtime/runtime.js";
 
 /**
  * The memory the context brief and the path rules use: every current concept
@@ -38,6 +37,11 @@ interface Snapshot {
 export const FACT_LINES = 15;
 export const FACT_CHARS = 900;
 
+/** Code-unit order. `localeCompare` would load ICU's collator, about 15 ms per hook process. */
+export function ordinal(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 function conceptFiles(top: string): Array<{ path: string; size: number; mtime: number }> {
   const root = join(top, KNOWLEDGE_DIR);
   const found: Array<{ path: string; size: number; mtime: number }> = [];
@@ -62,24 +66,24 @@ function conceptFiles(top: string): Array<{ path: string; size: number; mtime: n
     }
   };
   walk(root, "");
-  return found.sort((a, b) => a.path.localeCompare(b.path));
+  return found.sort((a, b) => ordinal(a.path, b.path));
 }
 
 /** Changes whenever HEAD moves or a concept file is added, removed or edited. */
 export function memoryKey(dirs: GitDirs): string {
-  const hash = createHash("sha256").update(`${headCommitOf(dirs) ?? "unborn"}\n`);
-  for (const file of conceptFiles(dirs.top)) hash.update(`${file.path}\0${file.size}\0${file.mtime}\n`);
-  return hash.digest("hex");
+  const parts = [headCommitOf(dirs) ?? "unborn"];
+  for (const file of conceptFiles(dirs.top)) parts.push(`${file.path}\0${file.size}\0${file.mtime}`);
+  return fastHash(parts.join("\n"));
 }
 
-function cachePath(dirs: GitDirs): string {
-  const worktree = createHash("sha256").update(dirs.top).digest("hex").slice(0, 16);
-  return join(dirs.common, "ways", "context", `memory-${worktree}.json`);
+/** A per-worktree cache file in the shared runtime directory. */
+export function contextCachePath(dirs: GitDirs, name: string): string {
+  return join(dirs.common, "ways", "context", `${name}-${fastHash(dirs.top).slice(0, 16)}.json`);
 }
 
-function git(top: string, args: readonly string[]): Promise<string> {
+export function git(top: string, args: readonly string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile("git", [...args], { cwd: top, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => error ? reject(error) : resolve(stdout));
+    childProcess().execFile("git", [...args], { cwd: top, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => error ? reject(error) : resolve(stdout));
   });
 }
 
@@ -149,7 +153,7 @@ async function rebuild(dirs: GitDirs): Promise<MemoryFact[]> {
  */
 export async function loadMemory(dirs: GitDirs): Promise<MemoryFact[]> {
   const key = memoryKey(dirs);
-  const path = cachePath(dirs);
+  const path = contextCachePath(dirs, "memory");
   try {
     const snapshot = JSON.parse(readFileSync(path, "utf8")) as Snapshot;
     if (snapshot.v === 1 && snapshot.key === key && Array.isArray(snapshot.concepts)) return snapshot.concepts;
@@ -163,10 +167,7 @@ export async function loadMemory(dirs: GitDirs): Promise<MemoryFact[]> {
     return [];
   }
   try {
-    mkdirSync(join(dirs.common, "ways", "context"), { recursive: true });
-    const temporary = `${path}.tmp-${process.pid}`;
-    writeFileSync(temporary, JSON.stringify({ v: 1, key, concepts } satisfies Snapshot), "utf8");
-    renameSync(temporary, path);
+    writeFileAtomic(path, JSON.stringify({ v: 1, key, concepts } satisfies Snapshot));
   } catch {
     // A read-only Git directory only costs the cache.
   }

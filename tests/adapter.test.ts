@@ -55,12 +55,18 @@ describe("claude renderer", () => {
     const once = mergeClaudeSettings({ theme: "dark", hooks: { PreToolUse: [mine, OLD_GUARD], Notification: [{ hooks: [{ type: "command", command: "notify.sh" }] }] } });
     expect(once.notes).toContain("removed the retired ways guard hook");
     expect(once.settings.theme).toBe("dark");
-    const hooks = once.settings.hooks as Record<string, Array<{ matcher?: string; hooks: Array<{ command: string; timeout?: number }> }>>;
+    const hooks = once.settings.hooks as Record<string, Array<{ matcher?: string; hooks: Array<{ command: string; timeout?: number; if?: string; async?: boolean }> }>>;
     expect(Object.keys(hooks).sort()).toEqual([...AGENT_EVENTS, "Notification"].sort());
     expect(hooks.PreToolUse![0]).toEqual(mine);
-    expect(hooks.PreToolUse![1]).toMatchObject({ matcher: "Write|Edit|MultiEdit|NotebookEdit|Bash", hooks: [{ type: "command", command: "\"$CLAUDE_PROJECT_DIR\"/.ways/hooks/agent-hook claude PreToolUse" }] });
-    expect(hooks.PostToolUse![0]?.matcher).toBe("Write|Edit|MultiEdit|NotebookEdit");
-    for (const event of AGENT_EVENTS) expect(hooks[event]!.at(-1)!.hooks[0]!.command).toBe(`"$CLAUDE_PROJECT_DIR"/.ways/hooks/agent-hook claude ${event}`);
+    // The guard runs only on calls that could touch a record or switch the hooks off.
+    expect(hooks.PreToolUse!.slice(1).map((group) => [group.matcher, group.hooks.map((entry) => entry.if)])).toEqual([
+      ["Write|Edit|MultiEdit|NotebookEdit", ["Edit(**/.ways/work/**)", "Write(**/.ways/work/**)"]],
+      ["Bash", ["Bash(*.ways/work*)", "Bash(*WAYS_DISABLE*)", "Bash(git commit *)", "Bash(git -c *)", "Bash(git config *)"]],
+    ]);
+    expect(hooks.PostToolUse![0]).toMatchObject({ matcher: "Write|Edit|MultiEdit|NotebookEdit", hooks: [{ async: true }] });
+    for (const event of AGENT_EVENTS) {
+      for (const entry of hooks[event]!.at(-1)!.hooks) expect(entry).toMatchObject({ type: "command", command: `"$CLAUDE_PROJECT_DIR"/.ways/hooks/agent-hook claude ${event}`, timeout: 10 });
+    }
     expect(hooks.Stop![0]).not.toHaveProperty("matcher");
     expect(mergeClaudeSettings(once.settings).settings).toEqual(once.settings);
     expect(() => mergeClaudeSettings({ hooks: [] })).toThrow(/hooks must contain a JSON object/);

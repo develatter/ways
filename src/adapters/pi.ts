@@ -37,6 +37,7 @@ interface WaysAnswer { context?: string; block?: string; message?: string; notif
 interface Ctx { cwd?: string; hasUI?: boolean; ui?: { setStatus?(key: string, text: string): void; notify?(message: string, level?: string): void }; sessionManager?: { getSessionId?(): string } }
 
 const roots = new Map<string, string | undefined>();
+const FILE_TOOLS = new Set(["read", "edit", "write"]);
 
 function gitRoot(cwd: string): string | undefined {
   if (!roots.has(cwd)) {
@@ -107,11 +108,15 @@ export default function (pi: ExtensionAPI) {
     return context ? { message: { customType: "ways", content: context, display: false } } : undefined;
   });
   on("tool_call", async (event, ctx) => {
+    // The guard only judges calls that could touch a work record or switch the commit hooks off.
+    if (!/\\.ways|WAYS_DISABLE|hookspath/i.test(JSON.stringify(event?.input ?? ""))) return undefined;
     const answer = await waysHook(cwdOf(ctx), "PreToolUse", { session_id: sessionOf(ctx), tool_name: event?.toolName, tool_input: event?.input, tool_use_id: event?.toolCallId });
     return answer.block ? { block: true, reason: answer.block } : undefined;
   });
   on("tool_result", async (event, ctx) => {
     refresh(ctx);
+    // Memory and the event log are about files: other tools cost nothing.
+    if (!FILE_TOOLS.has(String(event?.toolName))) return undefined;
     const answer = await waysHook(cwdOf(ctx), "PostToolUse", { session_id: sessionOf(ctx), tool_name: event?.toolName, tool_input: event?.input, tool_use_id: event?.toolCallId, is_error: event?.isError === true });
     if (!answer.context || !Array.isArray(event?.content)) return undefined;
     return { content: [...event.content, { type: "text", text: answer.context }] };

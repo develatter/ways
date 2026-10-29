@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { KNOWLEDGE_DIR, MANIFEST_PATH } from "../domain/constants.js";
 import { writeAtomic } from "../fs/files.js";
 import { conceptPaths, inspectOkf, isCurrentConcept, type OkfDocument } from "../knowledge/okf.js";
-import { factOf } from "./memory.js";
+import { factOf, ordinal } from "./memory.js";
 
 /**
  * Path-scoped rules for Claude Code, derived from the memory: one
@@ -51,7 +51,7 @@ export function renderRule(document: OkfDocument): RuleFile {
 }
 
 export function renderRules(documents: readonly OkfDocument[]): RuleFile[] {
-  return documents.filter((document) => isCurrentConcept(document) && conceptPaths(document).length > 0).map(renderRule).sort((a, b) => a.path.localeCompare(b.path));
+  return documents.filter((document) => isCurrentConcept(document) && conceptPaths(document).length > 0).map(renderRule).sort((a, b) => ordinal(a.path, b.path));
 }
 
 /** Rules are only written where the Claude Code adapter is installed. */

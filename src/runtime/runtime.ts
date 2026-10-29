@@ -1,9 +1,16 @@
-import { spawnSync } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { isWorkId } from "../domain/constants.js";
 import type { ActiveWork, EarlierRun } from "../domain/types.js";
-import { writeAtomic } from "../fs/files.js";
+import { childProcess } from "./lazy.js";
+
+/** Write-then-rename, synchronously: no `fs/promises` on the hook path. */
+export function writeFileAtomic(path: string, content: string): void {
+  mkdirSync(dirname(path), { recursive: true });
+  const temporary = `${path}.tmp-${process.pid}-${Date.now()}`;
+  writeFileSync(temporary, content, "utf8");
+  renameSync(temporary, path);
+}
 
 /**
  * Runtime data lives inside the Git directory, never in the working tree and
@@ -57,7 +64,7 @@ export function gitDirs(cwd: string): GitDirs {
   if (cached) return cached;
   let dirs = locate(cwd);
   if (!dirs) {
-    const result = spawnSync("git", ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"], { cwd, encoding: "utf8" });
+    const result = childProcess().spawnSync("git", ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"], { cwd, encoding: "utf8" });
     if (result.status !== 0) throw new Error(`Not inside a Git working tree: ${cwd}`);
     const [top, gitDir, common] = result.stdout.trim().split("\n");
     if (!top || !gitDir || !common) throw new Error(`Not inside a Git working tree: ${cwd}`);
@@ -141,7 +148,7 @@ export function readActive(cwd: string): ActiveWork | undefined {
 }
 
 export async function writeActive(cwd: string, active: ActiveWork): Promise<void> {
-  await writeAtomic(activePath(gitDirs(cwd).gitDir), `${JSON.stringify(active, null, 2)}\n`);
+  writeFileAtomic(activePath(gitDirs(cwd).gitDir), `${JSON.stringify(active, null, 2)}\n`);
 }
 
 export function clearActive(cwd: string, id?: string): void {
@@ -196,9 +203,7 @@ export function writeLastRun(cwd: string, id: string, run: LastRun): void {
   const path = lastRunPath(cwd, id);
   mkdirSync(dirname(path), { recursive: true });
   const failures = run.failures.slice(0, LAST_RUN_LINES).map((line) => line.length > LAST_RUN_LINE_CHARS ? `${line.slice(0, LAST_RUN_LINE_CHARS - 1)}…` : line);
-  const temporary = `${path}.tmp-${process.pid}`;
-  writeFileSync(temporary, `${JSON.stringify({ ...run, failures })}\n`, "utf8");
-  renameSync(temporary, path);
+  writeFileAtomic(path, `${JSON.stringify({ ...run, failures })}\n`);
 }
 
 export function readLastRun(cwd: string, id: string): LastRun | undefined {

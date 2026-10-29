@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
 import { appendFileSync, closeSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { fastHash } from "../runtime/lazy.js";
 import type { GitDirs } from "../runtime/runtime.js";
 
 /**
@@ -74,7 +74,7 @@ export function eventsDir(dirs: Pick<GitDirs, "common">): string {
 /** A file-name-safe session key: the id itself when it is plain, else a digest of it. */
 export function sessionKey(session: string): string {
   if (/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(session)) return session;
-  return `s-${createHash("sha256").update(session).digest("hex").slice(0, 32)}`;
+  return `s-${fastHash(session)}`;
 }
 
 export function eventFile(dirs: Pick<GitDirs, "common">, session: string): string {
@@ -202,7 +202,8 @@ export function readAllEvents(dirs: Pick<GitDirs, "common">): WaysEvent[] {
       // Removed meanwhile.
     }
   }
-  return events.sort((a, b) => a.ts.localeCompare(b.ts));
+  // ISO timestamps sort by code unit; localeCompare would load ICU for nothing.
+  return events.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
 }
 
 /** Deletes the oldest session files until the directory is under MAX_FILES and MAX_TOTAL_BYTES. */

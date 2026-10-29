@@ -22,6 +22,13 @@ export interface AgentHookResult {
   exitCode: 0;
 }
 
+/** `WAYS_PROFILE=1` prints milliseconds since process start at each phase, on stderr (never seen by the agent). */
+const PROFILE = process.env.WAYS_PROFILE === "1";
+
+export function mark(phase: string): void {
+  if (PROFILE) process.stderr.write(`ways profile ${performance.now().toFixed(1)} ms ${phase}\n`);
+}
+
 /** Agents whose own path-scoped rules (`.claude/rules`) already load memory when a file is read or edited. */
 const PATH_RULES: ReadonlySet<AgentId> = new Set(["claude", "cursor"]);
 const MAX_TOUCHED = 64;
@@ -62,7 +69,9 @@ const CLEARED: Record<string, string> = {
  */
 async function contextFor(dirs: GitDirs, payload: HookPayload, state: SessionState, full: boolean): Promise<string | undefined> {
   const { buildBrief, renderSections } = await import("../context/brief.js");
+  mark("brief module loaded");
   const brief = await buildBrief(dirs, { touched: touchedPaths(dirs, payload.session) });
+  mark("brief built");
   if (!brief.installed) return undefined;
   const sections = brief.sections.filter((section) => {
     if (section.id.startsWith("memory:")) return !state.memory.includes(section.id.slice("memory:".length));
@@ -119,6 +128,7 @@ const TYPES: Record<AgentEvent, EventType> = {
 
 export async function runAgentHook(event: AgentEvent, agent: AgentId, stdin: string, cwd: string): Promise<AgentHookResult> {
   const started = performance.now();
+  mark(`${event} start`);
   let dirs: GitDirs | undefined;
   let payload: HookPayload = { session: "unknown", stopActive: false };
   let base: Omit<WaysEvent, "result" | "ms" | "ts"> | undefined;
@@ -190,6 +200,7 @@ export async function runAgentHook(event: AgentEvent, agent: AgentId, stdin: str
     const injected = (decision.context ?? "").length + (decision.remind ?? "").length;
     if (result === "ok") result = decision.remind || decision.notify ? "reminded" : decision.context ? "injected" : event === "SessionStart" || event === "UserPromptSubmit" ? "silent" : "ok";
     appendEvent(dirs, { ...base, ts: new Date().toISOString(), result, ms: Math.round(performance.now() - started), ...(paths.length > 0 ? { paths } : {}), ...(detail ? { detail } : {}), ...(injected > 0 ? { chars: injected } : {}) });
+    mark(`${event} done`);
     return { stdout: formatOutput(agent, event, decision), exitCode: 0 };
   } catch (error) {
     try {

@@ -1,12 +1,11 @@
-import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { CONFIG_PATH, isWorkId, WAYS_DIR, WORK_DIR } from "../domain/constants.js";
 import type { Enforcement, WorkRecord } from "../domain/types.js";
-import { currentBranchOf, headCommitOf, readActive, readLastRun, type GitDirs, type LastRun } from "../runtime/runtime.js";
+import { fastHash } from "../runtime/lazy.js";
+import { currentBranchOf, headCommitOf, readActive, readLastRun, writeFileAtomic, type GitDirs, type LastRun } from "../runtime/runtime.js";
 import { isOpen, pending, type Pending } from "../work/policy.js";
-import { loadMemory, safeMatch, type MemoryFact } from "./memory.js";
+import { contextCachePath, git, loadMemory, ordinal, safeMatch, type MemoryFact } from "./memory.js";
 
 /**
  * The context brief: a short, deterministic description of the state an agent
@@ -114,12 +113,6 @@ interface GitFacts {
   fresh: boolean;
 }
 
-function git(top: string, args: readonly string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile("git", [...args], { cwd: top, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => error ? reject(error) : resolve(stdout));
-  });
-}
-
 function statStamp(path: string): string {
   try {
     const stats = statSync(path);
@@ -136,9 +129,8 @@ function statStamp(path: string): string {
  * outside the agent's file tools show up at the next `git add` or commit.
  */
 async function gitFacts(dirs: GitDirs, head: string | undefined, base: string | undefined, input: string | undefined, recordPath: string | undefined, touched: number): Promise<GitFacts> {
-  const key = createHash("sha256").update([head, statStamp(join(dirs.gitDir, "index")), base, input, recordPath, touched].join("\n")).digest("hex");
-  const worktree = createHash("sha256").update(dirs.top).digest("hex").slice(0, 16);
-  const path = join(dirs.common, "ways", "context", `git-${worktree}.json`);
+  const key = fastHash([head, statStamp(join(dirs.gitDir, "index")), base, input, recordPath, touched].join("\n"));
+  const path = contextCachePath(dirs, "git");
   try {
     const cached = readJson(path) as { key?: string; facts?: GitFacts };
     if (cached.key === key && cached.facts) return cached.facts;
@@ -146,7 +138,8 @@ async function gitFacts(dirs: GitDirs, head: string | undefined, base: string | 
     // No cache yet.
   }
   const [status, changed, sinceInput] = await Promise.all([
-    git(dirs.top, ["status", "--porcelain=v1", "-z", "--untracked-files=normal"]).catch(() => ""),
+    // Without --no-optional-locks, status rewrites the index, which would change the cache key on every call.
+    git(dirs.top, ["--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=normal"]).catch(() => ""),
     head && base ? git(dirs.top, ["diff", "--name-only", "--no-renames", base, "HEAD", "--"]).catch(() => "") : Promise.resolve(""),
     head && input ? git(dirs.top, ["diff", "--name-only", "--no-renames", input, "HEAD", "--"]).catch(() => undefined) : Promise.resolve(undefined),
   ]);
@@ -164,10 +157,7 @@ async function gitFacts(dirs: GitDirs, head: string | undefined, base: string | 
     fresh: sinceInput !== undefined && uncommitted.length === 0 && sinceInput.split("\n").filter(Boolean).every((file) => file === recordPath),
   };
   try {
-    mkdirSync(join(dirs.common, "ways", "context"), { recursive: true });
-    const temporary = `${path}.tmp-${process.pid}`;
-    writeFileSync(temporary, JSON.stringify({ key, facts }), "utf8");
-    renameSync(temporary, path);
+    writeFileAtomic(path, JSON.stringify({ key, facts }));
   } catch {
     // The cache is an optimisation.
   }
@@ -191,7 +181,7 @@ export function relevantMemory(concepts: readonly MemoryFact[], inPlay: { touche
     const specificity = Math.max(...concept.paths.map((glob) => glob.split(/[*?]/, 1)[0]!.length));
     scored.push({ concept, score, specificity });
   }
-  scored.sort((a, b) => b.score - a.score || b.specificity - a.specificity || Number(a.concept.stale) - Number(b.concept.stale) || a.concept.path.localeCompare(b.concept.path));
+  scored.sort((a, b) => b.score - a.score || b.specificity - a.specificity || Number(a.concept.stale) - Number(b.concept.stale) || ordinal(a.concept.path, b.concept.path));
   return scored.slice(0, limit).map((entry) => entry.concept);
 }
 

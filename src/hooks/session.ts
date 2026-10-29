@@ -1,8 +1,8 @@
-import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { sessionKey } from "../events/bus.js";
-import type { GitDirs } from "../runtime/runtime.js";
+import { fastHash } from "../runtime/lazy.js";
+import { writeFileAtomic, type GitDirs } from "../runtime/runtime.js";
 
 /**
  * What ways already told one agent session, so hooks stay quiet when nothing
@@ -46,13 +46,9 @@ export function readSession(dirs: Pick<GitDirs, "common">, session: string, agen
 }
 
 export function writeSession(dirs: Pick<GitDirs, "common">, state: SessionState): void {
-  const path = sessionPath(dirs, state.session);
-  mkdirSync(join(dirs.common, "ways", "sessions"), { recursive: true });
-  const temporary = `${path}.tmp-${process.pid}`;
-  writeFileSync(temporary, `${JSON.stringify({ ...state, updatedAt: new Date().toISOString() })}\n`, "utf8");
-  renameSync(temporary, path);
+  writeFileAtomic(sessionPath(dirs, state.session), `${JSON.stringify({ ...state, updatedAt: new Date().toISOString() })}\n`);
 }
 
 export function digest(text: string): string {
-  return createHash("sha256").update(text).digest("hex").slice(0, 16);
+  return fastHash(text).slice(0, 16);
 }

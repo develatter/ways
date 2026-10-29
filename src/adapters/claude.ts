@@ -31,26 +31,35 @@ export function resolveNames(text: string): string {
   return resolveWith(text, SLASH_NAMES);
 }
 
-/** Tools the guard looks at (writes and the shell) and those whose paths are logged (writes). */
-const GUARDED_TOOLS = "Write|Edit|MultiEdit|NotebookEdit|Bash";
+/** Tools whose paths are logged. */
 const WRITE_TOOLS = "Write|Edit|MultiEdit|NotebookEdit";
 const HOOK_TIMEOUT_SECONDS = 10;
 
-function hookGroup(event: string, matcher?: string): Settings {
-  return {
-    ...(matcher ? { matcher } : {}),
-    hooks: [{ type: "command", command: `"$CLAUDE_PROJECT_DIR"/${AGENT_HOOK_PATH} claude ${event}`, timeout: HOOK_TIMEOUT_SECONDS }],
-  };
+/**
+ * The guard only needs to run on calls that could touch a work record or
+ * switch the commit hooks off, so each handler carries an `if` permission
+ * rule (Claude Code evaluates it before starting a process; it is
+ * best-effort, and runs the hook when it cannot tell). Every other tool call
+ * costs nothing. The commit hook stays the guarantee either way.
+ */
+const GUARD_IF: Readonly<Record<string, readonly string[]>> = {
+  [WRITE_TOOLS]: ["Edit(**/.ways/work/**)", "Write(**/.ways/work/**)"],
+  Bash: ["Bash(*.ways/work*)", "Bash(*WAYS_DISABLE*)", "Bash(git commit *)", "Bash(git -c *)", "Bash(git config *)"],
+};
+
+function handler(event: string, extra: Settings = {}): Settings {
+  return { type: "command", command: `"$CLAUDE_PROJECT_DIR"/${AGENT_HOOK_PATH} claude ${event}`, timeout: HOOK_TIMEOUT_SECONDS, ...extra };
 }
 
 /** The hook groups ways adds to `.claude/settings.json`, by event. */
 export const CLAUDE_HOOKS: Readonly<Record<string, Settings[]>> = {
-  SessionStart: [hookGroup("SessionStart")],
-  UserPromptSubmit: [hookGroup("UserPromptSubmit")],
-  PreToolUse: [hookGroup("PreToolUse", GUARDED_TOOLS)],
-  PostToolUse: [hookGroup("PostToolUse", WRITE_TOOLS)],
-  Stop: [hookGroup("Stop")],
-  SessionEnd: [hookGroup("SessionEnd")],
+  SessionStart: [{ hooks: [handler("SessionStart")] }],
+  UserPromptSubmit: [{ hooks: [handler("UserPromptSubmit")] }],
+  PreToolUse: Object.entries(GUARD_IF).map(([matcher, rules]) => ({ matcher, hooks: rules.map((rule) => handler("PreToolUse", { if: rule })) })),
+  // Logging only: in the background, so an edit never waits for it.
+  PostToolUse: [{ matcher: WRITE_TOOLS, hooks: [handler("PostToolUse", { async: true })] }],
+  Stop: [{ hooks: [handler("Stop")] }],
+  SessionEnd: [{ hooks: [handler("SessionEnd")] }],
 };
 
 /** A hook group whose every command is the ways agent hook. */

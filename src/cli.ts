@@ -1,10 +1,8 @@
 #!/usr/bin/env node
 
-import { realpathSync } from "node:fs";
+import { fstatSync, readFileSync, realpathSync, writeSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
-import { actionCount, findCommand, renderCommandHelp, renderOverview } from "./commands.js";
-import { HARNESS_NAME, HARNESS_VERSION } from "./version.js";
 
 /*
  * Modules load per command: `ways hook` runs on every commit and must not pay
@@ -55,6 +53,10 @@ function jsonOption(args: readonly string[], name: string): unknown {
 
 export async function run(argv: readonly string[], cwd = process.cwd()): Promise<number> {
   const [command, ...args] = argv;
+  // Agent hooks run once per tool call: they skip the registry and everything else.
+  if (command === "hook" && args[0] !== undefined && /^[A-Z]/.test(args[0])) return dispatch(command, args, cwd);
+  const { findCommand, renderCommandHelp, renderOverview } = await import("./commands.js");
+  const { HARNESS_NAME, HARNESS_VERSION } = await import("./version.js");
 
   if (command === "--version" || command === "-v" || command === "version") {
     console.log(HARNESS_VERSION);
@@ -88,11 +90,19 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
   }
 }
 
-async function readStdin(): Promise<string> {
-  if (process.stdin.isTTY) return "";
-  const chunks: Buffer[] = [];
-  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
-  return Buffer.concat(chunks).toString("utf8");
+/**
+ * The hook payload, read from descriptor 0 directly: touching `process.stdin`
+ * (or `process.stdout`) builds a stream and loads `net`, a few milliseconds on
+ * every agent event.
+ */
+function readStdin(): string {
+  try {
+    if (fstatSync(0).isCharacterDevice()) return "";
+    return readFileSync(0, "utf8");
+  } catch {
+    // Closed or unreadable stdin: an empty payload.
+    return "";
+  }
 }
 
 async function dispatch(command: string, args: string[], cwd: string): Promise<number> {
@@ -103,8 +113,8 @@ async function dispatch(command: string, args: string[], cwd: string): Promise<n
       const agent = option(args, "--agent") ?? "claude";
       if (!isAgentId(agent)) throw new Error(`--agent must be claude, pi, codex or cursor, got "${agent}"`);
       const { runAgentHook } = await import("./hooks/agent.js");
-      const result = await runAgentHook(name, agent, await readStdin(), cwd);
-      process.stdout.write(result.stdout);
+      const result = await runAgentHook(name, agent, readStdin(), cwd);
+      if (result.stdout) writeSync(1, result.stdout);
       return result.exitCode;
     }
     if ((name !== "prepare-commit-msg" && name !== "commit-msg") || !messagePath) {
@@ -338,9 +348,6 @@ async function dispatch(command: string, args: string[], cwd: string): Promise<n
   console.error(`Unknown command: ${command}. Run \`ways --help\` to list the commands.`);
   return 1;
 }
-
-/** Exposed for the registry test. */
-export const CLI_ACTIONS = actionCount;
 
 function invokedDirectly(): boolean {
   if (!process.argv[1]) return false;

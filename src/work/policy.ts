@@ -1,5 +1,5 @@
 import type { Approval, Evidence, FindingSeverity, Review, WorkRecord } from "../domain/types.js";
-import { sha256, stableJson } from "../fs/files.js";
+import { sha256, stableJson } from "../fs/digest.js";
 
 /**
  * What a record still needs before it closes, as pure functions over the
