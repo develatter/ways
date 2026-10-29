@@ -35,7 +35,7 @@ describe("the PreToolUse guard", () => {
     const write = (role: string, path: string): ReturnType<typeof guard> => guard({ tool: "Write", toolInput: { file_path: path }, top: TOP, cwd: TOP, enforcement: "observe", role });
     expect(write("documentalist", "docs/wiki/a.md")).toEqual({ paths: ["docs/wiki/a.md"] });
     expect(write("documentalist", ".ways/knowledge/x.md")).toMatchObject({ code: "role-scope", deny: expect.stringMatching(/outside docs\/wiki\/.*the documentalist/) });
-    for (const allowed of [".ways/map-notes.json", ".ways/knowledge/conventions/x.md", ".ways/agents-proposal.md", "MAP.md"]) expect(write("onboarder", allowed), allowed).toEqual({ paths: [allowed] });
+    for (const allowed of [".ways/map-notes.json", ".ways/knowledge/conventions/x.md", ".ways/agents-proposal.md", ".ways/checks.json", "MAP.md"]) expect(write("onboarder", allowed), allowed).toEqual({ paths: [allowed] });
     for (const refused of ["src/a.ts", "AGENTS.md", ".ways/config.json", "docs/wiki/a.md"]) expect(write("onboarder", refused), refused).toMatchObject({ code: "role-scope", deny: expect.stringMatching(/the onboarder/) });
     expect(guard({ tool: "Bash", toolInput: { command: "echo x > src/a.ts" }, top: TOP, cwd: TOP, enforcement: "observe", role: "onboarder" })).toMatchObject({ code: "role-scope" });
     expect(guard({ tool: "Bash", toolInput: { command: "export WAYS_DISABLE=1" }, top: TOP, cwd: TOP, enforcement: "observe", role: "onboarder" })).toMatchObject({ code: "hooks-bypass" });
