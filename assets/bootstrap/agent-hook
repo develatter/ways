@@ -6,7 +6,12 @@
 agent="$1"
 event="$2"
 if [ -n "${WAYS_CLI:-}" ]; then exec node "$WAYS_CLI" hook "$event" --agent="$agent"; fi
-root="$(cd "$(dirname "$0")/../.." && pwd)"
+# The adapters call it by its absolute path: the root comes without forking a subshell.
+case "$0" in
+  */.ways/hooks/agent-hook) root="${0%/.ways/hooks/agent-hook}" ;;
+  .ways/hooks/agent-hook) root="." ;;
+  *) root="$(cd "$(dirname "$0")/../.." && pwd)" ;;
+esac
 cli="$root/node_modules/@develatter/ways/dist/cli.js"
 if [ ! -f "$cli" ]; then
   main="$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"

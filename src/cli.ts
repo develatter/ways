@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import { fstatSync, readFileSync, realpathSync, writeSync } from "node:fs";
+import * as nodeModule from "node:module";
+import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -8,6 +10,22 @@ import { pathToFileURL } from "node:url";
  * Modules load per command: `ways hook` runs on every commit and must not pay
  * for schemas, evals or adapters it never uses.
  */
+
+/**
+ * V8's compile cache (Node 22.1+) for the modules each command imports: on the
+ * agent hooks it saves most of what ways costs over Node's own start-up. It
+ * lives in the user's cache directory, outside any repository; anything that
+ * goes wrong only means compiling as usual.
+ */
+function enableCompileCache(): void {
+  const enable = (nodeModule as { enableCompileCache?: (dir?: string) => unknown }).enableCompileCache;
+  if (typeof enable !== "function" || process.env.NODE_DISABLE_COMPILE_CACHE) return;
+  try {
+    enable(process.env.NODE_COMPILE_CACHE || join(process.env.XDG_CACHE_HOME || join(homedir(), ".cache"), "ways", "compile-cache"));
+  } catch {
+    // An unwritable cache directory: no cache.
+  }
+}
 
 function option(args: readonly string[], name: string): string | undefined {
   return args.find((arg) => arg.startsWith(`${name}=`))?.slice(name.length + 1);
@@ -461,6 +479,7 @@ function invokedDirectly(): boolean {
 }
 
 if (invokedDirectly()) {
+  enableCompileCache();
   run(process.argv.slice(2)).then((code) => {
     process.exitCode = code;
   }).catch((error: unknown) => {
