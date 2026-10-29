@@ -1,67 +1,29 @@
 #!/usr/bin/env node
 
 import { realpathSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { isAbsolute, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
-import { installAdapter, PROVIDERS } from "./adapters/install.js";
-import { bootstrap } from "./bootstrap/bootstrap.js";
-import { runChecks } from "./check/check.js";
-import { findCommand, renderCommandHelp, renderOverview } from "./commands.js";
-import { effectiveMemoryConfig, loadConfig } from "./config/config.js";
-import { runCommitMsgHook } from "./hooks/hook.js";
-import { checkHistory } from "./integrity/history.js";
-import { stableJson, writeAtomic } from "./fs/files.js";
-import { HARNESS_NAME, HARNESS_VERSION } from "./index.js";
-import { writeIndexes } from "./knowledge/indexes.js";
-import type { MemoryState, ReconciliationEvidence } from "./memory/model.js";
-import { inspectOkf } from "./knowledge/okf.js";
-import { MEMORY_TIERS, type MemoryTier, type NamedChecksConfig } from "./domain/types.js";
-import {
-  inspectReconciliationCandidate,
-  validateBackSyncMerge,
-  validatePublicationMerge,
-  validateReconciliationEvidence,
-  type ReconciliationRequest,
-} from "./memory/reconciliation.js";
-import {
-  commitMemory,
-  completeDiscovery,
-  discoveryReviewDigest,
-  MEMORY_STATE_PATH,
-  memoryCommitReviewDigest,
-  requestDiscovery,
-} from "./memory/workflow.js";
-import { buildContext, renderContext } from "./context/context.js";
-import { queryKnowledgeResult } from "./query/query.js";
-import { adoptHead, diagnose, restoreStateFromHead, rollbackToLastGate } from "./repair/repair.js";
-import { projectStatus, readStatus, statusMatches } from "./state/status.js";
-import { loadState } from "./state/store.js";
-import { abandonPlan, finishPlan, promotePlan, proposePlan, startPlan } from "./work/plan.js";
-import { cancelQuick, finishQuick, startQuick } from "./work/quick.js";
-import { approveInteractively } from "./work/approve.js";
-import { approveOutcomeInteractively, outcomeApprovalStatus, parseApprovalPolicy } from "./work/outcome-approvals.js";
-import { reviewBlocks, reviewDigest, reviewNotes, submitReview } from "./work/review.js";
-import { advanceSdd, downgradeSdd, SDD_DEPRECATION, startSdd } from "./work/sdd.js";
-import { formatCheckResults } from "./work/outcome-evaluation.js";
-import { effectiveExecutionPolicy, parseExecutionPolicy } from "./work/outcome-policy.js";
-import { cancelOutcome, closeOutcome, evaluateOutcome, openOutcome, outcomeMemoryReviewDigest, parseCriterion, remediateOutcome, submitOutcomeMemoryReview } from "./work/outcome.js";
-import { EVALUATION_MODES, type EvaluationMode } from "./work/outcome-evaluation-policy.js";
-import { remediateSdd } from "./work/remediation.js";
-import { recordValidationFailure } from "./work/validation-failure.js";
-import { addTask, integrateTask, prepareTask } from "./work/tasks.js";
-import { applyUpgrade, planUpgrade } from "./upgrade/upgrade.js";
-import { runEvals } from "./evals/runner.js";
-import { commandAdapter, fakeAdapter } from "./evals/adapters.js";
-import { compareResultFiles, renderComparisonMarkdown } from "./evals/compare.js";
-import { DEFAULT_OUTCOME_POLICY, HARNESS_LABELS, type HarnessLabel, type OutcomeEvalPolicy } from "./evals/types.js";
+import { actionCount, findCommand, renderCommandHelp, renderOverview } from "./commands.js";
+import { HARNESS_NAME, HARNESS_VERSION } from "./version.js";
+
+/*
+ * Modules load per command: `ways hook` runs on every commit and must not pay
+ * for schemas, evals or adapters it never uses.
+ */
 
 function option(args: readonly string[], name: string): string | undefined {
   return args.find((arg) => arg.startsWith(`${name}=`))?.slice(name.length + 1);
 }
 
-function options(args: readonly string[], name: string): string[] {
-  return args.filter((arg) => arg.startsWith(`${name}=`)).map((arg) => arg.slice(name.length + 1));
+/** Every `--name=value`, and `--name value` when `spaced` is set. */
+function options(args: readonly string[], name: string, spaced = false): string[] {
+  const values: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!;
+    if (arg.startsWith(`${name}=`)) values.push(arg.slice(name.length + 1));
+    else if (spaced && arg === name && args[index + 1] !== undefined) values.push(args[++index]!);
+  }
+  return values;
 }
 
 function requiredOption(args: readonly string[], name: string): string {
@@ -70,17 +32,25 @@ function requiredOption(args: readonly string[], name: string): string {
   return value;
 }
 
+function choice<T extends string>(args: readonly string[], name: string, allowed: readonly T[]): T | undefined {
+  const value = option(args, name);
+  if (value === undefined) return undefined;
+  if (!(allowed as readonly string[]).includes(value)) throw new Error(`${name} must be ${allowed.join(" or ")}, got "${value}"`);
+  return value as T;
+}
+
 function userPath(cwd: string, path: string): string {
   return isAbsolute(path) ? path : join(cwd, path);
 }
 
-async function readJson<T>(cwd: string, path: string): Promise<T> {
-  return JSON.parse(await readFile(isAbsolute(path) ? path : join(cwd, path), "utf8")) as T;
-}
-
-function printIssues(issues: readonly { code: string; path: string; message: string }[]): number {
-  for (const issue of issues) console.error(`${issue.code}: ${issue.path}: ${issue.message}`);
-  return issues.length === 0 ? 0 : 1;
+function jsonOption(args: readonly string[], name: string): unknown {
+  const value = option(args, name);
+  if (value === undefined) return undefined;
+  try {
+    return JSON.parse(value);
+  } catch {
+    throw new Error(`${name} must be JSON, got ${value}`);
+  }
 }
 
 export async function run(argv: readonly string[], cwd = process.cwd()): Promise<number> {
@@ -91,16 +61,12 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
     return 0;
   }
 
-  if (command === "--help" || command === "-h" || command === undefined) {
+  if (command === "--help" || command === "-h" || command === undefined || (command === "help" && args[0] === undefined)) {
     process.stdout.write(renderOverview(HARNESS_NAME, HARNESS_VERSION));
     return 0;
   }
 
   const helpTarget = command === "help" ? args[0] : command;
-  if (command === "help" && helpTarget === undefined) {
-    process.stdout.write(renderOverview(HARNESS_NAME, HARNESS_VERSION));
-    return 0;
-  }
   if (command === "help" || args.includes("--help") || args[0] === "-h") {
     const spec = helpTarget === undefined ? undefined : findCommand(helpTarget);
     if (!spec) {
@@ -123,219 +89,155 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
 }
 
 async function dispatch(command: string, args: string[], cwd: string): Promise<number> {
-
-  if (command === "upgrade") {
-    const plan = await planUpgrade(cwd);
-    if (!args.includes("--apply")) {
-      console.log(`Upgrade ${plan.from} -> ${plan.to}`);
-      for (const path of plan.modifiedManagedFiles) console.log(`- [ ] overwrite ${path}`);
-      for (const note of plan.activeWork) console.log(`- ${note}`);
-      for (const issue of plan.incompatible) console.error(`incompatible: ${issue}`);
-      return plan.incompatible.length === 0 ? 0 : 1;
-    }
-    const approved = args.includes("--overwrite-all") ? new Set(["*"]) : new Set(args.filter((arg) => arg.startsWith("--overwrite=")).map((arg) => arg.slice(12)));
-    await applyUpgrade(cwd, approved);
-    for (const note of plan.activeWork) console.log(`- ${note}`);
-    console.log(`Harness upgraded to ${plan.to}.`);
-    return 0;
-  }
-
-  if (command === "repair") {
-    const [strategy] = args;
-    if (!strategy || strategy === "diagnose") {
-      const result = await diagnose(cwd);
-      console.log(result.message);
-      return result.consistent ? 0 : 1;
-    }
-    if (strategy === "adopt-head") {
-      await adoptHead(cwd);
-      console.log("State adopted from certified HEAD history.");
-      return 0;
-    }
-    if (strategy === "restore-state") {
-      await restoreStateFromHead(cwd);
-      console.log("State restored from HEAD.");
-      return 0;
-    }
-    if (strategy === "last-gate") {
-      console.log(`Rolled back to ${await rollbackToLastGate(cwd, args.includes("--discard"))}`);
-      return 0;
-    }
-    throw new Error("Usage: ways repair [diagnose|adopt-head|restore-state|last-gate --discard]");
-  }
-
-  if (command === "context") {
-    const packet = await buildContext(cwd);
-    process.stdout.write(args.includes("--json") ? stableJson(packet) : renderContext(packet));
-    return 0;
-  }
-
-  if (command === "status") {
-    const state = await loadState(cwd);
-    if (args.includes("--json")) {
-      const artifact = await readStatus(cwd);
-      const summary = statusMatches(artifact, state) ? artifact : projectStatus(state);
-      console.log(JSON.stringify(state?.mode === "outcome" ? { ...summary, approvals: await outcomeApprovalStatus(cwd, state) } : summary, null, 2));
-      return 0;
-    }
-    console.log(state ? JSON.stringify(state, null, 2) : "No active mutating work.");
-    if (state?.mode === "outcome") {
-      const approvals = await outcomeApprovalStatus(cwd, state);
-      console.log(`Approval policy: ${approvals.policy === "none" ? "none" : approvals.policy.join(", ")}`);
-      for (const entry of approvals.checkpoints) {
-        console.log(entry.status === "approved" ? `Approved: ${entry.checkpoint}` : `Human action required: ${entry.reason}`);
-      }
-    }
-    return 0;
-  }
-
   if (command === "hook") {
     const [name, messagePath] = args;
-    if (name !== "commit-msg" || !messagePath) throw new Error("Usage: ways hook commit-msg <message-file>");
-    const verdict = await runCommitMsgHook(cwd, messagePath);
-    if (!verdict.accepted) console.error(`ways: ${verdict.reason}`);
+    if ((name !== "prepare-commit-msg" && name !== "commit-msg") || !messagePath) throw new Error("Usage: ways hook prepare-commit-msg|commit-msg <message-file>");
+    const { commitMsg, prepareCommitMsg } = await import("./hooks/hook.js");
+    const verdict = await (name === "prepare-commit-msg" ? prepareCommitMsg : commitMsg)(cwd, messagePath);
+    if (verdict.message) console.error(verdict.message);
     return verdict.accepted ? 0 : 1;
   }
 
-  if (command === "review") {
-    const [action, path] = args;
-    if (action === "submit" && path) {
-      const result = await submitReview(cwd, path);
-      console.log(`Review recorded: ${result.verdict}`);
-      const blockers = reviewBlocks(result);
-      if (blockers.length > 0) console.log(`Blocking: ${blockers.join(", ")}; the work cannot close until they are fixed and a fresh review passes.`);
-      for (const note of reviewNotes(result)) console.log(`Non-blocking finding ${note}`);
-      return 0;
-    }
-    if (action === "digest") {
-      console.log(await reviewDigest(cwd));
-      return 0;
-    }
-    throw new Error("Usage: ways review submit <review.json> | digest");
-  }
-
-  if (command === "approve") {
-    if ((await loadState(cwd))?.mode === "outcome") {
-      const record = await approveOutcomeInteractively(cwd, args[0]);
-      console.log(`Approved ${record.checkpoint} of ${record.workId} attempt ${record.attempt} as ${record.approvedBy}.`);
-      return 0;
-    }
-    const record = await approveInteractively(cwd);
-    console.log(`Approved ${record.phase} of ${record.workId} as ${record.approvedBy}.`);
+  if (command === "status") {
+    const { buildStatus, renderStatus } = await import("./work/status.js");
+    const packet = await buildStatus(cwd);
+    process.stdout.write(args.includes("--json") ? `${JSON.stringify(packet, null, 2)}\n` : renderStatus(packet));
     return 0;
   }
 
-  if (command === "task") {
-    const [action, id] = args;
-    if (action === "add" && id) {
-      const title = args.find((arg) => arg.startsWith("--title="))?.slice(8) ?? "";
-      const dependencies = args.find((arg) => arg.startsWith("--depends="))?.slice(10).split(",").filter(Boolean) ?? [];
-      console.log(JSON.stringify(await addTask(cwd, id, title, dependencies), null, 2));
-      return 0;
-    }
-    if (action === "prepare" && id) {
-      console.log(JSON.stringify(await prepareTask(cwd, id), null, 2));
-      return 0;
-    }
-    if (action === "integrate" && id) {
-      const commits = args.find((arg) => arg.startsWith("--commits="))?.slice(10).split(",").filter(Boolean) ?? [];
-      console.log(JSON.stringify(await integrateTask(cwd, id, commits), null, 2));
-      return 0;
-    }
-    throw new Error("Usage: ways task add <id> --title=<text> [--depends=a,b] | prepare <id> | integrate <id> --commits=a,b");
+  if (command === "start") {
+    const { startChange } = await import("./work/work.js");
+    const active = await startChange(cwd, args.find((arg) => !arg.startsWith("--")));
+    console.log(`Change ${active.id} started at ${active.base.slice(0, 12)}. Commit as you go; run \`ways done\` when it is finished.`);
+    return 0;
   }
 
   if (command === "outcome") {
     const [action, id] = args;
-    const usage = "Usage: ways outcome open <id> --goal=<text> --criterion=<ID>:<text>... [--memory=none|normal|high] [--evaluation=independent|self] [--isolation=required|optional] [--parallel=allowed|disabled] [--approvals=none|close|close,remediate] | evaluate | remediate --reason=<text> | memory-review digest | memory-review submit <review.json> | close | cancel";
-    if (action === "open" && id) {
-      const criteria = options(args, "--criterion").map(parseCriterion);
-      const memory = args.find((arg) => arg.startsWith("--memory="))?.slice(9) ?? "normal";
-      if (!(MEMORY_TIERS as readonly string[]).includes(memory)) throw new Error("--memory must be none, normal or high");
-      const evaluation = args.find((arg) => arg.startsWith("--evaluation="))?.slice(13) ?? "independent";
-      if (!(EVALUATION_MODES as readonly string[]).includes(evaluation)) throw new Error("--evaluation must be independent or self");
-      const execution = parseExecutionPolicy(args);
-      const approvals = parseApprovalPolicy(args.find((arg) => arg.startsWith("--approvals="))?.slice(12) ?? "none");
-      await openOutcome(cwd, id, requiredOption(args, "--goal"), criteria, memory as MemoryTier, evaluation as EvaluationMode, execution, approvals);
-      const { isolation, parallel } = effectiveExecutionPolicy(execution);
-      console.log(`Outcome ${id} opened with ${criteria.length} acceptance criteria, ${memory} memory assurance, ${evaluation} evaluation, ${isolation} isolation, parallelism ${parallel} and ${approvals.length > 0 ? `human approval of ${approvals.join(", ")}` : "no human approvals"}; execute${isolation === "required" ? " through tasks" : ""}, then run ways outcome evaluate.`);
-      return 0;
-    }
-    if (action === "memory-review" && id === "digest") {
-      console.log(await outcomeMemoryReviewDigest(cwd));
-      return 0;
-    }
-    if (action === "memory-review" && id === "submit" && args[2]) {
-      const result = await submitOutcomeMemoryReview(cwd, args[2]);
-      console.log(`Memory review recorded: ${result.verdict}`);
-      return 0;
-    }
-    if (action === "evaluate") {
-      const { commit, evaluation } = await evaluateOutcome(cwd);
-      console.log(`Evaluation passed on ${evaluation.inputCommit.slice(0, 12)}; execution certified: ${commit}. Obtain an independent review of \`ways review digest\` unless the work was opened with --evaluation=self.`);
-      console.log(["Check results:", ...formatCheckResults(evaluation.checks)].join("\n"));
-      return 0;
-    }
-    if (action === "remediate") {
-      console.log(`Remediation attempt opened: ${await remediateOutcome(cwd, requiredOption(args, "--reason"))}. Fix it through new tasks, then run ways outcome evaluate.`);
-      return 0;
-    }
-    if (action === "close") {
-      console.log(`Outcome closed: ${await closeOutcome(cwd)}`);
-      return 0;
-    }
-    if (action === "cancel") {
-      console.log(`Outcome cancelled: ${await cancelOutcome(cwd)}`);
-      return 0;
-    }
-    throw new Error(usage);
+    if (action !== "open" || !id || id.startsWith("--")) throw new Error("Usage: ways outcome open <id> --goal=<text> --criterion=<ID>:<text>... [--verify=<ID>:<command>]... [--strength=<ID>:<strength>]... [--review=required|none] [--approval=required|none]");
+    const { openOutcome } = await import("./work/work.js");
+    const review = choice(args, "--review", ["required", "none"] as const);
+    const approval = choice(args, "--approval", ["required", "none"] as const);
+    const record = await openOutcome(cwd, id, {
+      goal: requiredOption(args, "--goal"),
+      criteria: options(args, "--criterion"),
+      verify: options(args, "--verify"),
+      strength: options(args, "--strength"),
+      ...(review ? { review } : {}),
+      ...(approval ? { approval } : {}),
+    });
+    const weak = record.criteria.filter((criterion) => criterion.strength === "review-only").map((criterion) => criterion.id);
+    console.log(`Outcome ${id} opened with ${record.criteria.length} criteria (review ${record.policy.review}, human approval ${record.policy.approval}).`);
+    if (weak.length > 0) console.log(`No executable verifier for ${weak.join(", ")}: they are review-only, so an independent review is required. Add --verify=<ID>:<command> when a check exists.`);
+    console.log("Implement and commit as you go; run `ways done` when it is finished.");
+    return 0;
   }
 
-  if (command === "sdd") {
-    const [action, id] = args;
-    if (action === "start" && id) {
-      const profile = args.includes("--supervised") ? "supervised" : "autonomous";
-      const execution = args.includes("--delegated") ? "delegated" : "inline";
-      console.error(SDD_DEPRECATION);
-      const state = await startSdd(cwd, id, profile, execution);
-      console.log(`SDD started at ${state.phase} (${profile}, ${execution}).`);
+  if (command === "done") {
+    const { done } = await import("./work/work.js");
+    const message = option(args, "--message");
+    const result = await done(cwd, message === undefined ? {} : { message });
+    const { printDone } = await import("./work/report.js");
+    printDone(result);
+    return result.status === "failed" ? 1 : 0;
+  }
+
+  if (command === "review") {
+    const [action, path] = args;
+    if (action !== "submit" || !path) throw new Error("Usage: ways review submit <review.json>");
+    const { submitReview } = await import("./work/work.js");
+    const result = await submitReview(cwd, userPath(cwd, path));
+    console.log(result.blockers.length > 0 ? `Review recorded; it blocks: ${result.blockers.join(", ")}. Fix them, commit, run \`ways done\` and get a fresh review.` : "Review recorded: pass.");
+    for (const note of result.notes) console.log(`  non-blocking ${note}`);
+    if (result.status === "closed") console.log("Work closed.");
+    else if (result.pending.approval) console.log(`Human approval needed (${result.pending.approval}): ask the human to run \`ways approve\` in their own terminal.`);
+    return 0;
+  }
+
+  if (command === "approve") {
+    const { approve } = await import("./work/work.js");
+    const result = await approve(cwd);
+    console.log(result.status === "closed" ? "Approved; work closed." : "Approved.");
+    return 0;
+  }
+
+  if (command === "cancel") {
+    const { cancel } = await import("./work/work.js");
+    const result = await cancel(cwd);
+    console.log(`Work ${result.id} cancelled${result.commit ? "; its record is marked cancelled" : ""}. Commits are left as they are.`);
+    return 0;
+  }
+
+  if (command === "check") {
+    if (args.includes("--history")) {
+      const { checkHistory } = await import("./integrity/history.js");
+      const since = option(args, "--since");
+      const to = option(args, "--to");
+      const issues = await checkHistory(cwd, { ...(since ? { since } : {}), ...(to ? { to } : {}) });
+      for (const issue of issues) console.error(`${issue.code}: ${issue.path}: ${issue.message}`);
+      if (issues.length > 0) return 1;
+      console.log("History checks passed.");
       return 0;
     }
-    if (action === "advance") {
-      console.log(`SDD gate committed: ${await advanceSdd(cwd)}`);
+    const { failedCheckDetails, runChecks } = await import("./check/check.js");
+    const result = await runChecks(cwd, { integrityOnly: args.includes("--integrity-only"), services: args.includes("--with-services") });
+    for (const issue of result.issues) console.error(`${issue.code}: ${issue.path}: ${issue.message}`);
+    for (const failure of failedCheckDetails(result)) console.error(failure);
+    if (!result.passed) return 1;
+    console.log("Checks passed.");
+    return 0;
+  }
+
+  if (command === "remember") {
+    const fact = args.filter((arg, index) => !arg.startsWith("--") && args[index - 1] !== "--path").join(" ");
+    const { remember, MEMORY_TYPES } = await import("./memory/memory.js");
+    const type = choice(args, "--type", Object.keys(MEMORY_TYPES) as Array<keyof typeof MEMORY_TYPES>);
+    const id = option(args, "--id");
+    const result = await remember(cwd, fact, { paths: options(args, "--path", true), ...(type ? { type } : {}), ...(id ? { id } : {}) });
+    console.log(`Remembered in ${result.path}; commit it with the change that taught it.`);
+    for (const warning of result.warnings) console.log(`  note: ${warning}`);
+    return 0;
+  }
+
+  if (command === "memory") {
+    const [action] = args;
+    if (action === "index") {
+      const { writeIndexes } = await import("./knowledge/indexes.js");
+      const indexes = await writeIndexes(cwd);
+      console.log(`Indexed ${indexes.catalog.documents.length} concepts.`);
       return 0;
     }
-    if (action === "downgrade" && (id === "quick" || id === "plan")) {
-      console.log(`SDD downgraded: ${await downgradeSdd(cwd, id)}`);
+    if (action === "check") {
+      const { checkMemory } = await import("./memory/memory.js");
+      const result = await checkMemory(cwd);
+      for (const issue of result.issues) console.error(`${issue.code}: ${issue.path}: ${issue.message}`);
+      for (const warning of result.warnings) console.log(`warning ${warning.code}: ${warning.path}: ${warning.message}`);
+      if (result.issues.length > 0) return 1;
+      console.log(`Memory is valid: ${result.concepts} concepts${result.warnings.length > 0 ? `, ${result.warnings.length} warnings` : ""}.`);
       return 0;
     }
-    if (action === "validate" && id === undefined) {
-      const failure = await recordValidationFailure(cwd);
-      if (!failure) {
-        console.log("SDD validation passed.");
-        return 0;
-      }
-      console.error(`SDD validation failed and was recorded: ${failure.digest}`);
-      return 1;
+    throw new Error("Usage: ways memory check | index");
+  }
+
+  if (command === "query") {
+    const query = args.join(" ").trim();
+    if (!query) throw new Error("Usage: ways query <terms>");
+    const { queryKnowledgeResult } = await import("./query/query.js");
+    const result = await queryKnowledgeResult(cwd, query);
+    for (const warning of result.warnings) console.error(`warning: ${warning}`);
+    if (result.hits.length === 0) console.log("No memory matches.");
+    for (const hit of result.hits) {
+      const labels = hit.labels.length > 0 ? ` [${hit.labels.join(", ")}]` : "";
+      console.log(`${hit.score}\t${hit.path}${labels}\t${hit.preview}`);
     }
-    if (action === "remediate") {
-      if (id !== "implement" && id !== "decompose" && id !== "plan" && id !== "specify") {
-        throw new Error("Usage: ways sdd remediate <implement|decompose|plan|specify> --reason=<text>");
-      }
-      const reason = args.find((arg) => arg.startsWith("--reason="))?.slice(9);
-      if (!reason?.trim()) throw new Error("Usage: ways sdd remediate <implement|decompose|plan|specify> --reason=<text>");
-      const commit = await remediateSdd(cwd, id, reason);
-      const state = await loadState(cwd);
-      console.log(`SDD remediation opened: ${commit} (attempt ${state?.attempt ?? 0}, ${state?.remediation?.source ?? "unknown"} -> ${id}).`);
-      return 0;
-    }
-    throw new Error("Usage: ways sdd start <id> [--supervised] [--delegated] | advance | validate | remediate <implement|decompose|plan|specify> --reason=<text> | downgrade <quick|plan>");
+    return 0;
   }
 
   if (command === "adapter") {
     const [action, provider] = args;
+    const { installAdapter, PROVIDERS } = await import("./adapters/install.js");
     if (action === "list") {
-      for (const adapter of PROVIDERS) console.log(adapter.id);
+      for (const adapter of PROVIDERS) console.log(`${adapter.id}${adapter.tier === "default" ? "" : " (best effort)"}`);
       return 0;
     }
     if (action === "install" && provider) {
@@ -347,253 +249,51 @@ async function dispatch(command: string, args: string[], cwd: string): Promise<n
     throw new Error("Usage: ways adapter list | install <provider> [--force]");
   }
 
-  if (command === "evals") {
-    const [action] = args;
-    if (action === "compare") {
-      const inputs = options(args, "--input");
-      if (inputs.length === 0) throw new Error("Usage: ways evals compare --input=<result.json>... [--output=<report.json>] [--markdown=<report.md>]");
-      const report = await compareResultFiles(inputs.map((input) => userPath(cwd, input)), (path) => relative(cwd, path) || path);
-      const output = stableJson(report);
-      const outputPath = option(args, "--output");
-      const markdownPath = option(args, "--markdown");
-      if (outputPath) await writeAtomic(userPath(cwd, outputPath), output);
-      if (markdownPath) await writeAtomic(userPath(cwd, markdownPath), renderComparisonMarkdown(report));
-      process.stdout.write(output);
-      return report.runs.some((entry) => entry.status === "comparable") ? 0 : 1;
-    }
-    if (action !== "run") throw new Error("Usage: ways evals run [--adapter=fake|command] [--command=<executable>] [--harness=<label>] [--isolation= --parallel= --evaluation= --memory= --approvals= with --harness=outcome] | compare --input=<result.json>...");
-    const adapterName = option(args, "--adapter") ?? "fake";
-    const adapter = adapterName === "fake"
-      ? fakeAdapter
-      : adapterName === "command"
-        ? commandAdapter(requiredOption(args, "--command"), options(args, "--arg"))
-        : (() => { throw new Error(`Unknown eval adapter: ${adapterName}`); })();
-    const maxMilliseconds = Number(option(args, "--timeout-ms") ?? "30000");
-    const maxOutputBytes = Number(option(args, "--max-output-bytes") ?? "1048576");
-    const seed = Number(option(args, "--seed") ?? "0");
-    const corpusPath = option(args, "--corpus");
-    const harness = option(args, "--harness") ?? "checks-only";
-    if (!HARNESS_LABELS.includes(harness as HarnessLabel)) throw new Error(`--harness must be one of ${HARNESS_LABELS.join(", ")}`);
-    if (!Number.isSafeInteger(maxMilliseconds) || maxMilliseconds <= 0) throw new Error("--timeout-ms must be a positive integer");
-    if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes <= 0) throw new Error("--max-output-bytes must be a positive integer");
-    if (!Number.isSafeInteger(seed) || seed < 0) throw new Error("--seed must be a non-negative integer");
-    const policyFlags = { isolation: option(args, "--isolation"), parallel: option(args, "--parallel"), evaluation: option(args, "--evaluation"), memory: option(args, "--memory"), approvals: option(args, "--approvals") };
-    const policy = Object.fromEntries(Object.entries(policyFlags).filter(([, value]) => value !== undefined)) as Partial<OutcomeEvalPolicy>;
-    if (harness !== "outcome" && Object.keys(policy).length > 0) throw new Error("--isolation, --parallel, --evaluation, --memory and --approvals apply only to --harness=outcome");
-    const result = await runEvals({
-      ...(corpusPath ? { corpusPath } : {}),
-      adapter,
-      configuration: {
-        adapter: { id: adapter.id, argv: adapter.argv },
-        harness: harness as HarnessLabel,
-        model: option(args, "--model") ?? "unspecified",
-        startingRevision: option(args, "--revision") ?? "corpus-v3",
-        budgets: { maxMilliseconds, maxOutputBytes },
-        seed,
-        ...(harness === "outcome" ? { outcomePolicy: { ...DEFAULT_OUTCOME_POLICY, ...policy } } : {}),
-      },
-    });
-    const output = stableJson(result);
-    const outputPath = option(args, "--output");
-    if (outputPath) await writeAtomic(userPath(cwd, outputPath), output);
-    process.stdout.write(output);
-    return result.tasks.every((task) => task.success) ? 0 : 1;
-  }
-
-  if (command === "check") {
-    if (args.includes("--history")) {
-      const since = args.find((arg) => arg.startsWith("--since="))?.slice(8);
-      const to = args.find((arg) => arg.startsWith("--to="))?.slice(5);
-      const issues = await checkHistory(cwd, {
-        ...(since ? { since } : {}),
-        ...(to ? { to } : {}),
-      });
-      for (const issue of issues) console.error(`${issue.code}: ${issue.path}: ${issue.message}`);
-      if (issues.length > 0) return 1;
-      console.log("History checks passed.");
+  if (command === "upgrade") {
+    const { applyUpgrade, planUpgrade } = await import("./upgrade/upgrade.js");
+    const plan = await planUpgrade(cwd);
+    if (!args.includes("--apply")) {
+      console.log(`Upgrade ${plan.from} -> ${plan.to}`);
+      for (const path of plan.modifiedManagedFiles) console.log(`- [ ] overwrite ${path} (you edited it)`);
+      for (const note of plan.notes) console.log(`- ${note}`);
+      console.log("Run `ways upgrade --apply` to apply it.");
       return 0;
     }
-    const result = await runChecks(cwd, args.includes("--integrity-only"), undefined, { services: args.includes("--with-services") });
-    for (const issue of result.issues) console.error(`${issue.code}: ${issue.path}: ${issue.message}`);
-    if (result.checks) console.log(JSON.stringify({ checks: result.checks, ...(result.environment ? { environment: result.environment } : {}) }));
-    if (result.issues.length > 0 || (result.testExitCode !== undefined && result.testExitCode !== 0)) return 1;
-    console.log("Checks passed.");
-    return 0;
-  }
-
-  if (command === "plan") {
-    const [action, id] = args;
-    if (action === "start" && id) {
-      const state = await startPlan(cwd, id);
-      console.log(`Plan started: ${state.planPath}`);
-      return 0;
-    }
-    if (action === "propose") {
-      console.log(`Plan committed: ${await proposePlan(cwd)}`);
-      return 0;
-    }
-    if (action === "promote") {
-      console.error(SDD_DEPRECATION);
-      const state = await promotePlan(cwd, args.includes("--supervised") ? "supervised" : "autonomous", args.includes("--delegated") ? "delegated" : "inline");
-      console.log(`Plan promoted to SDD at ${state.phase}.`);
-      return 0;
-    }
-    if (action === "finish") {
-      const message = args.find((arg) => arg.startsWith("--message="))?.slice(10) ?? "";
-      console.log(`Plan completed: ${await finishPlan(cwd, message)}`);
-      return 0;
-    }
-    if (action === "abandon") {
-      console.log(`Plan abandoned: ${await abandonPlan(cwd)}`);
-      return 0;
-    }
-    throw new Error("Usage: ways plan start <id> | propose | promote [--supervised] [--delegated] | finish --message=<subject> | abandon");
-  }
-
-  if (command === "quick") {
-    const [action, id] = args;
-    if (action === "start" && id) {
-      await startQuick(cwd, id);
-      console.log(`Quick work started: ${id}`);
-      return 0;
-    }
-    if (action === "finish") {
-      const message = args.find((arg) => arg.startsWith("--message="))?.slice(10) ?? "";
-      const commit = await finishQuick(cwd, message);
-      console.log(`Quick work committed: ${commit}`);
-      return 0;
-    }
-    if (action === "cancel") {
-      await cancelQuick(cwd);
-      console.log("Quick work cancelled; project changes were preserved.");
-      return 0;
-    }
-    throw new Error("Usage: ways quick start <id> | finish --message=<subject> | cancel");
-  }
-
-  if (command === "memory") {
-    const [action, subaction, positional] = args;
-    if (action === "index") {
-      const indexes = await writeIndexes(cwd);
-      console.log(`Indexed ${indexes.catalog.documents.length} concepts.`);
-      return 0;
-    }
-    if (action === "check") {
-      const result = await inspectOkf(cwd);
-      for (const issue of result.issues) console.error(`${issue.code}: ${issue.path}: ${issue.message}`);
-      return result.issues.length === 0 ? 0 : 1;
-    }
-    if (action === "discovery") {
-      if (subaction === "request") {
-        const request = await requestDiscovery(cwd, args.includes("--rediscover"));
-        console.log(JSON.stringify(request, null, 2));
-        return 0;
-      }
-      if (subaction === "digest") {
-        console.log(await discoveryReviewDigest(cwd));
-        return 0;
-      }
-      if (subaction === "complete" && positional) {
-        console.log(JSON.stringify(await completeDiscovery(cwd, userPath(cwd, positional)), null, 2));
-        return 0;
-      }
-      throw new Error("Usage: ways memory discovery request [--rediscover] | digest | complete <review.json>");
-    }
-    if (action === "commit") {
-      const implementation = requiredOption(args, "--implementation");
-      if (subaction === "digest") {
-        console.log(await memoryCommitReviewDigest(cwd, implementation));
-        return 0;
-      }
-      if (subaction === "create") {
-        const review = userPath(cwd, requiredOption(args, "--review"));
-        const message = requiredOption(args, "--message");
-        console.log(`Memory committed: ${await commitMemory(cwd, implementation, review, message)}`);
-        return 0;
-      }
-      throw new Error("Usage: ways memory commit digest --implementation=<from>..<to> | create --implementation=<from>..<to> --review=<review.json> --message=<subject>");
-    }
-    if (action === "reconcile") {
-      const config = effectiveMemoryConfig(await loadConfig(cwd));
-      if (subaction === "inspect" && positional) {
-        const result = await inspectReconciliationCandidate(cwd, config, await readJson<ReconciliationRequest>(cwd, positional));
-        const output = option(args, "--output");
-        if (output && result.issues.length === 0) await writeAtomic(userPath(cwd, output), stableJson(result.evidence));
-        console.log(JSON.stringify(result, null, 2));
-        return printIssues(result.issues);
-      }
-      if (subaction === "validate" && positional) {
-        const evidence = await readJson<ReconciliationEvidence>(cwd, positional);
-        const statePath = option(args, "--state") ?? join(cwd, MEMORY_STATE_PATH);
-        const claims = JSON.parse(requiredOption(args, "--unresolved-claims")) as unknown;
-        if (!Array.isArray(claims) || !claims.every((claim) => typeof claim === "string")) throw new Error("--unresolved-claims must be a JSON string array");
-        const issues = await validateReconciliationEvidence(cwd, config, evidence, {
-          state: await readJson<MemoryState>(cwd, statePath),
-          reconcileRef: requiredOption(args, "--reconcile"),
-          currentTargetRef: requiredOption(args, "--target"),
-          unresolvedClaims: claims,
-        });
-        return printIssues(issues);
-      }
-      if (subaction === "publication" && positional) {
-        const result = await validatePublicationMerge(cwd, config, await readJson<ReconciliationEvidence>(cwd, positional), requiredOption(args, "--publication"), requiredOption(args, "--reconcile"));
-        return printIssues(result.issues);
-      }
-      if (subaction === "back-sync") {
-        const result = await validateBackSyncMerge(cwd, config, requiredOption(args, "--publication"), requiredOption(args, "--integration-before"), requiredOption(args, "--back-sync"));
-        if (result.issues.length === 0) console.log(result.status);
-        return printIssues(result.issues);
-      }
-      throw new Error("Usage: ways memory reconcile inspect <request.json> [--output=<evidence.json>] | validate <evidence.json> --state=<state.json> --reconcile=<ref> --target=<ref> --unresolved-claims='[]' | publication <evidence.json> --publication=<ref> --reconcile=<ref> | back-sync --publication=<ref> --integration-before=<ref> --back-sync=<ref>");
-    }
-    throw new Error("Usage: ways memory check | index | discovery ... | commit ... | reconcile ...");
-  }
-
-  if (command === "query") {
-    const query = args.join(" ").trim();
-    if (!query) throw new Error("Usage: ways query <terms>");
-    const result = await queryKnowledgeResult(cwd, query);
-    for (const warning of result.warnings) console.error(`warning: ${warning}`);
-    for (const hit of result.hits) {
-      const labels = hit.labels.length > 0 ? ` [${hit.labels.join(", ")}]` : "";
-      console.log(`${hit.score}\t${hit.path}${labels}\t${hit.preview}`);
-    }
+    const approved = args.includes("--overwrite-all") ? new Set(["*"]) : new Set(options(args, "--overwrite"));
+    const applied = await applyUpgrade(cwd, approved);
+    for (const note of applied.notes) console.log(`- ${note}`);
+    console.log(`ways upgraded to ${applied.to}. Review and commit the changes.`);
     return 0;
   }
 
   if (command === "bootstrap") {
-    const force = args.includes("--force");
-    const testOption = args.find((arg) => arg.startsWith("--test-command="));
-    const testCommand = testOption ? JSON.parse(testOption.slice("--test-command=".length)) as unknown : ["npm", "test"];
-    if (!Array.isArray(testCommand) || !testCommand.every((part) => typeof part === "string")) {
-      throw new Error("--test-command must be a JSON string array");
-    }
-    const commandsArg = args.find((arg) => arg.startsWith("--commands="));
-    const commands = commandsArg === undefined ? undefined : JSON.parse(commandsArg.slice("--commands=".length)) as unknown;
-    const relevantPaths = options(args, "--relevant-path");
-    const excludedPaths = options(args, "--exclude-path");
-    const integrationBranch = option(args, "--integration-branch");
-    await bootstrap({
+    const { bootstrap, DEFAULT_AGENTS } = await import("./bootstrap/bootstrap.js");
+    const testCommand = jsonOption(args, "--test-command") ?? ["npm", "test"];
+    if (!Array.isArray(testCommand) || !testCommand.every((part) => typeof part === "string")) throw new Error("--test-command must be a JSON string array, e.g. --test-command='[\"npm\",\"test\"]'");
+    const commands = jsonOption(args, "--commands");
+    const agentsOption = option(args, "--agents");
+    const agents = args.includes("--no-adapters") ? [] : agentsOption === undefined ? [...DEFAULT_AGENTS] : agentsOption.split(",").map((agent) => agent.trim()).filter(Boolean);
+    const result = await bootstrap({
       cwd,
       testCommand,
-      ...(commandsArg === undefined ? {} : { commands: commands as NamedChecksConfig }),
-      force,
-      adapters: !args.includes("--no-adapters"),
-      memory: {
-        releaseBranch: option(args, "--release-branch") ?? "main",
-        ...(integrationBranch ? { integrationBranch } : {}),
-        reconciliationBranchPattern: option(args, "--reconciliation-branch-pattern") ?? "reconcile/*",
-        ...(relevantPaths.length ? { relevantPaths } : {}),
-        ...(excludedPaths.length ? { excludedPaths } : {}),
-      },
+      ...(commands === undefined ? {} : { commands: commands as never }),
+      force: args.includes("--force"),
+      agents,
     });
-    console.log("Harness installed; complete the required discovery review with `ways memory discovery digest` and `ways memory discovery complete <review.json>`. ");
+    console.log(`ways installed (${result.files.length} files, agents: ${agents.join(", ") || "none"}). Describe your project in AGENTS.md, commit, and work as usual: \`ways done\` finishes a change.`);
     return 0;
+  }
+
+  if (command === "evals") {
+    return (await import("./evals/cli.js")).runEvalsCommand(args, cwd, { option, options, requiredOption, userPath, relative });
   }
 
   console.error(`Unknown command: ${command}. Run \`ways --help\` to list the commands.`);
   return 1;
 }
+
+/** Exposed for the registry test. */
+export const CLI_ACTIONS = actionCount;
 
 function invokedDirectly(): boolean {
   if (!process.argv[1]) return false;
