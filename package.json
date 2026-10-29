@@ -24,7 +24,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pretest": "npm run build",
     "test": "vitest run",
-    "test:e2e": "npm run build && vitest run tests/baseline-e2e.test.ts",
+    "test:e2e": "npm run build && vitest run tests/smoke-e2e.test.ts tests/baseline-e2e.test.ts",
     "check": "npm run typecheck && npm test"
   },
   "engines": {
