@@ -1,7 +1,7 @@
 import { lstat, readdir, readFile } from "node:fs/promises";
-import { dirname, join, normalize, relative, resolve } from "node:path";
+import { dirname, join, normalize, posix, relative, resolve } from "node:path";
 import { parse } from "yaml";
-import { KNOWLEDGE_DIR } from "../domain/constants.js";
+import { isWikiPath, KNOWLEDGE_DIR, WIKI_DIR } from "../domain/constants.js";
 import { GitRepository } from "../git/git.js";
 import { matchesGlob, normalizeGlob, normalizeRepoPath } from "../memory/glob.js";
 
@@ -83,6 +83,38 @@ async function targetExists(root: string, documentPath: string, target: string):
   } catch {
     return false;
   }
+}
+
+/**
+ * The memory is the agents' source of truth and the wiki (docs/wiki) is for
+ * people, derived from code and memory: the wiki cites the memory, never the
+ * other way round. A concept whose `sources`, `paths` or links point into the
+ * wiki would make a page, which nobody checks against the code the way a
+ * concept is, a fact an agent acts on.
+ */
+function wikiCitations(document: OkfDocument): OkfIssue[] {
+  const issues: OkfIssue[] = [];
+  const fail = (what: string): void => {
+    issues.push({ code: "okf-wiki-citation", path: document.path, message: `${what} points into ${WIKI_DIR}/, the wiki for humans; a memory is grounded in the code, tests and docs it is about, never in the wiki (the wiki cites the memory, not the reverse)` });
+  };
+  const sources = Array.isArray(document.frontmatter.sources) ? document.frontmatter.sources : [];
+  for (const [index, item] of sources.entries()) {
+    const resource = item && typeof item === "object" ? (item as Record<string, unknown>).resource : undefined;
+    if (typeof resource === "string" && resource.startsWith("/") && isWikiPath(posix.normalize(resource.slice(1)).replace(/\/$/, ""))) fail(`sources[${index}] (${resource})`);
+  }
+  for (const glob of conceptPaths(document)) {
+    const normalized = posix.normalize(glob.replaceAll("\\", "/").replace(/^\.\//, ""));
+    if (isWikiPath(normalized.replace(/\/$/, ""))) fail(`paths (${glob})`);
+  }
+  for (const link of document.links) {
+    if (/^[a-z][a-z0-9+.-]*:/i.test(link) || link.startsWith("#")) continue;
+    const target = link.split("#", 1)[0] ?? "";
+    if (!target) continue;
+    // Relative links resolve from the concept's own folder inside .ways/knowledge.
+    const resolved = posix.normalize(posix.join(KNOWLEDGE_DIR, posix.dirname(document.path), target.replace(/^\//, "")));
+    if (isWikiPath(resolved.replace(/\/$/, ""))) fail(`the link ${link}`);
+  }
+  return issues;
 }
 
 /** Repository-local sources (`/path` or `/glob`) must resolve in the working tree's HEAD. */
@@ -190,6 +222,7 @@ export async function inspectOkf(cwd: string, options: { validateSources?: boole
         }
       }
     }
+    issues.push(...wikiCitations(document));
     const lines = document.body.split("\n").filter((line) => line.trim()).length;
     if (lines > MAX_CONCEPT_LINES) warnings.push({ code: "long-concept", path: relativePath, message: `${lines} lines; a memory is a short fact (≤ ${MAX_CONCEPT_LINES} lines): split it or move the detail to docs/` });
     for (const link of document.links) {

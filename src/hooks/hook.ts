@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { CONFIG_PATH, isWorkId, MANIFEST_PATH, slugify, WORK_DIR } from "../domain/constants.js";
+import { CONFIG_PATH, DOCUMENTALIST_ROLE, isWikiPath, isWorkId, MANIFEST_PATH, slugify, WIKI_DIR, WORK_DIR } from "../domain/constants.js";
 import type { ActiveWork } from "../domain/types.js";
 import { clearRuns, currentBranchOf, gitDirs, readActive, writeActive, type GitDirs } from "../runtime/runtime.js";
 
@@ -12,8 +12,12 @@ import { clearRuns, currentBranchOf, gitDirs, readActive, writeActive, type GitD
  * What breaks a guarantee, and is refused in every mode: a commit not made by
  * ways that adds, changes or deletes a work record under `.ways/work/` (the
  * criteria fixed at open, the evidence ways wrote, a review or a human
- * approval). In `enforce` mode a commit outside any active work is refused
- * too. Everything else is accepted; the hook only adds `Harness-Work`.
+ * approval), and, from a session launched as the documentalist (`WAYS_ROLE`),
+ * a commit that touches anything outside `docs/wiki/`: the wiki is for people,
+ * the memory under `.ways/knowledge` is for agents, and the role writes only
+ * the first. In `enforce` mode a commit outside any active work is refused
+ * too. Everything else is accepted; the hook only adds `Harness-Work` (and
+ * `Harness-Role` for the documentalist, which `ways check --history` audits).
  */
 export interface HookVerdict {
   accepted: boolean;
@@ -72,14 +76,30 @@ function splitComments(message: string): { content: string; comments: string } {
   return { content: lines.slice(0, end).join("\n"), comments: lines.slice(end).join("\n") };
 }
 
-export function addTrailer(message: string, id: string): string {
+function addTrailerLine(message: string, line: string, present: RegExp): string {
   const { content, comments } = splitComments(message);
-  if (!content.trim() || TRAILER.test(content)) return message;
+  if (!content.trim() || present.test(content)) return message;
   const paragraphs = content.split(/\n\s*\n/);
   const last = paragraphs.at(-1) ?? "";
-  const isTrailerBlock = paragraphs.length > 1 && last.split("\n").every((line) => /^[A-Za-z0-9-]+:\s/.test(line));
-  const next = `${content}${isTrailerBlock ? "\n" : "\n\n"}Harness-Work: ${id}\n`;
+  const isTrailerBlock = paragraphs.length > 1 && last.split("\n").every((entry) => /^[A-Za-z0-9-]+:\s/.test(entry));
+  const next = `${content}${isTrailerBlock ? "\n" : "\n\n"}${line}\n`;
   return comments ? `${next}${comments.startsWith("\n") ? "" : "\n"}${comments}` : next;
+}
+
+export function addTrailer(message: string, id: string): string {
+  return addTrailerLine(message, `Harness-Work: ${id}`, TRAILER);
+}
+
+const ROLE_TRAILER = /^Harness-Role:\s*\S+\s*$/m;
+
+/** `Harness-Role: documentalist` on a commit made from a documentalist session. */
+export function addRoleTrailer(message: string, role: string): string {
+  return addTrailerLine(message, `Harness-Role: ${role}`, ROLE_TRAILER);
+}
+
+/** The role a session was launched for, from the environment ways set when it started the agent. */
+function sessionRole(): string | undefined {
+  return process.env.WAYS_ROLE === DOCUMENTALIST_ROLE ? DOCUMENTALIST_ROLE : undefined;
 }
 
 /**
@@ -124,6 +144,16 @@ async function judge(cwd: string, messagePath: string, stage: "prepare" | "final
   if (!mode) return { accepted: true };
   let changes: Map<string, string> | undefined;
   const staged = (): Map<string, string> => (changes ??= stagedChanges(dirs));
+  const role = sessionRole();
+  if (stage === "prepare" && role) {
+    const outside = [...staged().keys()].filter((path) => !isWikiPath(path)).sort();
+    if (outside.length > 0) {
+      return {
+        accepted: false,
+        message: `ways: refused: this commit comes from the ${role} session and changes ${outside.join(" ")}, outside ${WIKI_DIR}/. The documentalist writes only the wiki for humans; code, tests, configuration and .ways/knowledge (the agents' memory) are not its to change. Unstage them with \`git restore --staged ${outside.join(" ")}\` and commit only ${WIKI_DIR}/.`,
+      };
+    }
+  }
   if (stage === "prepare") {
     const tampered = tamperedRecords(dirs, staged());
     if (tampered.length > 0) {
@@ -135,7 +165,11 @@ async function judge(cwd: string, messagePath: string, stage: "prepare" | "final
     }
   }
   const message = readFileSync(messagePath, "utf8");
-  if (TRAILER.test(splitComments(message).content)) return { accepted: true };
+  if (TRAILER.test(splitComments(message).content)) {
+    const traced = role ? addRoleTrailer(message, role) : message;
+    if (traced !== message) writeFileSync(messagePath, traced, "utf8");
+    return { accepted: true };
+  }
   let id = readActive(dirs.top)?.id ?? openRecordInTree(dirs.top);
   let note: string | undefined;
   if (!id) {
@@ -154,7 +188,8 @@ async function judge(cwd: string, messagePath: string, stage: "prepare" | "final
     id = active.id;
     note = `ways: this commit starts change ${active.id}; run \`ways done\` when it is finished.`;
   }
-  const next = addTrailer(message, id);
+  let next = addTrailer(message, id);
+  if (role) next = addRoleTrailer(next, role);
   if (next !== message) writeFileSync(messagePath, next, "utf8");
   return { accepted: true, ...(note ? { message: note } : {}) };
 }

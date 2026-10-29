@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { access } from "node:fs/promises";
 import { join } from "node:path";
 import { stringify } from "yaml";
-import { KNOWLEDGE_DIR, slugify } from "../domain/constants.js";
+import { isWikiPath, KNOWLEDGE_DIR, slugify } from "../domain/constants.js";
 import { writeAtomic } from "../fs/files.js";
 import { GitRepository, type GitTreeEntry } from "../git/git.js";
 import { conceptPaths, inspectOkf, isCurrentConcept, MAX_CONCEPT_LINES, type OkfDocument, type OkfIssue } from "../knowledge/okf.js";
@@ -52,7 +52,8 @@ class TreeCache {
   entries(ref: string): Promise<GitTreeEntry[]> {
     let found = this.trees.get(ref);
     if (!found) {
-      found = this.git.treeEntries(ref).then((entries) => entries.filter((entry) => !entry.path.startsWith(`${KNOWLEDGE_DIR}/`)));
+      // Neither the memory itself nor the wiki for humans is code a concept can go stale against.
+      found = this.git.treeEntries(ref).then((entries) => entries.filter((entry) => !entry.path.startsWith(`${KNOWLEDGE_DIR}/`) && !isWikiPath(entry.path)));
       this.trees.set(ref, found);
     }
     return found;
@@ -85,7 +86,7 @@ export async function relevantConcepts(cwd: string, changed: readonly string[], 
   const relevant: RelevantConcept[] = [];
   for (const document of concepts.filter(isCurrentConcept)) {
     const globs = conceptPaths(document);
-    if (globs.length === 0 || !changed.some((path) => safeMatch(path, globs))) continue;
+    if (globs.length === 0 || !changed.some((path) => !isWikiPath(path) && safeMatch(path, globs))) continue;
     relevant.push({ path: `${KNOWLEDGE_DIR}/${document.path}`, title: title(document), paths: globs, stale: await isStale(git, cache, document, globs) });
   }
   return relevant;

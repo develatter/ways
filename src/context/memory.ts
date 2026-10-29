@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { KNOWLEDGE_DIR } from "../domain/constants.js";
+import { isWikiPath, KNOWLEDGE_DIR } from "../domain/constants.js";
 import { matchesAny } from "../memory/glob.js";
 import { childProcess, fastHash } from "../runtime/lazy.js";
 import { headCommitOf, writeFileAtomic, type GitDirs } from "../runtime/runtime.js";
@@ -121,7 +121,7 @@ async function rebuild(dirs: GitDirs): Promise<MemoryFact[]> {
     let found = changedSince.get(commit);
     if (!found) {
       found = git(dirs.top, ["diff", "--name-only", "--no-renames", commit, "HEAD", "--"])
-        .then((output) => output.split("\n").filter((path) => path && !path.startsWith(`${KNOWLEDGE_DIR}/`)))
+        .then((output) => output.split("\n").filter((path) => path && !path.startsWith(`${KNOWLEDGE_DIR}/`) && !isWikiPath(path)))
         .catch(() => []);
       changedSince.set(commit, found);
     }

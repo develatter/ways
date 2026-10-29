@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { CONFIG_PATH, isWorkId, WAYS_DIR, WORK_DIR } from "../domain/constants.js";
+import { CONFIG_PATH, isWikiPath, isWorkId, WAYS_DIR, WORK_DIR } from "../domain/constants.js";
 import type { Enforcement, WorkRecord } from "../domain/types.js";
 import { fastHash } from "../runtime/lazy.js";
 import { currentBranchOf, headCommitOf, readActive, readLastRun, writeFileAtomic, type GitDirs, type LastRun } from "../runtime/runtime.js";
@@ -171,12 +171,16 @@ async function gitFacts(dirs: GitDirs, head: string | undefined, base: string | 
  */
 export function relevantMemory(concepts: readonly MemoryFact[], inPlay: { touched: readonly string[]; uncommitted: readonly string[]; changed: readonly string[] }, limit = MAX_MEMORY): MemoryFact[] {
   const scored: Array<{ concept: MemoryFact; score: number; specificity: number }> = [];
+  // The wiki is for people: touching a page never brings up the memory of the code it describes.
+  const touched = inPlay.touched.filter((path) => !isWikiPath(path));
+  const uncommitted = inPlay.uncommitted.filter((path) => !isWikiPath(path));
+  const changed = inPlay.changed.filter((path) => !isWikiPath(path));
   for (const concept of concepts) {
-    const touchedAt = inPlay.touched.findIndex((path) => safeMatch(path, concept.paths));
+    const touchedAt = touched.findIndex((path) => safeMatch(path, concept.paths));
     let score = 0;
     if (touchedAt >= 0) score = 3000 - Math.min(touchedAt, 999);
-    else if (inPlay.uncommitted.some((path) => safeMatch(path, concept.paths))) score = 2000;
-    else if (inPlay.changed.some((path) => safeMatch(path, concept.paths))) score = 1000;
+    else if (uncommitted.some((path) => safeMatch(path, concept.paths))) score = 2000;
+    else if (changed.some((path) => safeMatch(path, concept.paths))) score = 1000;
     if (score === 0) continue;
     const specificity = Math.max(...concept.paths.map((glob) => glob.split(/[*?]/, 1)[0]!.length));
     scored.push({ concept, score, specificity });

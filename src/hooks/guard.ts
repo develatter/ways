@@ -1,5 +1,5 @@
 import { isAbsolute, posix, relative, resolve } from "node:path";
-import { WORK_DIR } from "../domain/constants.js";
+import { DOCUMENTALIST_ROLE, isWikiPath, WIKI_DIR, WORK_DIR } from "../domain/constants.js";
 import type { Enforcement } from "../domain/types.js";
 
 /**
@@ -12,6 +12,10 @@ import type { Enforcement } from "../domain/types.js";
  *   edit itself saves the round trip.
  * - `enforce` only: a shell command that switches the commit hooks off
  *   (`WAYS_DISABLE=1`, another `core.hooksPath`).
+ * - the documentalist role (`WAYS_ROLE`, set by `ways wiki update`): a write
+ *   outside `docs/wiki/`. The wiki is for people and the memory
+ *   (`.ways/knowledge`) is for agents; the role writes the one and never the
+ *   other. `ways wiki update` also compares the tree afterwards.
  *
  * Shell commands are read with a small tokenizer, not executed. Redirections
  * that duplicate descriptors (`2>&1`, `>&2`) or go to `/dev/null` are not
@@ -27,12 +31,14 @@ export interface GuardInput {
   /** Directory the agent runs in; relative tool paths resolve against it. */
   cwd: string;
   enforcement: Enforcement;
+  /** The job the session was launched for (`WAYS_ROLE`), if any. */
+  role?: string;
 }
 
 export interface GuardVerdict {
   /** Why the call is refused, written for the agent; absent when allowed. */
   deny?: string;
-  code?: "record-write" | "hooks-bypass";
+  code?: "record-write" | "hooks-bypass" | "role-scope";
   /** Repository-relative paths the call names, for the event log. */
   paths: string[];
 }
@@ -213,22 +219,41 @@ export function readShell(command: string): ShellReading {
 
 const RECORD_REFUSAL = (paths: string[]): string => `ways: refused: ${paths.join(", ")} ${paths.length === 1 ? "is a work record" : "are work records"}: the criteria fixed at open, the evidence ways ran, reviews and human approvals. Only ways writes ${WORK_DIR}/, and a commit that changes it is refused in every mode. Evidence comes from \`ways done\`; a review from \`ways review\` (an independent reviewer whose verdict ways records itself); an approval from the human running \`ways approve\`.`;
 
-const BYPASS_REFUSAL = (how: string): string => `ways: refused: ${how} switches off the ways commit hooks, and enforcement is \`enforce\` in this repository. Commit without it; if the hook refuses a commit, its message says why and what to run.`;
+const BYPASS_REFUSAL = (how: string, documentalist: boolean): string => `ways: refused: ${how} switches off the ways commit hooks, and ${documentalist ? "the documentalist may not do that" : "enforcement is `enforce` in this repository"}. Commit without it; if the hook refuses a commit, its message says why and what to run.`;
+
+const ROLE_REFUSAL = (paths: string[]): string => `ways: refused: ${paths.join(", ")} is outside ${WIKI_DIR}/, and you are the documentalist: you write only the wiki for humans. Code, tests, configuration and .ways/knowledge (the agents' memory, a different thing) are not yours to change; if a page needs something changed elsewhere, say so in your final answer.`;
+
+/** Paths a file tool names, as written, that a documentalist may not write: outside the repository or outside the wiki. */
+function outsideWiki(toolInput: unknown, top: string, cwd: string): string[] {
+  if (!toolInput || typeof toolInput !== "object") return [];
+  const input = toolInput as Record<string, unknown>;
+  const raw = [input.file_path, input.notebook_path, input.path].filter((value): value is string => typeof value === "string");
+  return [...new Set(raw.filter((path) => {
+    const inside = repoPath(top, cwd, path);
+    return inside === undefined || !isWikiPath(inside);
+  }))];
+}
 
 export function guard(input: GuardInput): GuardVerdict {
   const tool = input.tool.toLowerCase();
+  const documentalist = input.role === DOCUMENTALIST_ROLE;
   if (FILE_TOOLS.has(tool)) {
     const paths = toolPaths(input.toolInput, input.top, input.cwd);
     const records = paths.filter(isRecordPath);
-    return records.length > 0 ? { deny: RECORD_REFUSAL(records), code: "record-write", paths } : { paths };
+    if (records.length > 0) return { deny: RECORD_REFUSAL(records), code: "record-write", paths };
+    const outside = documentalist ? outsideWiki(input.toolInput, input.top, input.cwd) : [];
+    return outside.length > 0 ? { deny: ROLE_REFUSAL(outside), code: "role-scope", paths } : { paths };
   }
   if (SHELL_TOOLS.has(tool)) {
     const command = (input.toolInput as { command?: unknown } | null)?.command;
     if (typeof command !== "string") return { paths: [] };
     const reading = readShell(command);
-    const records = [...new Set(reading.writes.map((path) => repoPath(input.top, input.cwd, path)).filter((path): path is string => path !== undefined && isRecordPath(path)))];
+    const written = [...new Set(reading.writes.map((path) => repoPath(input.top, input.cwd, path)).filter((path): path is string => path !== undefined))];
+    const records = written.filter(isRecordPath);
     if (records.length > 0) return { deny: RECORD_REFUSAL(records), code: "record-write", paths: records };
-    if (reading.bypass && input.enforcement === "enforce") return { deny: BYPASS_REFUSAL(reading.bypass), code: "hooks-bypass", paths: [] };
+    if (reading.bypass && (input.enforcement === "enforce" || documentalist)) return { deny: BYPASS_REFUSAL(reading.bypass, documentalist), code: "hooks-bypass", paths: [] };
+    const outside = documentalist ? written.filter((path) => !isWikiPath(path)) : [];
+    if (outside.length > 0) return { deny: ROLE_REFUSAL(outside), code: "role-scope", paths: outside };
     return { paths: [] };
   }
   return { paths: toolPaths(input.toolInput, input.top, input.cwd) };

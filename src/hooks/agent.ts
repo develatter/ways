@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BriefSection, SectionId } from "../context/brief.js";
-import { CONFIG_PATH } from "../domain/constants.js";
+import { CONFIG_PATH, DOCUMENTALIST_ROLE } from "../domain/constants.js";
 import type { Enforcement } from "../domain/types.js";
 import { appendEvent, pruneEvents, readRecentSessionEvents, type EventResult, type EventType, type WaysEvent } from "../events/bus.js";
 import { currentBranchOf, gitDirs, readActive, type GitDirs } from "../runtime/runtime.js";
@@ -222,12 +222,15 @@ export async function runAgentHook(event: AgentEvent, agent: AgentId, stdin: str
     const enforcement = enforcementOf(dirs.top);
     // ways is not installed in this repository: say nothing, log nothing.
     if (!enforcement) return { stdout: "", exitCode: 0 };
+    // A session `ways wiki update` launched says so in its environment; every event it logs carries the role.
+    const role = process.env.WAYS_ROLE === DOCUMENTALIST_ROLE ? DOCUMENTALIST_ROLE : undefined;
     base = {
       v: 1,
       session: payload.session,
       agent,
       type: TYPES[event],
       hook: event,
+      ...(role ? { role } : {}),
       worktree: dirs.top,
       branch: currentBranchOf(dirs) ?? null,
       work: readActive(dirs.top)?.id ?? null,
@@ -259,7 +262,7 @@ export async function runAgentHook(event: AgentEvent, agent: AgentId, stdin: str
       if (context) decision.context = context;
       save = true;
     } else if (event === "PreToolUse") {
-      const verdict = guard({ tool: payload.tool ?? "", toolInput: payload.toolInput, top: dirs.top, cwd: payload.cwd ?? cwd, enforcement });
+      const verdict = guard({ tool: payload.tool ?? "", toolInput: payload.toolInput, top: dirs.top, cwd: payload.cwd ?? cwd, enforcement, ...(base.role ? { role: base.role } : {}) });
       paths = verdict.paths;
       if (verdict.deny) {
         decision.deny = verdict.deny;

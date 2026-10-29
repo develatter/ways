@@ -8,6 +8,8 @@ export interface CommitTrailers {
   work?: string;
   /** Set only on commits the harness makes for a work record: opened, verifying, reviewed, closed, cancelled. */
   state?: string;
+  /** The job the session that made the commit was launched for (`documentalist`); added by the commit hook. */
+  role?: string;
 }
 
 export interface CommitInfo {
@@ -206,6 +208,7 @@ export class GitRepository {
 const TRAILER_NAMES: Record<string, keyof CommitTrailers> = {
   "Harness-Work": "work",
   "Harness-State": "state",
+  "Harness-Role": "role",
 };
 
 /** Reads the trailer block: the last paragraph of the message, as `git interpret-trailers` does. */
@@ -227,6 +230,7 @@ export function formatTrailers(trailers: CommitTrailers): string {
   const entries: Array<[string, string | undefined]> = [
     ["Harness-Work", trailers.work],
     ["Harness-State", trailers.state],
+    ["Harness-Role", trailers.role],
   ];
   return entries.filter((entry): entry is [string, string] => Boolean(entry[1])).map(([key, value]) => `${key}: ${value}`).join("\n");
 }
