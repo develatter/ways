@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Managed by ways. Appends the harness status to the user's own statusline.
+# Managed by ways. Appends the active ways work to the user's own statusline.
 # Usage: <script> [original statusline command]
 input="$(cat)"
 prefix=""
@@ -7,20 +7,13 @@ if [ -n "$1" ]; then prefix="$(printf '%s' "$input" | sh -c "$1" 2>/dev/null)"; 
 dir="$(printf '%s' "$input" | sed -n 's/.*"project_dir": *"\([^"]*\)".*/\1/p')"
 [ -n "$dir" ] || dir="$(printf '%s' "$input" | sed -n 's/.*"cwd": *"\([^"]*\)".*/\1/p')"
 [ -n "$dir" ] || dir="$PWD"
-file="$dir/.ways/status.json"
-field() { sed -n "s/.*\"$1\": *\"\([^\"]*\)\".*/\1/p" "$file" | head -n 1; }
-if [ ! -f "$file" ]; then out="ways: not installed"
-elif grep -q '"active": *false' "$file"; then out="ways: idle"
-else
-  mode="$(field mode)"; id="$(field id)"; phase="$(field phase)"; profile="$(field profile)"; execution="$(field execution)"; attempt="$(field attempt)"
-  remediation_source="$(sed -n 's/.*"source": *"\([^"]*\)".*/\1/p' "$file" | head -n 1)"
-  remediation_target="$(sed -n 's/.*"target": *"\([^"]*\)".*/\1/p' "$file" | head -n 1)"
-  out="ways: $mode:$id"
-  [ -n "$phase" ] && out="$out @$phase"
-  [ -n "$attempt" ] && out="$out #$attempt"
-  [ -n "$remediation_source" ] && out="$out remediation:$remediation_source->$remediation_target"
-  [ -n "$profile" ] && out="$out [$profile]"
-  [ "$execution" = "delegated" ] && out="$out delegated"
-  grep -q '"humanGate": *true' "$file" && out="$out HUMAN GATE"
-fi
+out="ways: idle"
+for gitdir in $(git -C "$dir" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null); do
+  file="$gitdir/ways/active.json"
+  if [ -f "$file" ]; then
+    id="$(sed -n 's/.*"id": *"\([^"]*\)".*/\1/p' "$file" | head -n 1)"
+    kind="$(sed -n 's/.*"kind": *"\([^"]*\)".*/\1/p' "$file" | head -n 1)"
+    [ -n "$id" ] && out="ways: $kind $id" && break
+  fi
+done
 if [ -n "$prefix" ]; then printf '%s | %s' "$prefix" "$out"; else printf '%s' "$out"; fi

@@ -16,7 +16,6 @@ export interface AdapterSource {
   commands: CommandSource[];
   roles: RoleSource[];
   statusline: string;
-  guard: string;
 }
 
 export interface RenderedFile {
@@ -43,6 +42,8 @@ export interface AdapterIssue {
 
 export interface ProviderAdapter {
   id: string;
+  /** default: installed by bootstrap; best-effort: opt-in with `--agents=`. */
+  tier: "default" | "best-effort";
   render(source: AdapterSource): RenderedFile[];
   merge?(cwd: string): Promise<MergeResult>;
   /** Structural checks on shared files the adapter cannot hash (settings). */

@@ -1,13 +1,18 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { stableJson, writeAtomic } from "../fs/files.js";
+import { isWaysGuardEntry } from "./hook-file.js";
 import { resolveWith, SLASH_NAMES } from "./render.js";
 import type { AdapterIssue, AdapterSource, MergeResult, ProviderAdapter, RenderedFile } from "./types.js";
 
+/**
+ * Claude Code: commands in `.claude/commands/`, roles as subagents in
+ * `.claude/agents/` (read roles get read-only tools), and a status line
+ * merged into `.claude/settings.json`. Claude Code reads `CLAUDE.md`, which
+ * bootstrap makes import `AGENTS.md`.
+ */
 export const CLAUDE_DIR = ".claude";
 const STATUSLINE_PATH = `${CLAUDE_DIR}/ways-statusline.sh`;
-const GUARD_PATH = `${CLAUDE_DIR}/ways-guard.sh`;
-const GUARD_COMMAND = `"$CLAUDE_PROJECT_DIR"/${GUARD_PATH}`;
 const SETTINGS_PATH = `${CLAUDE_DIR}/settings.json`;
 const READ_TOOLS = "Read, Grep, Glob, Bash";
 
@@ -37,16 +42,10 @@ export function renderClaude(source: AdapterSource): RenderedFile[] {
     });
   }
   files.push({ path: STATUSLINE_PATH, content: resolveNames(source.statusline), mode: 0o755 });
-  files.push({ path: GUARD_PATH, content: resolveNames(source.guard), mode: 0o755 });
   return files;
 }
 
 type Settings = Record<string, unknown>;
-
-interface HookGroup {
-  matcher?: string;
-  hooks?: Array<{ type?: string; command?: string }>;
-}
 
 function isObject(value: unknown): value is Settings {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -63,35 +62,14 @@ async function readSettings(cwd: string): Promise<Settings> {
   }
 }
 
-function guardGroups(settings: Settings): HookGroup[] {
-  const hooks = settings.hooks;
-  if (!isObject(hooks) || !Array.isArray(hooks.PreToolUse)) return [];
-  return hooks.PreToolUse as HookGroup[];
-}
-
-const GUARD_MATCHERS = ["Bash", "Edit|Write|MultiEdit|NotebookEdit"];
-
-function guardMatchers(settings: Settings): Set<string> {
-  const found = new Set<string>();
-  for (const group of guardGroups(settings)) {
-    if (group.hooks?.some((hook) => hook.command === GUARD_COMMAND) && group.matcher) found.add(group.matcher);
-  }
-  return found;
-}
-
-export function hasGuard(settings: Settings): boolean {
-  const found = guardMatchers(settings);
-  return GUARD_MATCHERS.every((matcher) => found.has(matcher));
-}
-
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 /**
- * Adds the guard hook and the statusline. A statusline the user already has is
- * wrapped, so the harness status is appended to it instead of replacing it.
- * Every other key is preserved verbatim.
+ * Adds the status line; one the user already has is wrapped, so the ways
+ * status is appended to it. The 0.2 guard hook is removed. Every other key is
+ * preserved verbatim.
  */
 export function mergeClaudeSettings(settings: Settings): { settings: Settings; notes: string[] } {
   const next: Settings = { ...settings };
@@ -102,16 +80,19 @@ export function mergeClaudeSettings(settings: Settings): { settings: Settings; n
     next.statusLine = { type: "command", command: STATUSLINE_PATH };
   } else if (!current.startsWith(`${STATUSLINE_PATH} `)) {
     next.statusLine = { ...(statusLine as Settings), type: "command", command: `${STATUSLINE_PATH} ${shellQuote(current)}` };
-    notes.push(`wrapped existing statusLine (${current}); harness status is appended after it`);
+    notes.push(`wrapped existing statusLine (${current}); the ways status is appended after it`);
   }
-  const hooks: Settings = isObject(next.hooks) ? { ...next.hooks } : {};
-  const groups = Array.isArray(hooks.PreToolUse) ? [...(hooks.PreToolUse as HookGroup[])] : [];
-  const present = guardMatchers(next);
-  for (const matcher of GUARD_MATCHERS) {
-    if (!present.has(matcher)) groups.push({ matcher, hooks: [{ type: "command", command: GUARD_COMMAND }] });
+  if (isObject(next.hooks) && Array.isArray(next.hooks.PreToolUse)) {
+    const kept = (next.hooks.PreToolUse as unknown[]).filter((group) => !isWaysGuardEntry(group));
+    if (kept.length !== next.hooks.PreToolUse.length) {
+      const hooks: Settings = { ...next.hooks };
+      if (kept.length > 0) hooks.PreToolUse = kept;
+      else delete hooks.PreToolUse;
+      if (Object.keys(hooks).length > 0) next.hooks = hooks;
+      else delete next.hooks;
+      notes.push("removed the retired ways guard hook");
+    }
   }
-  hooks.PreToolUse = groups;
-  next.hooks = hooks;
   return { settings: next, notes };
 }
 
@@ -128,16 +109,15 @@ async function verifySettings(cwd: string): Promise<AdapterIssue[]> {
   } catch {
     return [{ code: "adapter-settings-invalid", path: SETTINGS_PATH, message: "Claude settings are unreadable" }];
   }
-  const issues: AdapterIssue[] = [];
-  if (!hasGuard(settings)) issues.push({ code: "adapter-guard-missing", path: SETTINGS_PATH, message: "PreToolUse guard hook is not configured; run ways adapter install claude" });
   if (!isObject(settings.statusLine) || typeof settings.statusLine.command !== "string") {
-    issues.push({ code: "adapter-statusline-missing", path: SETTINGS_PATH, message: "statusLine is not configured; run ways adapter install claude" });
+    return [{ code: "adapter-statusline-missing", path: SETTINGS_PATH, message: "statusLine is not configured; run ways adapter install claude" }];
   }
-  return issues;
+  return [];
 }
 
 export const claudeAdapter: ProviderAdapter = {
   id: "claude",
+  tier: "default",
   render: renderClaude,
   merge: mergeSettingsFile,
   verify: verifySettings,

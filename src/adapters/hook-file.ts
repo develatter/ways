@@ -73,6 +73,44 @@ export async function mergeHookFile(cwd: string, path: string, wanted: Record<st
   return { files: [path], notes: [] };
 }
 
+/**
+ * Removes the entries `ours` recognises from every `hooks.<event>` array and
+ * drops arrays it empties; user entries stay. Used to retire the 0.2 guard.
+ * Returns undefined when the file does not exist or nothing changed.
+ */
+export async function removeHookEntries(cwd: string, path: string, ours: (entry: unknown) => boolean): Promise<MergeResult | undefined> {
+  let file: JsonObject;
+  try {
+    await readFile(join(cwd, path));
+    file = await readJsonObject(cwd, path);
+  } catch {
+    return undefined;
+  }
+  if (!isObject(file.hooks)) return undefined;
+  const hooks: JsonObject = { ...file.hooks };
+  let changed = false;
+  for (const [event, entries] of Object.entries(hooks)) {
+    if (!Array.isArray(entries)) continue;
+    const kept = entries.filter((entry) => !ours(entry));
+    if (kept.length === entries.length) continue;
+    changed = true;
+    if (kept.length === 0) delete hooks[event];
+    else hooks[event] = kept;
+  }
+  if (!changed) return undefined;
+  const next: JsonObject = { ...file, hooks };
+  if (Object.keys(hooks).length === 0) delete next.hooks;
+  await writeAtomic(join(cwd, path), stableJson(next));
+  return { files: [path], notes: [`removed the retired ways guard hook from ${path}`] };
+}
+
+/** A hook entry (or group) whose command runs a ways guard script. */
+export function isWaysGuardEntry(entry: unknown): boolean {
+  if (!isObject(entry)) return false;
+  if (typeof entry.command === "string" && entry.command.includes("ways-guard.sh")) return true;
+  return Array.isArray(entry.hooks) && entry.hooks.length > 0 && entry.hooks.every((hook) => isObject(hook) && typeof hook.command === "string" && hook.command.includes("ways-guard.sh"));
+}
+
 export async function verifyHookFile(cwd: string, path: string, provider: string, wanted: Record<string, HookEntry[]>, present: (entry: unknown, wanted: HookEntry) => boolean): Promise<AdapterIssue[]> {
   let file: JsonObject;
   try {

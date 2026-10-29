@@ -59,6 +59,5 @@ export async function loadAdapterSource(root = adapterAssetPath()): Promise<Adap
     commands,
     roles,
     statusline: await readFile(join(root, "statusline.sh"), "utf8"),
-    guard: await readFile(join(root, "guard.sh"), "utf8"),
   };
 }

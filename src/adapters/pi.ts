@@ -6,48 +6,36 @@ import type { AdapterSource, ProviderAdapter, RenderedFile } from "./types.js";
  * (2026-09): commands become prompt templates in `.pi/prompts/<name>.md`
  * (frontmatter `description`, `argument-hint`; `$ARGUMENTS` supported), roles
  * become `.pi/agents/<name>.md` for the subagent extension with a `tools`
- * restriction for read roles, and the guard plus the status line run from a
- * project extension in `.pi/extensions/ways/index.ts` through `pi.on("tool_call")`
- * (returning `{ block, reason }`) and `ctx.ui.setStatus`. Project resources load
- * only once the project is trusted.
+ * restriction for read roles, and the status line comes from a project
+ * extension in `.pi/extensions/ways/index.ts` through `ctx.ui.setStatus`. pi
+ * reads `AGENTS.md`. Project resources load only once the project is trusted.
  */
 export const PI_DIR = ".pi";
-const GUARD_PATH = `${PI_DIR}/ways-guard.sh`;
-const STATUSLINE_PATH = `${PI_DIR}/ways-statusline.sh`;
 const READ_TOOLS = "read, grep, find, ls";
 
-const EXTENSION = `// Managed by ways. Guard and status line for pi, both backed by the harness scripts.
+const EXTENSION = `// Managed by ways. Shows the active ways work in pi's status bar.
 import { spawnSync } from "node:child_process";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const GUARD = "${GUARD_PATH}";
-const STATUSLINE = "${STATUSLINE_PATH}";
-const ROOT = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
-
-function runScript(script: string, payload: unknown): { code: number; stdout: string; stderr: string } {
-  const result = spawnSync("sh", [join(ROOT, script)], { input: JSON.stringify(payload), encoding: "utf8" });
-  return { code: result.status ?? 1, stdout: result.stdout ?? "", stderr: result.stderr ?? result.error?.message ?? "" };
+function waysStatus(cwd: string): string {
+  const dirs = spawnSync("git", ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], { cwd, encoding: "utf8" });
+  if (dirs.status !== 0) return "";
+  for (const dir of dirs.stdout.trim().split("\\n")) {
+    try {
+      const active = JSON.parse(readFileSync(join(dir, "ways", "active.json"), "utf8")) as { id?: string; kind?: string };
+      if (active.id) return \`ways: \${active.kind ?? "work"} \${active.id}\`;
+    } catch {
+      // No active work recorded in this Git directory.
+    }
+  }
+  return "ways: idle";
 }
 
 export default function (pi: ExtensionAPI) {
-  pi.on("tool_call", async (event) => {
-    const cwd = process.cwd();
-    const input = (event.input ?? {}) as Record<string, unknown>;
-    let payload: unknown;
-    if (event.toolName === "bash") payload = { tool_name: "Bash", tool_input: { command: String(input.command ?? "") }, cwd };
-    else if (event.toolName === "edit" || event.toolName === "write" || event.toolName === "multi_edit") payload = { tool_name: "Write", tool_input: { file_path: String(input.path ?? "") }, cwd };
-    else return undefined;
-    const result = runScript(GUARD, payload);
-    if (result.code !== 0) return { block: true, reason: result.stderr.trim() || "ways guard failed; blocking tool use" };
-    return undefined;
-  });
-
   const refresh = async (_event: unknown, ctx: { hasUI: boolean; ui: { setStatus(key: string, text: string): void } }) => {
-    if (!ctx.hasUI) return;
-    const result = runScript(STATUSLINE, { cwd: process.cwd() });
-    ctx.ui.setStatus("ways", result.stdout.trim());
+    if (ctx.hasUI) ctx.ui.setStatus("ways", waysStatus(process.cwd()));
   };
   pi.on("session_start", refresh);
   pi.on("turn_start", refresh);
@@ -69,12 +57,11 @@ export function renderPi(source: AdapterSource): RenderedFile[] {
     files.push({ path: `${PI_DIR}/agents/ways-${role.name}.md`, content: `${front}\n${resolveWith(role.body, SLASH_NAMES)}\n` });
   }
   files.push({ path: `${PI_DIR}/extensions/ways/index.ts`, content: EXTENSION });
-  files.push({ path: STATUSLINE_PATH, content: resolveWith(source.statusline, SLASH_NAMES), mode: 0o755 });
-  files.push({ path: GUARD_PATH, content: resolveWith(source.guard, SLASH_NAMES), mode: 0o755 });
   return files;
 }
 
 export const piAdapter: ProviderAdapter = {
   id: "pi",
+  tier: "default",
   render: renderPi,
 };
