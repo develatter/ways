@@ -1,12 +1,10 @@
 # ways
 
-A lean harness for coding agents. The agent decides how to work; ways gives it context, checks the result once, records the evidence itself, and only blocks what would break a guarantee.
+A lean harness for coding agents (Claude Code and pi first; Codex and Cursor best effort).
+The agent decides how to work. ways gives it the right context at the right moment, checks the result once, records the evidence itself, and only blocks what would break a guarantee.
+"Done" is a short list of one-line criteria, each with a command that proves it: you review those lines, not the diff.
 
-- **Done means something.** A delivery is a goal plus one-line criteria, each with an executable verifier. `ways done` runs them with your checks and writes the evidence; the agent never does.
-- **Ceremony stays out of the way.** Commit as usual: a hook adds the trailer. A small change is one command.
-- **Memory is short and travels with the change.** One fact per file, tied to the code it is about, flagged when that code moves on.
-
-## Install (60 seconds)
+## Install and first use (60 seconds)
 
 Requires Git and Node.js 22+ on Linux or macOS.
 
@@ -16,19 +14,32 @@ npx ways bootstrap --test-command='["npm","test"]'
 git add -A && git commit -m "chore: install ways"
 ```
 
-Bootstrap writes 23 files: `.ways/config.json`, two commit hooks and the agent-hook wrapper, `scripts/check.sh`, a CI job (`.github/workflows/ways.yml`, running `ways verify` and `ways wiki check`), an `AGENTS.md` for you to fill in as a map of your project, a `CLAUDE.md` that imports it, the memory index, and the Claude Code and pi adapters (hooks, three skills, a reviewer and a documentalist agent). Codex and Cursor are available with `--agents=claude,pi,codex,cursor`.
+Then open `AGENTS.md` and describe your project (what it is, where things live, the commands): that is the only part you write. Start Claude Code or pi as usual; you do not have to tell the agent about ways.
 
-Fill in `AGENTS.md` (what the project is, where things live, the commands): that is the part only you can write.
+Bootstrap writes 23 files: `.ways/config.json`, two Git hooks and the agent-hook wrapper, `scripts/check.sh`, a CI job (`.github/workflows/ways.yml`), `AGENTS.md`, a `CLAUDE.md` that imports it, the memory index, and the Claude Code and pi adapters (hooks, three skills, a reviewer and a documentalist agent). Add Codex or Cursor with `--agents=claude,pi,codex,cursor`.
 
-## Use it
+## The two ways to work
 
-**A small change.** Work and commit as you like (any number of commits), then:
+**A small change.** Work and commit as you like, any number of commits, then:
 
 ```bash
-npx ways done        # integrity + your checks, once, in a clean checkout; closes the change
+npx ways done        # your checks, once, in a clean checkout of your commit; closes the change
 ```
 
-In the default `observe` mode the first commit starts the change, named after the branch; `npx ways start <id>` names it yourself. If the checks fail, fix, commit and run `ways done` again. `ways done` runs the checks as your base commit configured them, in a clean checkout of your commit (so leftovers in your working tree do not count), and retries a failure twice before recording it; `--fast` runs in place and leaves the clean run to CI.
+The first commit starts the change on its own (named after the branch, or after the commit on `main`); `npx ways start <id>` names it yourself. If a check fails, fix, commit and run `ways done` again.
+
+**A delivery with criteria.** Say what done means, one line per criterion, each with the strongest check you have:
+
+```bash
+npx ways outcome open auth-refresh --goal="Refresh tokens before they expire" \
+  --criterion="AC1:refreshes 60 s before expiry" --verify='AC1:npm test -- -t "refresh before expiry"' \
+  --criterion="AC2:never refreshes a revoked token" --verify='AC2:npm test -- -t "revoked"'
+# ... implement and commit ...
+npx ways done        # runs your checks and every verifier, records the evidence
+npx ways review      # an independent read-only reviewer (required by default); closes the work
+```
+
+`outcome open` prints the criteria with their verifiers in one block: that is what you approve. Each verifier must fail before the work and pass after it; one that already passes, or a criterion without `--verify`, counts as `review-only` and makes the review mandatory. `--strength=AC1:property` (or `proof`, `e2e`) records how strong a verifier is, and `ways done` says what backs the delivery (`Backed by: 1 property, 2 test`). `--review=none` drops the review when every criterion has a verifier; `--approval=required` adds your approval at the end.
 
 **When it cannot be done as asked**, the agent stops and says why instead of working around a check:
 
@@ -36,52 +47,48 @@ In the default `observe` mode the first commit starts the change, named after th
 npx ways block "AC2 needs the payments sandbox key; set PAYMENTS_KEY in .env.test or drop AC2"
 ```
 
-**A delivery with criteria.** Say what done means, in one line per criterion, with the strongest verifier you have:
+**Your approval** is needed when you ask for it, and when a work modifies or deletes an existing test, changes the check configuration or runs fewer tests (unless the independent review accepted that change; adding tests never needs one). You run, in your own terminal, `npx ways approve` (or `--key=~/.ssh/id_ed25519_sk` to sign it).
 
-```bash
-npx ways outcome open auth-refresh --goal="Refresh tokens before they expire" \
-  --criterion="AC1:refreshes 60 s before expiry" --verify='AC1:npm test -- -t "refresh before expiry"' \
-  --criterion="AC2:never refreshes a revoked token" --verify='AC2:npm test -- -t "revoked"'
-# ... implement and commit ...
-npx ways done      # runs checks and verifiers, records the evidence
-npx ways review    # only when a review is required (the default): an independent read-only reviewer; closes the work
-```
-
-You review the criteria, not the diff: `outcome open` prints them with their verifiers in one block. Each verifier must fail on the base and pass on your commit; one that already passes before the work counts as `review-only`, like a criterion without `--verify`, and makes the independent review mandatory. `--strength=AC1:property` (or `proof`, `e2e`) records how strong a verifier is, and `ways done` says what backs the delivery (`Backed by: 1 property, 2 test`). `--review=none` drops the review for criteria that all have discriminating verifiers, and `--approval=required` adds a human approval at the end.
-
-`ways review` launches the reviewer as a new process that only has read tools and gets its prompt from ways (`claude -p` or `pi -p`; `--agent=claude|pi`, or `"reviewer"` in `.ways/config.json`), and records its verdict itself; in Claude Code the `ways-reviewer` subagent works too. Only `critical` and `high` findings block.
-
-**Human approvals** are needed when you ask for them, and when the work modifies or deletes an existing test, changes the check configuration or runs fewer tests, unless the independent review accepted that change (adding tests never needs one). The human runs, in their own terminal:
-
-```bash
-npx ways approve                       # or --key=~/.ssh/id_ed25519_sk to sign it
-```
-
-It refuses without a terminal, shows the criteria, the evidence and the review, asks for the work id and, if nothing else is missing, closes the work. With your SSH key in a committed `.ways/allowed_signers` it signs the approval, and `"approvals": {"signature": "required"}` makes unsigned approvals not count; use a FIDO key (`ed25519-sk`) so that an agent running as you cannot sign. See [docs/VERIFICATION.md](docs/VERIFICATION.md).
-
-**Memory.** When you learn something durable (a convention, a decision, a pitfall, how to verify something):
+**Memory.** When the agent (or you) learns something durable, a convention, a decision, a pitfall, how to check something:
 
 ```bash
 npx ways remember "Tokens refresh 60 s before expiry; never on revoked tokens" --path='src/auth/**'
 ```
 
-It writes one short file under `.ways/knowledge/`; commit it with the change. `ways done` and `ways status` point at the memory of the code you are changing and mark it *possibly stale* when that code changed after the memory did.
+One short file under `.ways/knowledge/`, committed with the change. When that code changes later, the memory is shown again and marked *possibly stale*.
 
-**Where am I?** `npx ways status` shows the active work, its criteria, what is missing and the exact next command. `npx ways cancel` drops the active work.
+**Where am I?** `npx ways status` shows the active work, its criteria, what is missing and the exact next command; `npx ways cancel` drops it. Every command works from any directory of the repository.
 
-**What the agent sees.** In Claude Code and pi you do not have to tell the agent about ways. Hooks hand it, at session start, a short brief (the active work and its criteria, what fails, what waits on whom, the next command, and the memory of the code in play), then only what changed, and say nothing when nothing did. Before a tool call they refuse hand edits of `.ways/work/`; at the end of a turn they remind the agent once of a failing run or a missing review, and tell you, not the agent, when your approval is pending or the agent blocked. Claude Code also gets each memory as a path rule, loaded when it opens that code. `npx ways context --brief` prints the brief; [docs/CONTEXT.md](docs/CONTEXT.md) explains it.
+## What the agent sees
 
-The skills `ways-outcome`, `ways-remember` and `ways-orchestrator` and the `ways-reviewer` agent are there when you want them (`/ways-outcome` in Claude Code).
+Hooks hand the agent, at session start, a short brief (at most 6,000 characters): the active work and its criteria, what fails, what waits on whom, the next command, and the memory of the code in play. Later prompts get only what changed, or nothing. Before a tool call, the hooks refuse hand edits of `.ways/work/` (the records only ways writes). At the end of a turn they remind the agent once of a failing run or a missing review, and tell you, not the agent, when your approval is pending or the agent blocked. Claude Code also gets each memory as a path rule, loaded when it opens that code; pi gets it the first time it touches that code.
 
-**See every agent at once, and what they wait on from you.**
+`npx ways context --brief` prints the brief. The skills `ways-outcome`, `ways-remember` and `ways-orchestrator` and the `ways-reviewer` agent are there when you want them. See [docs/CONTEXT.md](docs/CONTEXT.md).
+
+## The board and the inbox
 
 ```bash
-npx ways serve --open      # or: npx ways serve --demo, to see it with made-up data
+npx ways serve --open      # or --demo, to see it with made-up data
 ```
 
-A local page (127.0.0.1, with a token in the URL it prints) with a live kanban of every worktree's work across your repositories (Preparing, Working, Verifying, Blocked, Waiting for you, Done), derived from the hooks, the records and `git worktree list`, and an inbox. Agents put questions there with `npx ways ask "<question>"` (or `--wait` for the answer now) and `ways block`; you answer on the page or with `npx ways inbox answer <id> "<answer>"`, and you tell an agent something with *Tell the agent* or `npx ways inbox tell "<instruction>" --work=<id>`. The agent gets each answer or instruction once, at its next prompt, stop or session start. Every inbox command takes `--json`, so an orchestrating agent can run the whole loop. See [docs/CONTROL_PLANE.md](docs/CONTROL_PLANE.md).
+A local page (127.0.0.1 only, with a token in the URL it prints) with a live kanban of every worktree's work across your repositories (Preparing, Working, Verifying, Blocked, Waiting for you, Done), derived from the hooks, the records and `git worktree list`: nothing to drag. Next to it, the inbox: agents ask with `npx ways ask "<question>"` (`--wait` to wait for the answer) and `ways block`; you answer on the page or with `npx ways inbox answer <id> "<answer>"`, and tell an agent something with *Tell the agent* or `npx ways inbox tell "<instruction>" --work=<id>`. The agent gets each answer once, at its next prompt, stop or session start. Every inbox command takes `--json`, so an orchestrating agent can run the loop. See [docs/CONTROL_PLANE.md](docs/CONTROL_PLANE.md).
 
-**A wiki for people, kept honest.** The memory above is for agents. For humans, `docs/wiki/` is a plain-Markdown wiki (tutorials, guides, reference, explanation; GitHub renders it, nothing to build) that agents never get as truth:
+## What ways guarantees, and what it does not
+
+| Guarantee | How |
+| --- | --- |
+| The definition of done does not move | The goal and criteria are committed when the outcome opens; the commit hook refuses any hand edit of `.ways/work/`, and the history audit flags one that bypassed the hook |
+| The evidence is the harness's | `ways done` writes it (commands, exit codes, durations, output digests, attempts) for the exact commit and tree it ran on, in a clean checkout, with the checks as the base commit configured them |
+| A criterion shows the work did something | Its verifier must fail on the base and pass on the commit; otherwise it is review-only |
+| Tests are not weakened silently | Modifying or deleting an existing test or check file, or running fewer tests, needs your approval or an independent review that accepts it |
+| Reviews are independent | Only a reviewer ways launched (or the `ways-reviewer` subagent it handed the prompt to) counts; it has read tools only and ways records its answer itself |
+| Approvals come from a person | `ways approve` needs a real terminal; with `.ways/allowed_signers` it is SSH-signed, and the policy can require that |
+
+**What it does not guarantee.** Locally, an agent with a shell can bypass any hook (`WAYS_DISABLE=1`, or pointing `core.hooksPath` elsewhere). A criterion is only as good as its verifier: ways proves the verifier went from red to green, not that it tests the right thing; that is what you review. **The CI is the final judge**: the `ways verify` job bootstrap writes re-runs everything from scratch on every pull request; make it a required check ([docs/BRANCH_PROTECTION.md](docs/BRANCH_PROTECTION.md)). The threat model is in [docs/VERIFICATION.md](docs/VERIFICATION.md).
+
+## A wiki for people
+
+The memory above is for agents. For humans, `docs/wiki/` is a plain-Markdown wiki (tutorials, how-to guides, reference, explanation; GitHub renders it, nothing to build):
 
 ```bash
 npx ways wiki init       # the entry page, the folders, .ways/wiki.json
@@ -89,35 +96,7 @@ npx ways wiki check      # links, frontmatter, examples, coverage, and pages sta
 npx ways wiki update     # a documentalist agent (claude -p, pi -p or your own command) writes or catches up pages
 ```
 
-Each page lists the files it documents and a hash of each from when it was written, so `check` fails (for CI) the day one of them changes. `update` hands the agent a brief of what is stale, missing or broken, lets it write only under `docs/wiki/`, and afterwards fails the run if anything outside it changed. The memory ignores the wiki and cannot cite it, and the documentalist cannot write or commit `.ways/knowledge`. See [docs/WIKI.md](docs/WIKI.md); the wiki of ways itself starts at [docs/wiki](docs/wiki/index.md).
-
-## What ways guarantees, and what it does not
-
-| Guarantee | How |
-| --- | --- |
-| The definition of done does not move | The goal and criteria are committed when the outcome opens; the commit hook refuses any hand edit of `.ways/work/`, and the history audit flags one that bypassed the hook |
-| Evidence is the harness's, bound to its input | `ways done` writes it (commands, exit codes, durations, output digests and tails, attempts, where it ran) for the exact commit and tree it ran on, in a clean checkout, with the base's checks; closing requires the closed tree to be that tree |
-| A criterion shows the work did something | Its verifier must fail on the base and pass on the commit; otherwise it is review-only |
-| Tests are not weakened silently | Modifying or deleting an existing test or check file, or running fewer tests, needs a human approval or an independent review that accepts it |
-| Reviews are independent | Only a reviewer ways launched (or the `ways-reviewer` subagent it handed the prompt to) counts; it has read tools only and ways records its answer itself |
-| Approvals come from a human | `ways approve` needs a real terminal; with `allowed_signers` it is SSH-signed, and the policy can require that |
-
-Locally, an agent with a shell can bypass any hook (`WAYS_DISABLE=1`, or pointing `core.hooksPath` elsewhere; `--no-verify` alone does not skip the record check, which runs in `prepare-commit-msg`). **The CI is the final judge**: the `ways verify` job bootstrap writes re-runs everything from scratch on every pull request; make it a required check ([docs/BRANCH_PROTECTION.md](docs/BRANCH_PROTECTION.md)). What this does and does not protect against is in [docs/VERIFICATION.md](docs/VERIFICATION.md).
-
-`enforcement` in `.ways/config.json` is `observe` by default: the hook only refuses commits that hand-edit a work record. With `enforce` it also refuses commits outside an active work.
-
-## Configure checks
-
-`--test-command` is the fallback; for several checks pass a contract. Only names in `required` run, in the order `test`, `lint`, `typecheck`, `build`, `e2e`:
-
-```bash
-npx ways bootstrap --test-command='["npm","test"]' \
-  --commands='{"test":["npm","test"],"lint":["npm","run","lint"],"required":["test","lint"],"timeoutMs":120000}'
-```
-
-The contract can add a `setup` command and `services` (`{"name", "command", "ready", "timeoutMs"}`, where `ready` is one of `{"command": [...]}`, `{"tcp": {"port": 5432}}` or `{"http": "http://127.0.0.1:3000/health"}`). `ways done` and `ways check --with-services` start them around the checks, log them under `.git/ways/services/` and stop only the processes they started.
-
-`setup` (for example `["npm","ci"]`) is how the clean checkout gets its dependencies; it runs again only when a lockfile changes. Without it, ways links your working tree's `node_modules` or `.venv` into the clean checkout, and says so in the evidence. If the clean run is too slow for your loop, set `"evaluation": "fast"`: CI still runs it clean.
+Each page lists the files it documents with a hash of each, so `check` fails (in CI too) the day one of them changes. The documentalist can write only under `docs/wiki/`, and the wiki and the memory never feed each other. See [docs/WIKI.md](docs/WIKI.md); the wiki of ways itself starts at [docs/wiki](docs/wiki/index.md).
 
 ## Commands
 
@@ -151,21 +130,41 @@ The contract can add a `setup` command and `services` (`{"name", "command", "rea
 | `ways evals` | Run or compare the harness evaluation corpus | `ways evals run --harness=outcome --output=result.json` |
 <!-- commands:end -->
 
+## Configuration
+
+| Setting | Where | What it does |
+| --- | --- | --- |
+| `enforcement` | `.ways/config.json` | `observe` (default): the commit hook only refuses commits that hand-edit a work record, and adds the `Harness-Work` trailer. `enforce`: it also refuses commits outside an active work |
+| `commands` | `.ways/config.json` (`bootstrap --commands=<json>`) | Your checks: `test`, `lint`, `typecheck`, `build`, `e2e`; only names in `required` run, in that order. Plus `setup` (e.g. `["npm","ci"]`, how the clean checkout gets its dependencies) and `services` (started around the checks) |
+| `evaluation` | `.ways/config.json` | `clean` (default) or `fast`: run `ways done` in your working tree and leave the clean run to CI (`ways done --fast` for once) |
+| `review`, `approvals`, `reviewer` | `.ways/config.json` | Default review policy of new outcomes; `approvals.signature: required` for SSH-signed approvals only; which agent or command reviews |
+| agents | `ways bootstrap --agents=claude,pi[,codex,cursor]`, `ways adapter install <agent>` | Which coding agents get hooks, skills and roles. Claude Code and pi by default |
+| `lang` | `~/.config/ways/config.json` (`{"lang": "es"}`) or `ways serve --lang=es` | Language of the board: `en` or `es` |
+| `WAYS_DISABLE=1` | environment | Skips the Git and agent hooks for one command. CI still judges the result |
+
+A full check contract looks like this:
+
+```bash
+npx ways bootstrap --test-command='["npm","test"]' \
+  --commands='{"test":["npm","test"],"lint":["npm","run","lint"],"required":["test","lint"],"timeoutMs":120000}'
+```
+
+Services are `{"name", "command", "ready", "timeoutMs"}`, where `ready` is `{"command": [...]}`, `{"tcp": {"port": 5432}}` or `{"http": "http://127.0.0.1:3000/health"}`; ways starts them, logs them under `.git/ways/services/` and stops only what it started.
+
 ## Where things live
 
 | Path | What | Committed |
 | --- | --- | --- |
 | `.ways/config.json` | Checks, enforcement, review default, verifier globs, approval policy, reviewer | yes |
-| `.ways/allowed_signers` | Optional: the SSH keys whose signatures count as the human's approval | yes |
-| `.ways/work/<id>.json` | One record per outcome (and per change that needed an approval or was blocked): criteria, evidence, review, approval (written only by ways) | yes |
-| `.github/workflows/ways.yml` | The CI job running `ways verify` (written once; yours to adapt) | yes |
-| `.ways/knowledge/` | Memory: short OKF concepts | yes |
-| `docs/wiki/`, `.ways/wiki.json` | The wiki for humans, and its settings (agent, coverage); see [docs/WIKI.md](docs/WIKI.md) | yes |
+| `.ways/allowed_signers` | Optional: the SSH keys whose signatures count as your approval | yes |
+| `.ways/work/<id>.json` | One record per outcome (and per change that needed an approval or was blocked): criteria, evidence, review, approval; written only by ways | yes |
+| `.ways/knowledge/` | Memory: one short fact per file | yes |
+| `.github/workflows/ways.yml` | The CI job running `ways verify` and `ways wiki check` (written once; yours to adapt) | yes |
+| `docs/wiki/`, `.ways/wiki.json` | The wiki for people, and its settings | yes |
 | `.ways/hooks/`, `scripts/check.sh` | Managed Git hooks, agent-hook wrapper and check script (hashed in `.ways/manifest.json`) | yes |
-| `.claude/rules/ways-*.md` | Memory as Claude Code path rules (generated; `ways memory index`) | yes |
-| `.git/ways/` | Active work, run log, flaky quarantine, test counts, base-run cache, search index, service logs, context caches, agent sessions, the [event log](docs/EVENTS.md), the [inbox](docs/CONTROL_PLANE.md) and `serve.json` (the board's token, mode 0600) | no |
-| `~/.config/ways/` | `registry.json`: the repositories `ways serve` shows; `config.json`: `{"lang": "es"}` | no |
-| `$TMPDIR/ways-eval/` | The clean checkout `ways done` evaluates in (a Git worktree, reused) | no |
+| `.claude/rules/ways-*.md` | Memory as Claude Code path rules (generated) | yes |
+| `.git/ways/` | Active work, run log, caches, agent sessions, the [event log](docs/EVENTS.md), the [inbox](docs/CONTROL_PLANE.md) and the board's token | no |
+| `~/.config/ways/` | `registry.json` (the repositories `ways serve` shows) and `config.json` | no |
 
 ## Upgrading from 0.2
 
@@ -174,22 +173,28 @@ npx ways upgrade            # shows what will change
 npx ways upgrade --apply    # applies it; commit the result
 ```
 
-The check contract and the memory carry over (coverage globs become `paths:` on their concepts), an active quick work becomes the active change, and an active outcome is reported with the command that reopens it. SDD, plan, tasks, attempts, discovery and reconciliation are gone; old `.ways/outcomes/`, `.ways/sdd/` and `.ways/plans/` directories are left in place and can be deleted. An `AGENTS.md` you edited is kept: replace its ways bullets with the short "Working with ways" section of the new template. See [decision 0003](docs/decisions/0003-what-stays-and-what-goes.md).
+Your checks and memory carry over, and an active quick work becomes the active change. SDD, plan, tasks, attempts, discovery and reconciliation are gone: old `.ways/outcomes/`, `.ways/sdd/` and `.ways/plans/` directories are ignored and can be deleted. See [CHANGELOG.md](CHANGELOG.md) and [decision 0003](docs/decisions/0003-what-stays-and-what-goes.md).
 
-## Harness evals
+## Limitations and status
 
-`ways evals run` grades a fixed corpus in disposable repositories without ways (A), with checks only (B), as a change with `ways done` (C) or as an outcome (E); `ways evals compare` builds a matched report with 95% intervals and no single score. `--corpus=assets/evals/adversarial.json` runs the traps (edit the test, loosen the checks, review yourself, fake the approval, force an impossible task) against real models. See [docs/EVALS.md](docs/EVALS.md).
+This is `0.3.0-dev.0`, a pre-release. What to expect:
+
+- **Mature** (carried from 0.2 and reworked, with the longest test history): the check contract, work records and their history audit, clean-checkout evaluation, memory files and their staleness, upgrades from 0.2.
+- **New in 0.3, tested but not yet used in anger**: the agent hooks and brief, `ways verify` in CI, red-to-green verifiers, independent review by configuration, signed approvals, `ways block`, the board and inbox, the wiki and the documentalist.
+- **Not measured yet.** The hooks are tested against recorded Claude Code and pi payloads, and the reviewer and documentalist launches against stand-in agents, not against the real binaries in a live session. The evals that would show whether ways makes agents better or cheaper (`ways evals`, [docs/EVALS.md](docs/EVALS.md)) have only run with a fake agent: runs with real models are pending a budget.
+- **Known gaps.** The agent hook's p95 latency is above the 100 ms target on slow hosts; a long shell command can make an agent look stalled on the board after 10 minutes; the test-count ratchet only reads common runners' summaries. The full list is in [docs/ROADMAP.md](docs/ROADMAP.md).
+- Linux and macOS only; Windows is untested.
 
 ## Development
 
 ```bash
 npm ci
 npm run check        # typecheck, build and the whole test suite (what CI runs on Node 22 and 24)
-node dist/cli.js wiki check   # the wiki in docs/wiki, which CI also runs: edit a file a page cites and it fails until the page is caught up
-npm run test:e2e     # only the packed-tarball consumer test
+npm run test:e2e     # only the packed-tarball smoke test and the memory end-to-end test
+node dist/cli.js wiki check   # the wiki in docs/wiki, which CI also runs
 ```
 
-Tests drive the compiled CLI (`dist/`) for the Git hooks, so `npm test` builds first; if you run `npx vitest` directly, run `npm run build` before. This repository does not run ways on itself. Design decisions are in [docs/decisions/](docs/decisions/).
+`npm test` builds first because tests drive the compiled CLI; if you run `npx vitest` directly, run `npm run build` before. This repository does not run ways on itself ([docs/DOGFOODING.md](docs/DOGFOODING.md) proposes how it could). Design decisions are in [docs/decisions/](docs/decisions/README.md); changes per version in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
