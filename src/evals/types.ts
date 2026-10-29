@@ -1,20 +1,17 @@
-export type HarnessLabel = "no-ways" | "checks-only" | "lightweight-state" | "full-sdd" | "outcome";
-export const HARNESS_LABELS: readonly HarnessLabel[] = ["no-ways", "checks-only", "lightweight-state", "full-sdd", "outcome"];
+export type HarnessLabel = "no-ways" | "checks-only" | "lightweight-state" | "outcome";
+export const HARNESS_LABELS: readonly HarnessLabel[] = ["no-ways", "checks-only", "lightweight-state", "outcome"];
 /** Harnesses whose disposable repository has the running Ways package installed and committed. */
-export const WAYS_HARNESSES: readonly HarnessLabel[] = ["lightweight-state", "full-sdd", "outcome"];
-/** The A–E letters used in issues and reports; results record the label. */
-export const HARNESS_LETTERS: Record<HarnessLabel, string> = { "no-ways": "A", "checks-only": "B", "lightweight-state": "C", "full-sdd": "D", "outcome": "E" };
+export const WAYS_HARNESSES: readonly HarnessLabel[] = ["lightweight-state", "outcome"];
+/** The letters used in issues and reports; results record the label. D (full SDD) was retired with SDD. */
+export const HARNESS_LETTERS: Record<HarnessLabel, string> = { "no-ways": "A", "checks-only": "B", "lightweight-state": "C", "outcome": "E" };
 
-/** Policies an outcome (E) run asks the agent to open with; the committed spec is graded against them. */
+/** Policy an outcome (E) run asks the agent to open with; the committed record is graded against it. */
 export interface OutcomeEvalPolicy {
-  isolation: "required" | "optional";
-  parallel: "allowed" | "disabled";
-  evaluation: "independent" | "self";
-  memory: "none" | "normal" | "high";
-  /** Human approval checkpoints; anything but none needs a human at a TTY during the run. */
-  approvals: "none" | "close" | "close,remediate";
+  review: "required" | "none";
+  /** Anything but none needs a human at a TTY during the run. */
+  approval: "required" | "none";
 }
-export const DEFAULT_OUTCOME_POLICY: OutcomeEvalPolicy = { isolation: "required", parallel: "allowed", evaluation: "independent", memory: "normal", approvals: "none" };
+export const DEFAULT_OUTCOME_POLICY: OutcomeEvalPolicy = { review: "required", approval: "none" };
 
 export const TASK_KINDS = ["feature", "resume", "failed-evaluation-remediation", "false-done-claim", "concurrent-conflict"] as const;
 export type TaskKind = typeof TASK_KINDS[number];
@@ -140,8 +137,8 @@ export interface ComplianceIssue {
   message: string;
 }
 
-/** The Ways workflow a harness asks for: quick work plus an evidence file (C), SDD (D) or the outcome loop (E). */
-export type EvalWorkflow = "quick-evidence" | "sdd" | "outcome";
+/** The Ways workflow a harness asks for: a change finished with `ways done` (C) or an outcome with criteria (E). */
+export type EvalWorkflow = "change" | "outcome";
 
 export type HarnessCompliance =
   | { applicable: false; reason: string }
@@ -149,15 +146,15 @@ export type HarnessCompliance =
     applicable: true;
     workflow: EvalWorkflow;
     compliant: boolean;
-    /** The task's work reached the workflow's terminal state: quick finish with evidence, SDD close or outcome close. */
+    /** The task's work was closed by `ways done` (or by the review or approval that completed it). */
     completed: boolean;
     worksStarted: number;
     worksClosed: number;
-    downgrades: number;
+    /** Failing `ways done` runs before the one that passed. */
     remediationAttempts: number;
-    /** Recorded check failures: SDD validation failures or failed outcome evaluations. */
+    /** Failing `ways done` runs recorded for the task's work. */
     validationFailures: number;
-    /** Human approval artifacts (SDD gates and outcome checkpoints) added in the graded history. */
+    /** Human approvals recorded in the graded history. */
     humanApprovals: number;
     /** Policy the repository recorded for the task's work; null when none was recorded. */
     effectivePolicy: Record<string, string> | null;

@@ -147,7 +147,7 @@ function normalizeConfiguration(configuration: EvalConfiguration): EvalConfigura
     return configuration;
   }
   const policy: OutcomeEvalPolicy = { ...DEFAULT_OUTCOME_POLICY, ...configuration.outcomePolicy };
-  const allowed: Record<keyof OutcomeEvalPolicy, readonly string[]> = { isolation: ["required", "optional"], parallel: ["allowed", "disabled"], evaluation: ["independent", "self"], memory: ["none", "normal", "high"], approvals: ["none", "close", "close,remediate"] };
+  const allowed: Record<keyof OutcomeEvalPolicy, readonly string[]> = { review: ["required", "none"], approval: ["required", "none"] };
   for (const [field, values] of Object.entries(allowed)) {
     if (!values.includes(policy[field as keyof OutcomeEvalPolicy])) throw new Error(`Outcome policy ${field} must be one of ${values.join(", ")}`);
   }

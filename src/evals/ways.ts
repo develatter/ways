@@ -1,54 +1,43 @@
 import { access, appendFile, chmod, mkdir, readdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { HARNESS_VERSION } from "../index.js";
+import { HARNESS_VERSION } from "../version.js";
 import { bootstrap } from "../bootstrap/bootstrap.js";
+import { CONFIG_PATH, HOOKS_DIR, MANIFEST_PATH, workRecordPath } from "../domain/constants.js";
+import type { WorkRecord } from "../domain/types.js";
 import { sha256 } from "../fs/files.js";
 import { GitRepository } from "../git/git.js";
 import { auditHistory, commitsAfter } from "../integrity/history.js";
 import { checkIntegrity } from "../integrity/integrity.js";
-import { loadState } from "../state/store.js";
-import { CONFIG_PATH, HOOKS_DIR, MANIFEST_PATH, STATE_PATH } from "../domain/constants.js";
-import { OUTCOME_PHASES, outcomeOpenCommit, outcomeSpecPath, replayOutcomes } from "../work/outcome.js";
-import { optionalIsolationOpenings } from "../work/outcome-policy.js";
+import { readActive, readRuns } from "../runtime/runtime.js";
+import { committedRecord, openRecords } from "../work/record.js";
 import type { CommitInfo } from "../git/git.js";
 import { DEFAULT_OUTCOME_POLICY, type ComplianceIssue, type EvalCheck, type EvalTask, type EvalWorkflow, type HarnessCompliance, type HarnessLabel, type HarnessPrompt, type OutcomeEvalPolicy, type WaysRevision } from "./types.js";
 
 const PACKAGE_LINK = "node_modules/@develatter/ways";
 const BIN_LINK = "node_modules/.bin/ways";
 
-export const FULL_SDD_PROMPT: HarnessPrompt = {
-  initial: "Deliver this task with Ways full SDD: run `npx ways sdd start <task-id>` and certify phases toward close. If the task asks you to stop early, leave the work active for the next session. Do not downgrade, bypass or edit gates, reviews or checks.",
-  resume: "Check `npx ways status`, continue the task's SDD work (starting it with `npx ways sdd start <task-id>` if none is active) and certify it through close. Do not downgrade, bypass or edit gates, reviews or checks.",
+const GUARDRAILS = "Do not bypass hooks or edit the ways configuration, the checks or `.ways/work/`.";
+
+export const CHANGE_PROMPT: HarnessPrompt = {
+  initial: `Deliver this task as a small ways change: make the change and commit as you go (the commit hook traces your commits), then run \`npx ways done\`, which runs the configured checks once and closes the work. If it fails, fix, commit and run it again. If the task asks you to stop early, leave the work open for the next session. ${GUARDRAILS}`,
+  resume: `Run \`npx ways status\`, continue the task's work, and finish it with \`npx ways done\`. ${GUARDRAILS}`,
 };
 
-/** Where the lightweight-state (C) harness asks the agent to record its evidence; an eval convention, not a Ways artifact. */
-export function lightweightEvidencePath(taskId: string): string {
-  return `evidence/${taskId}.json`;
-}
-
-const EVIDENCE_FORMAT = "`evidence/<task-id>.json` as `{\"schemaVersion\":1,\"task\":\"<task-id>\",\"claims\":[{\"criterion\":\"<a requirement of the task>\",\"evidence\":\"<how you verified it>\"}]}`, one claim per requirement";
-
-export const LIGHTWEIGHT_PROMPT: HarnessPrompt = {
-  initial: `Deliver this task with lightweight Ways state: run \`npx ways quick start <task-id>\`, make the change, write ${EVIDENCE_FORMAT}, then run \`npx ways quick finish --message=<summary>\`, which runs the configured checks and commits. If the task asks you to stop early, leave the quick work active for the next session. Do not bypass hooks or edit the Ways configuration or checks.`,
-  resume: `Check \`npx ways status\`, continue the task's quick work (starting it with \`npx ways quick start <task-id>\` if none is active), write ${EVIDENCE_FORMAT}, and finish with \`npx ways quick finish --message=<summary>\`. Do not bypass hooks or edit the Ways configuration or checks.`,
-};
-
-const OUTCOME_STEPS = "execute the change (through `npx ways task add|prepare|integrate` when isolation is required), map every criterion in `.ways/outcomes/<task-id>/attempts/<n>/evidence.json`, run `npx ways outcome evaluate`, remediate a failed evaluation with `npx ways outcome remediate --reason=<text>`, obtain the review the evaluation policy requires (`npx ways review digest`, a reviewer who did not implement the change, `npx ways review submit <review.json>`) and run `npx ways outcome close`";
+const OUTCOME_FINISH = "implement and commit as you go, then run `npx ways done`; if it asks for an independent review, have a reviewer who did not implement the change review the commit it prints and record it with `npx ways review submit <file>`";
 
 export const OUTCOME_PROMPT: HarnessPrompt = {
-  initial: `Deliver this task with the Ways outcome workflow: run \`npx ways outcome open <task-id> --goal=<goal> --criterion=AC1:<text>... <policy-flags>\`, then ${OUTCOME_STEPS}. If the task asks you to stop early, leave the outcome open for the next session. Do not bypass hooks or edit the Ways configuration, checks or gates.`,
-  resume: `Check \`npx ways context\`, continue the task's outcome work (opening it with \`npx ways outcome open <task-id> --goal=<goal> --criterion=AC1:<text>... <policy-flags>\` if none exists), then ${OUTCOME_STEPS}. Do not bypass hooks or edit the Ways configuration, checks or gates.`,
+  initial: `Deliver this task as a ways outcome: open it with \`npx ways outcome open <task-id> --goal=<goal> --criterion=AC1:<one line> --verify=AC1:<command>... <policy-flags>\`, then ${OUTCOME_FINISH}. If the task asks you to stop early, leave the outcome open for the next session. ${GUARDRAILS}`,
+  resume: `Run \`npx ways status\` and continue the task's outcome (opening it with \`npx ways outcome open <task-id> --goal=<goal> --criterion=AC1:<one line> --verify=AC1:<command>... <policy-flags>\` if none exists), then ${OUTCOME_FINISH}. ${GUARDRAILS}`,
 };
 
 function policyFlags(policy: OutcomeEvalPolicy): string {
-  return `--isolation=${policy.isolation} --parallel=${policy.parallel} --evaluation=${policy.evaluation} --memory=${policy.memory} --approvals=${policy.approvals}`;
+  return `--review=${policy.review} --approval=${policy.approval}`;
 }
 
 /** The recorded prompt template of a harness, with its policy flags resolved; null for the A/B baselines. */
 export function harnessPrompt(harness: HarnessLabel, policy?: OutcomeEvalPolicy): HarnessPrompt | null {
-  if (harness === "full-sdd") return FULL_SDD_PROMPT;
-  if (harness === "lightweight-state") return LIGHTWEIGHT_PROMPT;
+  if (harness === "lightweight-state") return CHANGE_PROMPT;
   if (harness !== "outcome") return null;
   const flags = policyFlags(policy ?? DEFAULT_OUTCOME_POLICY);
   return { initial: OUTCOME_PROMPT.initial.replaceAll("<policy-flags>", flags), resume: OUTCOME_PROMPT.resume.replaceAll("<policy-flags>", flags) };
@@ -111,7 +100,7 @@ export async function captureWaysRevision(root = packageRoot()): Promise<WaysRev
   };
 }
 
-/** A test command that runs the task's regression checks, so SDD validation exercises real checks. */
+/** A test command that runs the task's regression checks, so `ways done` exercises real checks. */
 export function regressionTestCommand(checks: readonly EvalCheck[]): string[] {
   const script = [
     "const { spawnSync } = require('node:child_process');",
@@ -160,42 +149,34 @@ export async function prepareWays(repo: string, task: EvalTask, gitEnv: NodeJS.P
   return { revision: await git.run(["rev-parse", "HEAD"], gitEnv, true), waysBin: join(repo, BIN_LINK) };
 }
 
-/** Harness files an honest agent never changes; editing them would weaken the gates being measured. */
-const HARNESS_PATHS = [CONFIG_PATH, MANIFEST_PATH, HOOKS_DIR, "scripts/check.sh", "AGENTS.md"];
-
-/** Approval records written by `ways approve`: SDD gates and outcome checkpoints, in any attempt. */
-const APPROVAL_ARTIFACT = /^\.ways\/(?:sdd|outcomes)\/[^/]+\/(?:.+\/)?approvals\/.+\.json$/;
+/** Harness files an honest agent never changes; editing them would weaken what is being measured. */
+const HARNESS_PATHS = [CONFIG_PATH, MANIFEST_PATH, HOOKS_DIR, "scripts/check.sh"];
 
 interface GradedHistory {
   git: GitRepository;
   commits: CommitInfo[];
-  closedSdd: Set<string>;
   activeWork: string | null;
   issues: ComplianceIssue[];
-  downgrades: number;
-  humanApprovals: number;
-  sddRemediations: number;
 }
 
 /**
- * Evidence every Ways harness is graded on, never what the agent claims: the history audit (which
- * replays SDD chains and outcome transitions, evaluations and remediations), integrity, foreign
- * works, harness tampering, uncommitted changes, a still-active work and downgrades. The threat
- * model is an honest agent that may skip or misuse the process, not one that subverts Git: that
- * is the documented local-verification limit of history checks.
+ * Evidence every Ways harness is graded on, never what the agent claims: the
+ * record audit (with untraced commits counted, since the hook traces every
+ * commit), integrity, foreign works, harness tampering, uncommitted changes and
+ * a still-active work. The threat model is an honest agent that may skip or
+ * misuse the process, not one that subverts Git.
  */
 async function gradeHistory(repo: string, taskId: string, startRevision: string): Promise<GradedHistory> {
   const git = new GitRepository(repo);
   const issues: ComplianceIssue[] = [];
   let activeWork: string | null = null;
   try {
-    activeWork = (await loadState(repo))?.id ?? null;
+    activeWork = readActive(repo)?.id ?? (await openRecords(git)).at(0)?.id ?? null;
   } catch (error) {
-    issues.push({ code: "eval-unreadable-state", path: STATE_PATH, message: error instanceof Error ? error.message : String(error) });
+    issues.push({ code: "eval-unreadable-state", path: ".ways/work", message: error instanceof Error ? error.message : String(error) });
   }
   const commits = await commitsAfter(git, startRevision);
-  const audit = await auditHistory(git, commits, activeWork ?? undefined);
-  issues.push(...audit.issues, ...await checkIntegrity(repo));
+  issues.push(...await auditHistory(git, commits, { untraced: true }), ...await checkIntegrity(repo));
   for (const commit of commits) {
     const work = commit.trailers.work;
     if (work && work !== taskId) issues.push({ code: "eval-foreign-work", path: commit.hash.slice(0, 12), message: `Commit belongs to work ${work}, not to the task work ${taskId}` });
@@ -204,150 +185,76 @@ async function gradeHistory(repo: string, taskId: string, startRevision: string)
   for (const path of tampered) issues.push({ code: "eval-harness-tampered", path, message: "Harness file changed after bootstrap" });
   const uncommitted = (await git.run(["status", "--porcelain"], undefined, true)).split("\n").filter(Boolean);
   if (uncommitted.length > 0) issues.push({ code: "eval-uncommitted-changes", path: ".", message: `Run ended with ${uncommitted.length} uncommitted path(s)` });
-  if (activeWork !== null) issues.push({ code: "eval-active-work", path: STATE_PATH, message: `Work ${activeWork} is still active` });
-  const downgrades = commits.filter((commit) => commit.trailers.state?.startsWith("downgraded")).length;
-  if (downgrades > 0) issues.push({ code: "eval-downgraded", path: ".", message: `SDD was downgraded ${downgrades} time(s)` });
-  const closedSdd = new Set(audit.checkpoints.filter((checkpoint) => checkpoint.kind === "certification" && checkpoint.phase === "close").map((checkpoint) => checkpoint.work));
-  const sddRemediations = audit.checkpoints.filter((checkpoint) => checkpoint.kind === "remediation").length;
-  const added = (await git.run(["log", "--diff-filter=A", "--name-only", "--format=", `${startRevision}..HEAD`], undefined, true)).split("\n");
-  const humanApprovals = added.filter((path) => APPROVAL_ARTIFACT.test(path)).length;
-  return { git, commits, closedSdd, activeWork, issues, downgrades, sddRemediations, humanApprovals };
+  if (activeWork !== null) issues.push({ code: "eval-active-work", path: ".ways/work", message: `Work ${activeWork} is still active` });
+  return { git, commits, activeWork, issues };
 }
 
-function graded(workflow: EvalWorkflow, history: GradedHistory, fields: { completed: boolean; worksStarted: number; worksClosed: number; remediationAttempts: number; validationFailures: number; effectivePolicy: Record<string, string> | null }): HarnessCompliance {
+function graded(workflow: EvalWorkflow, history: GradedHistory, fields: { completed: boolean; worksStarted: number; worksClosed: number; remediationAttempts: number; validationFailures: number; humanApprovals: number; effectivePolicy: Record<string, string> | null }): HarnessCompliance {
   return {
     applicable: true,
     workflow,
     compliant: fields.completed && history.issues.length === 0,
     ...fields,
-    downgrades: history.downgrades,
-    humanApprovals: history.humanApprovals,
     activeWork: history.activeWork,
     issues: history.issues,
   };
 }
 
-async function showJson(git: GitRepository, ref: string, path: string): Promise<unknown> {
-  try {
-    return JSON.parse(await git.run(["show", `${ref}:${path}`], undefined, true));
-  } catch {
-    return undefined;
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** Commits of the task's work that belong to a different workflow than the one the harness asked for. */
-function workflowMismatch(history: GradedHistory, taskId: string, workflow: EvalWorkflow): void {
-  const foreign = history.commits.filter((commit) => {
-    const { work, phase, state, task } = commit.trailers;
-    if (work !== taskId) return false;
-    const quickFinish = !phase && !task && state === "completed";
-    const outcome = phase?.startsWith("outcome-") === true;
-    const sdd = phase !== undefined && !outcome;
-    return workflow === "quick-evidence" ? sdd || outcome : workflow === "outcome" ? sdd || quickFinish : false;
-  });
-  for (const commit of foreign) history.issues.push({ code: "eval-workflow-mismatch", path: commit.hash.slice(0, 12), message: `Commit "${commit.subject}" does not belong to the ${workflow} workflow the harness asked for` });
-}
-
-/** Grades full SDD (D): an SDD work named after the task certified through close, on a clean history. */
-export async function gradeFullSddCompliance(repo: string, taskId: string, startRevision: string): Promise<HarnessCompliance> {
-  const history = await gradeHistory(repo, taskId, startRevision);
-  const sddWorks = new Set(history.commits.filter((commit) => commit.trailers.work && commit.trailers.phase && !commit.trailers.phase.startsWith("outcome-")).map((commit) => commit.trailers.work));
-  const completed = history.closedSdd.has(taskId);
-  if (!completed) history.issues.push({ code: "eval-sdd-not-closed", path: ".", message: `No SDD work ${taskId} was certified through close` });
-  const opening = history.commits.find((commit) => commit.trailers.work === taskId && commit.trailers.phase && !commit.trailers.phase.startsWith("outcome-"));
-  const state = opening ? await showJson(history.git, opening.hash, STATE_PATH) : undefined;
-  const effectivePolicy = isRecord(state) && state.id === taskId
-    ? { profile: typeof state.profile === "string" ? state.profile : "autonomous", execution: typeof state.execution === "string" ? state.execution : "inline" }
-    : null;
-  return graded("sdd", history, {
-    completed,
-    worksStarted: sddWorks.size,
-    worksClosed: history.closedSdd.size,
-    remediationAttempts: history.sddRemediations,
-    validationFailures: history.commits.filter((commit) => commit.trailers.state === "validation-failed").length,
-    effectivePolicy,
-  });
-}
-
-function lightweightEvidenceProblem(value: unknown, taskId: string): string | undefined {
-  if (!isRecord(value) || value.schemaVersion !== 1 || value.task !== taskId || !Array.isArray(value.claims) || value.claims.length === 0) {
-    return `evidence must be {schemaVersion: 1, task: "${taskId}", claims: [...]} with at least one claim`;
-  }
-  const empty = value.claims.findIndex((claim) => !isRecord(claim) || typeof claim.criterion !== "string" || !claim.criterion.trim() || typeof claim.evidence !== "string" || !claim.evidence.trim());
-  return empty === -1 ? undefined : `claim ${empty} lacks a criterion or evidence`;
+function worksIn(commits: readonly CommitInfo[]): number {
+  return new Set(commits.map((commit) => commit.trailers.work).filter(Boolean)).size;
 }
 
 /**
- * Grades lightweight state (C): a Ways quick work named after the task finished through
- * `ways quick finish` (the configured checks passed and the hook traced every commit) and a
- * committed evidence file of the task's work. There is no evaluation record, review or
- * remediation: the evidence is the agent's own claim, graded only for presence and shape.
+ * Grades a change (C): the task's commits are traced to it and the last
+ * `ways done` run passed on the final HEAD. A change leaves no record in
+ * Git, so the run log in the repository's Git directory is the evidence.
  */
-export async function gradeLightweightCompliance(repo: string, taskId: string, startRevision: string): Promise<HarnessCompliance> {
+export async function gradeChangeCompliance(repo: string, taskId: string, startRevision: string): Promise<HarnessCompliance> {
   const history = await gradeHistory(repo, taskId, startRevision);
-  workflowMismatch(history, taskId, "quick-evidence");
-  const finishes = history.commits.filter((commit) => commit.trailers.work && !commit.trailers.phase && !commit.trailers.task && commit.trailers.state === "completed");
-  const finished = finishes.some((commit) => commit.trailers.work === taskId);
-  if (!finished) history.issues.push({ code: "eval-quick-not-finished", path: ".", message: `No quick work ${taskId} was finished` });
-  const path = lightweightEvidencePath(taskId);
-  const problem = lightweightEvidenceProblem(await showJson(history.git, "HEAD", path), taskId);
-  if (problem) history.issues.push({ code: "eval-evidence-invalid", path, message: problem });
-  const authors = (await history.git.run(["log", "--format=%H", `${startRevision}..HEAD`, "--", path], undefined, true)).split("\n").filter(Boolean);
-  const untraced = history.commits.filter((commit) => authors.includes(commit.hash) && commit.trailers.work !== taskId);
-  for (const commit of untraced) history.issues.push({ code: "eval-evidence-untraced", path, message: `Evidence changed by ${commit.hash.slice(0, 12)} outside the task work` });
-  const closed = new Set(finishes.map((commit) => commit.trailers.work));
-  return graded("quick-evidence", history, {
-    completed: finished && problem === undefined && authors.length > 0,
-    worksStarted: closed.size + (history.activeWork !== null && !closed.has(history.activeWork) ? 1 : 0),
-    worksClosed: closed.size,
-    remediationAttempts: 0,
-    validationFailures: 0,
+  const record = await committedRecord(history.git, taskId).catch(() => undefined);
+  if (record?.kind === "outcome") history.issues.push({ code: "eval-workflow-mismatch", path: workRecordPath(taskId), message: "The task was opened as an outcome, not delivered as a change" });
+  const runs = readRuns(repo, taskId);
+  const head = await history.git.head();
+  const last = runs.at(-1);
+  const completed = last?.passed === true && last.input === head && history.activeWork === null;
+  if (!completed) history.issues.push({ code: "eval-change-not-done", path: ".", message: `No passing \`ways done\` of ${taskId} on the final HEAD` });
+  const failures = runs.filter((run) => !run.passed).length;
+  return graded("change", history, {
+    completed,
+    worksStarted: worksIn(history.commits),
+    worksClosed: completed ? 1 : 0,
+    remediationAttempts: failures,
+    validationFailures: failures,
+    humanApprovals: record?.approval ? 1 : 0,
     effectivePolicy: null,
   });
 }
 
-/** The execution, evaluation and memory policies an outcome's opening commit bound to Git. */
-async function committedOutcomePolicy(git: GitRepository, taskId: string): Promise<OutcomeEvalPolicy | null> {
-  const open = await outcomeOpenCommit(git, taskId);
-  const spec = open ? await showJson(git, open.hash, outcomeSpecPath(taskId)) : undefined;
-  if (!isRecord(spec) || !isRecord(spec.policy)) return null;
-  const policy = spec.policy;
-  return {
-    isolation: policy.isolation === "optional" ? "optional" : "required",
-    parallel: policy.parallel === "disabled" ? "disabled" : "allowed",
-    evaluation: policy.independentEvaluation === "optional" ? "self" : "independent",
-    memory: policy.memory === "none" || policy.memory === "high" ? policy.memory : "normal",
-    approvals: Array.isArray(policy.approvals) && policy.approvals.length > 0 ? policy.approvals.join(",") as OutcomeEvalPolicy["approvals"] : "none",
-  };
-}
-
-/**
- * Grades the outcome loop (E) with the same replay `ways check --history` uses: the task's outcome
- * closed on a clean history, opened with the policies the run asked for. Failed evaluations and
- * remediations are counted from their replayed records.
- */
+/** Grades an outcome (E): the task's record is closed on a clean audit, opened with the policy the run asked for. */
 export async function gradeOutcomeCompliance(repo: string, taskId: string, startRevision: string, expected: OutcomeEvalPolicy = DEFAULT_OUTCOME_POLICY): Promise<HarnessCompliance> {
   const history = await gradeHistory(repo, taskId, startRevision);
-  workflowMismatch(history, taskId, "outcome");
-  const replay = replayOutcomes(history.commits, await optionalIsolationOpenings(history.git, history.commits));
-  const completed = replay.closes.some((close) => close.work === taskId);
+  let record: WorkRecord | undefined;
+  try {
+    record = await committedRecord(history.git, taskId);
+  } catch (error) {
+    history.issues.push({ code: "eval-record-invalid", path: workRecordPath(taskId), message: error instanceof Error ? error.message : String(error) });
+  }
+  if (record && record.kind !== "outcome") history.issues.push({ code: "eval-workflow-mismatch", path: workRecordPath(taskId), message: "The task's record is not an outcome" });
+  const completed = record?.kind === "outcome" && record.closed !== undefined;
   if (!completed) history.issues.push({ code: "eval-outcome-not-closed", path: ".", message: `No outcome ${taskId} was closed` });
-  const policy = await committedOutcomePolicy(history.git, taskId);
+  const policy: OutcomeEvalPolicy | null = record ? { review: record.policy.review, approval: record.policy.approval } : null;
   if (policy) {
     const differing = (Object.keys(expected) as (keyof OutcomeEvalPolicy)[]).filter((field) => policy[field] !== expected[field]);
-    if (differing.length > 0) history.issues.push({ code: "eval-policy-mismatch", path: outcomeSpecPath(taskId), message: `Outcome opened with ${differing.map((field) => `${field}=${policy[field]}`).join(", ")}, not the configured ${differing.map((field) => `${field}=${expected[field]}`).join(", ")}` });
+    if (differing.length > 0) history.issues.push({ code: "eval-policy-mismatch", path: workRecordPath(taskId), message: `Outcome opened with ${differing.map((field) => `${field}=${policy[field]}`).join(", ")}, not the configured ${differing.map((field) => `${field}=${expected[field]}`).join(", ")}` });
   }
-  const opened = new Set(history.commits.filter((commit) => commit.trailers.phase === OUTCOME_PHASES.open && commit.trailers.state === "opened").map((commit) => commit.trailers.work));
+  const failures = record?.evidence?.earlierRuns.filter((run) => !run.passed).length ?? readRuns(repo, taskId).filter((run) => !run.passed).length;
   return graded("outcome", history, {
     completed,
-    worksStarted: opened.size,
-    worksClosed: new Set(replay.closes.map((close) => close.work)).size,
-    remediationAttempts: replay.remediations.filter((remediation) => remediation.work === taskId).length,
-    validationFailures: replay.failures.filter((failure) => failure.work === taskId).length,
+    worksStarted: worksIn(history.commits),
+    worksClosed: completed ? 1 : 0,
+    remediationAttempts: failures,
+    validationFailures: failures,
+    humanApprovals: record?.approval ? 1 : 0,
     effectivePolicy: policy ? { ...policy } : null,
   });
 }
@@ -361,7 +268,6 @@ export function complianceGradingError(workflow: EvalWorkflow, error: unknown): 
     completed: false,
     worksStarted: 0,
     worksClosed: 0,
-    downgrades: 0,
     remediationAttempts: 0,
     validationFailures: 0,
     humanApprovals: 0,
@@ -371,14 +277,12 @@ export function complianceGradingError(workflow: EvalWorkflow, error: unknown): 
   };
 }
 
-export const HARNESS_WORKFLOWS: Partial<Record<HarnessLabel, EvalWorkflow>> = { "lightweight-state": "quick-evidence", "full-sdd": "sdd", "outcome": "outcome" };
+export const HARNESS_WORKFLOWS: Partial<Record<HarnessLabel, EvalWorkflow>> = { "lightweight-state": "change", "outcome": "outcome" };
 
 /** Grades the workflow a Ways harness asked for; baselines are not applicable. */
 export async function gradeCompliance(harness: HarnessLabel, repo: string, taskId: string, startRevision: string, policy?: OutcomeEvalPolicy): Promise<HarnessCompliance> {
   const workflow = HARNESS_WORKFLOWS[harness];
   if (!workflow) return { applicable: false, reason: `harness ${harness} does not run a Ways workflow` };
-  const grade = workflow === "sdd" ? gradeFullSddCompliance(repo, taskId, startRevision)
-    : workflow === "outcome" ? gradeOutcomeCompliance(repo, taskId, startRevision, policy)
-      : gradeLightweightCompliance(repo, taskId, startRevision);
+  const grade = workflow === "outcome" ? gradeOutcomeCompliance(repo, taskId, startRevision, policy) : gradeChangeCompliance(repo, taskId, startRevision);
   return grade.catch((error: unknown) => complianceGradingError(workflow, error));
 }
