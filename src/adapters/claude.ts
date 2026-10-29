@@ -1,5 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { CLAUDE_MD_CONTENT, CLAUDE_MD_PATH, withAgentsImport } from "../bootstrap/claude-md.js";
 import { stableJson, writeAtomic } from "../fs/files.js";
 import { isWaysGuardEntry } from "./hook-file.js";
 import { resolveWith, SLASH_NAMES } from "./render.js";
@@ -96,10 +97,26 @@ export function mergeClaudeSettings(settings: Settings): { settings: Settings; n
   return { settings: next, notes };
 }
 
+/** Claude Code reads CLAUDE.md: it must import AGENTS.md. A symlink to AGENTS.md is left alone. */
+async function ensureClaudeMd(cwd: string): Promise<boolean> {
+  const path = join(cwd, CLAUDE_MD_PATH);
+  try {
+    if ((await lstat(path)).isSymbolicLink()) return false;
+  } catch {
+    await writeAtomic(path, CLAUDE_MD_CONTENT);
+    return true;
+  }
+  const current = await readFile(path, "utf8");
+  const next = withAgentsImport(current);
+  if (next === current) return false;
+  await writeAtomic(path, next);
+  return true;
+}
+
 async function mergeSettingsFile(cwd: string): Promise<MergeResult> {
   const { settings, notes } = mergeClaudeSettings(await readSettings(cwd));
   await writeAtomic(join(cwd, SETTINGS_PATH), stableJson(settings));
-  return { files: [SETTINGS_PATH], notes };
+  return { files: [SETTINGS_PATH, ...(await ensureClaudeMd(cwd) ? [CLAUDE_MD_PATH] : [])], notes };
 }
 
 async function verifySettings(cwd: string): Promise<AdapterIssue[]> {

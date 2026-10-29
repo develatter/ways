@@ -28,37 +28,65 @@ describe("CLI", () => {
     expect(execFileSync(process.execPath, [process.env.WAYS_CLI!, "--version"], { encoding: "utf8" }).trim()).toBe(pkg.version);
   });
 
-  it("serves the reviewed bootstrap discovery lifecycle with explicit branch configuration", async () => {
-    const cwd = await mkdtemp(join(tmpdir(), "ways-cli-memory-"));
+  it("delivers a small change with at most two ways commands and an outcome with at most four, through the built binary", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "ways-cli-acceptance-"));
     const git = new GitRepository(cwd);
-    await git.run(["init", "-q"]);
+    await git.run(["init", "-q", "-b", "main"]);
     await git.run(["config", "user.name", "Ways Test"]);
     await git.run(["config", "user.email", "ways@example.test"]);
-    await mkdir(join(cwd, "src"));
     await writeFile(join(cwd, ".gitkeep"), "");
     await git.run(["add", ".gitkeep"]);
     await git.run(["commit", "-q", "-m", "initial"]);
+    const invocations: string[][] = [];
+    const ways = (...args: string[]): string => {
+      invocations.push(args);
+      return execFileSync(process.execPath, [process.env.WAYS_CLI!, ...args], { cwd, encoding: "utf8" });
+    };
+    ways("bootstrap", "--test-command=[\"node\",\"-e\",\"0\"]");
+    await git.run(["add", "-A"]);
+    await git.run(["commit", "-q", "-m", "chore: install ways"]);
+    invocations.length = 0;
 
-    expect(await run([
-      "bootstrap", "--no-adapters", "--test-command=[\"true\"]",
-      "--release-branch=master", "--integration-branch=next", "--relevant-path=src/**",
-    ], cwd)).toBe(0);
-    const config = JSON.parse(await readFile(join(cwd, ".ways/config.json"), "utf8"));
-    expect(config.memory).toMatchObject({ releaseBranch: "master", integrationBranch: "next", relevantPaths: ["src/**"] });
-    expect(log.mock.calls.at(-1)?.[0]).toContain("discovery review");
+    // A small change: commit as usual, then one command.
+    await git.run(["checkout", "-q", "-b", "fix/typo"]);
+    await writeFile(join(cwd, "a.txt"), "a\n");
+    await git.run(["add", "a.txt"]);
+    await git.run(["commit", "-q", "-m", "fix: typo"]);
+    expect(ways("done")).toContain("Done: change fix-typo closed");
+    expect(invocations).toHaveLength(1);
 
-    expect(await run(["memory", "discovery", "request"], cwd)).toBe(0);
-    expect(await run(["memory", "discovery", "digest"], cwd)).toBe(0);
-    const digest = String(log.mock.calls.at(-1)?.[0]);
-    expect(digest).toMatch(/^[a-f0-9]{64}$/);
-    await writeFile(join(cwd, "discovery-review.json"), JSON.stringify({
-      schemaVersion: 1, workId: "memory-discovery", reviewer: "independent/reviewer",
-      digest, verdict: "pass", findings: [],
-    }));
-    expect(await run(["memory", "discovery", "complete", "discovery-review.json"], cwd)).toBe(0);
-    await expect(readFile(join(cwd, ".ways/memory/discovery.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(run(["memory", "discovery", "request"], cwd)).rejects.toThrow("explicitly requested");
-    expect(await run(["memory", "discovery", "request", "--rediscover"], cwd)).toBe(0);
+    // A delivery with criteria and an independent review: open, done, review submit.
+    invocations.length = 0;
+    ways("outcome", "open", "greeting", "--goal=Greet users", "--criterion=AC1:greeting.txt says hi", "--verify=AC1:grep -q hi greeting.txt");
+    await writeFile(join(cwd, "greeting.txt"), "hi\n");
+    await git.run(["add", "greeting.txt"]);
+    await git.run(["commit", "-q", "-m", "feat: greet"]);
+    const verifying = ways("done");
+    const commit = /"commit": "([0-9a-f]{40})"/.exec(verifying)?.[1];
+    expect(commit).toBe(await git.parent("HEAD"));
+    const review = join(cwd, "..", "acceptance-review.json");
+    await writeFile(review, JSON.stringify({ reviewer: "ways-reviewer", commit, verdict: "pass", findings: [] }));
+    expect(ways("review", "submit", review)).toContain("Work closed.");
+    expect(invocations.length).toBeLessThanOrEqual(4);
+    expect(ways("check", "--history")).toContain("History checks passed.");
+  });
+
+  it("answers status in JSON with the next command", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "ways-cli-status-"));
+    const git = new GitRepository(cwd);
+    await git.run(["init", "-q", "-b", "main"]);
+    await git.run(["config", "user.name", "Ways Test"]);
+    await git.run(["config", "user.email", "ways@example.test"]);
+    await mkdir(join(cwd, "x"));
+    await writeFile(join(cwd, "x/.gitkeep"), "");
+    await git.run(["add", "."]);
+    await git.run(["commit", "-q", "-m", "initial"]);
+    expect(await run(["bootstrap", "--no-adapters", "--test-command=[\"true\"]"], cwd)).toBe(0);
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    expect(await run(["status", "--json"], cwd)).toBe(0);
+    const packet = JSON.parse(String(stdout.mock.calls.at(-1)?.[0]));
+    stdout.mockRestore();
+    expect(packet).toMatchObject({ schemaVersion: 2, enforcement: "observe", active: null, next: expect.stringContaining("ways done") });
   });
 
   it("rejects unknown commands", async () => {

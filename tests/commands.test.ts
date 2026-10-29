@@ -2,7 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { run } from "../src/cli.js";
-import { COMMANDS, README_COMMANDS_END, README_COMMANDS_START, renderReadmeTable } from "../src/commands.js";
+import { ACTION_BUDGET, actionCount, COMMANDS, README_COMMANDS_END, README_COMMANDS_START, renderReadmeTable } from "../src/commands.js";
 
 const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
 const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -70,8 +70,24 @@ describe("command registry", () => {
   });
 
   it("points usage errors at the command help", async () => {
-    await expect(run(["quick", "start"])).rejects.toThrow(/Usage: ways quick start[\s\S]*ways quick --help/);
+    await expect(run(["review"])).rejects.toThrow(/Usage: ways review submit[\s\S]*ways review --help/);
     await expect(run(["outcome", "open", "x"])).rejects.toThrow(/Missing required option --goal[\s\S]*ways outcome --help/);
+  });
+
+  it("stays within the lean action budget, and counts every action once", () => {
+    const actions = COMMANDS.flatMap((command) => command.actions);
+    expect(new Set(actions).size).toBe(actions.length);
+    for (const command of COMMANDS) for (const action of command.actions) expect(action.startsWith(command.name), action).toBe(true);
+    expect(actionCount()).toBe(actions.length);
+    expect(actionCount()).toBeLessThanOrEqual(ACTION_BUDGET);
+    expect(ACTION_BUDGET).toBe(28);
+  });
+
+  it("no longer offers the removed workflows", async () => {
+    for (const removed of ["sdd", "plan", "quick", "task", "repair", "context"]) {
+      expect(COMMANDS.some((command) => command.name === removed), removed).toBe(false);
+      expect(await run([removed])).toBe(1);
+    }
   });
 
   it("keeps the README command table generated from the registry", async () => {
