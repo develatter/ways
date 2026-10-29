@@ -222,15 +222,16 @@ function criterionResult(record: WorkRecord, id: string, fresh: boolean, lastRun
 }
 
 function nextCommand(work: { record: WorkRecord | undefined; base: string | undefined }, facts: GitFacts, lastRun: LastRun | undefined, head: string | undefined, missing: Pending): string {
+  const record = work.record;
+  if (record?.blocked) return "nothing until the human resolves the block; then commit and `ways done`";
   // No file count here: the line would change, and be injected again, with every edit.
   if (facts.uncommitted.length > 0) return "commit what is uncommitted, then `ways done`";
-  const record = work.record;
   if (!facts.fresh || !record?.evidence) {
-    if (lastRun && !lastRun.passed && lastRun.input === head) return "fix what fails, commit, then `ways done`";
+    if (lastRun && !lastRun.passed && lastRun.input === head) return "fix what fails, commit, then `ways done`; if it cannot pass without weakening a test or check, `ways block \"<what is missing>\"` instead";
     return "`ways done` when the work is finished";
   }
   const input = record.evidence.input.commit;
-  if (missing.review) return `an independent read-only review of \`git diff ${short(record.evidence.base)} ${short(input)}\` (e.g. the ways-reviewer agent), then \`ways review submit <file>\` with {"reviewer", "commit": "${input}", "verdict", "findings"}`;
+  if (missing.review) return `\`ways review\` (an independent read-only reviewer of ${short(input)}; or the ways-reviewer subagent, whose verdict ways records)`;
   if (missing.approval) return "the human runs `ways approve` in their own terminal";
   return "`ways done` to close";
 }
@@ -297,6 +298,10 @@ export async function buildBrief(dirs: GitDirs, options: BriefOptions = {}): Pro
 
     const input = record?.evidence?.input.commit;
     const waiting: string[] = [];
+    if (record?.blocked) {
+      waiting.push(`the human: the work is blocked (${clip(record.blocked.reason, 300)})`);
+      brief.blockers.push({ key: `blocked:${record.blocked.at}`, who: "human", text: `${id} is blocked: ${clip(record.blocked.reason, 300)}` });
+    }
     if (missing.review) {
       waiting.push(`an independent review of ${short(input)} (${missing.review})`);
       brief.blockers.push({ key: `review:${input}`, who: "agent", text: `${id} passed its checks on ${short(input)} but is not closed: ${missing.review}` });

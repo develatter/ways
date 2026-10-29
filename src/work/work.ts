@@ -3,13 +3,13 @@ import { userInfo } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { defaultReview, loadConfig } from "../config/config.js";
 import { assertWorkId, slugify, WAYS_DIR, workRecordPath } from "../domain/constants.js";
-import { STRENGTHS, type ActiveWork, type ApprovalPolicy, type Criterion, type Evidence, type Review, type ReviewPolicy, type Strength, type WorkRecord } from "../domain/types.js";
+import { STRENGTHS, type ActiveWork, type ApprovalPolicy, type Criterion, type Evidence, type Review, type ReviewPolicy, type ReviewProvenance, type Strength, type WorkRecord } from "../domain/types.js";
 import { validationDetails } from "../domain/validation.js";
 import { GitRepository, parseTrailers } from "../git/git.js";
 import { relevantConcepts, type RelevantConcept } from "../memory/memory.js";
 import { appendRun, clearActive, clearRuns, gitDirs, readActive, readRuns, writeActive, writeLastRun } from "../runtime/runtime.js";
 import { formatCommandLine, parseCommandLine } from "./argv.js";
-import { evaluate, evidenceFailures } from "./evaluate.js";
+import { evaluate, evidenceFailures, inferStrength } from "./evaluate.js";
 import { approvalDigest, approvalReasons, committedRecord, isOpen, openRecords, pending, recordIntroduction, reviewBlockers, reviewNotes, writeRecord, type Pending } from "./record.js";
 
 const CRITERION_ID = /^[A-Z][A-Z0-9-]{0,31}$/;
@@ -140,7 +140,7 @@ export function buildCriteria(input: CriterionInput): Criterion[] {
     const criterion = known(id, "--verify");
     if (criterion.verify) throw new Error(`Criterion ${id} has two --verify`);
     criterion.verify = parseCommandLine(command);
-    criterion.strength = "test";
+    criterion.strength = inferStrength(criterion.verify);
   }
   for (const value of input.strength) {
     const [id, strength] = splitPrefixed(value, "--strength");
@@ -175,7 +175,7 @@ export async function openOutcome(cwd: string, id: string, options: OpenOptions)
     kind: "outcome",
     goal,
     criteria,
-    policy: { review: options.review ?? defaultReview(config), approval: options.approval ?? "none" },
+    policy: { review: options.review ?? defaultReview(config), approval: options.approval ?? (config.approvals?.criteria === "required" ? "required" : "none") },
     openedAt: new Date().toISOString(),
   };
   const base = await git.head();
@@ -238,6 +238,8 @@ async function settle(top: string, git: GitRepository, active: ActiveWork, recor
     next = probe;
   }
   next = { ...next, evidence };
+  // A passing evaluation after a block means whatever blocked it was resolved.
+  delete next.blocked;
   if (next.review && next.review.commit !== evidence.input.commit) delete next.review;
   if (next.approval && next.approval.input !== evidence.input.commit) delete next.approval;
   const missing = pending(next);
@@ -258,7 +260,25 @@ async function settle(top: string, git: GitRepository, active: ActiveWork, recor
  * the checks and the criteria once on HEAD, records the evidence, and closes
  * when nothing is pending. After a failure the agent fixes and runs it again.
  */
-export async function done(cwd: string, options: { message?: string } = {}): Promise<DoneResult> {
+export interface DoneOptions {
+  message?: string;
+  /** Evaluate in the working tree (no clean checkout, no red-on-base); CI runs the clean evaluation. */
+  fast?: boolean;
+  /** The agent's note per criterion: `AC1:<text>`. */
+  notes?: readonly string[];
+}
+
+function parseNotes(values: readonly string[], record: WorkRecord | undefined): Record<string, string> {
+  const notes: Record<string, string> = {};
+  for (const value of values) {
+    const [id, text] = splitPrefixed(value, "--note");
+    if (!record?.criteria.some((criterion) => criterion.id === id)) throw new Error(`--note names ${id}, which is not a criterion of this work`);
+    notes[id] = text.replace(/\s+/g, " ").slice(0, 500);
+  }
+  return notes;
+}
+
+export async function done(cwd: string, options: DoneOptions = {}): Promise<DoneResult> {
   const { top, git } = repo(cwd);
   let resolved = await resolveActive(top);
   const dirty = await git.dirtyPaths();
@@ -278,13 +298,15 @@ export async function done(cwd: string, options: { message?: string } = {}): Pro
     await git.run(["commit", "-q", "-m", options.message.trim(), "-m", `Harness-Work: ${active.id}`]);
   }
   const record = await committedRecord(git, active.id);
+  const notes = parseNotes(options.notes ?? [], record);
   const commits = Number(await git.run(["rev-list", "--count", `${active.base}..HEAD`]));
   let evidence: Evidence;
-  if (record?.evidence?.passed && await evidenceFresh(git, record)) {
+  if (record?.evidence?.passed && await evidenceFresh(git, record) && Object.keys(notes).length === 0) {
     evidence = record.evidence;
   } else {
     if (active.kind === "change" && commits === 0) throw new Error(`Work ${active.id} has no commits yet; commit the change first, or \`ways cancel\` it`);
-    evidence = await evaluate({ cwd: top, git, base: active.base, criteria: record?.criteria ?? [] });
+    const mode = options.fast ? "fast" : (await loadConfig(top)).evaluation ?? "clean";
+    evidence = await evaluate({ cwd: top, git, base: active.base, criteria: record?.criteria ?? [], work: active.id, mode, notes });
     const failures = evidenceFailures(evidence);
     evidence.earlierRuns = readRuns(top, active.id);
     appendRun(top, active.id, { at: evidence.ranAt, input: evidence.input.commit, passed: evidence.passed, failed: failedNames(evidence) });
@@ -339,18 +361,17 @@ export interface ReviewOutcome {
   commit: string;
 }
 
-export async function submitReview(cwd: string, file: string): Promise<ReviewOutcome> {
+/**
+ * Records a review whose provenance ways established itself: a reviewer
+ * process it launched, a `ways-reviewer` subagent seen by the hooks, or a
+ * human at a terminal. Nothing the agent writes can claim a provenance.
+ */
+export async function recordReview(cwd: string, value: unknown, provenance: ReviewProvenance, source = "the review"): Promise<ReviewOutcome> {
   const { top, git, active, record } = await verifyingRecord(cwd, "review");
-  let value: unknown;
-  try {
-    value = JSON.parse(await readFile(file, "utf8"));
-  } catch (error) {
-    throw new Error(`Cannot read the review ${file}: ${error instanceof Error ? error.message : String(error)}`);
-  }
   if (!validationDetails("review", value).valid) {
-    throw new Error(`Invalid review ${file}: ${validationDetails("review", value).errors.join("; ")}\nExpected {"reviewer": "<name>", "commit": "${record.evidence.input.commit}", "verdict": "pass"|"fail", "findings": [{"id", "severity": "critical|high|medium|low", "summary"}]}`);
+    throw new Error(`Invalid review in ${source}: ${validationDetails("review", value).errors.join("; ")}\nExpected {"reviewer": "<name>", "commit": "${record.evidence.input.commit}", "verdict": "pass"|"fail", "findings": [{"id", "severity": "critical|high|medium|low", "summary", "accepts"?: ["<changed test file>"]}]}`);
   }
-  const input = value as Omit<Review, "submittedAt">;
+  const input = value as Omit<Review, "submittedAt" | "provenance">;
   let commit: string;
   try {
     commit = await git.run(["rev-parse", "--verify", "--quiet", `${input.commit}^{commit}`]);
@@ -364,7 +385,7 @@ export async function submitReview(cwd: string, file: string): Promise<ReviewOut
   const known = await implementers(git, active.base, commit);
   const tokens = [reviewer, ...(/^(.*)<([^>]+)>\s*$/.exec(reviewer)?.slice(1) ?? [])].map((token) => token.trim().toLowerCase()).filter(Boolean);
   if (tokens.some((token) => known.has(token))) throw new Error(`Reviewer "${reviewer}" authored or committed this increment; the review must come from someone else (e.g. the ways-reviewer agent in a fresh session)`);
-  const next: WorkRecord = { ...record, review: { reviewer, commit, verdict: input.verdict, findings: input.findings, submittedAt: new Date().toISOString() } };
+  const next: WorkRecord = { ...record, review: { reviewer, commit, verdict: input.verdict, findings: input.findings, submittedAt: new Date().toISOString(), provenance } };
   delete next.approval;
   const missing = pending(next);
   const closing = !missing.review && !missing.approval;
@@ -375,6 +396,49 @@ export async function submitReview(cwd: string, file: string): Promise<ReviewOut
     clearActive(top, record.id);
   }
   return { status: closing ? "closed" : "verifying", blockers: reviewBlockers(next.review!), notes: reviewNotes(next.review!), pending: missing, commit: made };
+}
+
+/**
+ * A review file, accepted only from a human at an interactive terminal: an
+ * agent cannot tell ways where a review came from. Agents get an independent
+ * review with `ways review` (a new read-only process) or, in Claude Code, the
+ * ways-reviewer subagent, whose verdict the SubagentStop hook records.
+ */
+export async function submitReview(cwd: string, file: string, terminal: Terminal = processTerminal()): Promise<ReviewOutcome> {
+  if (!terminal.interactive) {
+    throw new Error("A review file is accepted only from a human at an interactive terminal: ways cannot tell where a file came from. Run `ways review` to launch an independent read-only reviewer (in Claude Code, the ways-reviewer subagent works too: ways records its verdict itself).");
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(await readFile(file, "utf8"));
+  } catch (error) {
+    throw new Error(`Cannot read the review ${file}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return recordReview(cwd, value, { via: "terminal" }, file);
+}
+
+/**
+ * The legitimate exit when the task cannot be done as asked: records what is
+ * missing and what would unblock it, for the human. The work stays open; a
+ * passing `ways done` later clears the block, `ways cancel` drops the work.
+ */
+export async function block(cwd: string, reason: string): Promise<{ id: string; commit: string }> {
+  const text = reason.replace(/\s+/g, " ").trim();
+  if (text.length < 10) throw new Error("Say what is missing and what would unblock it: `ways block \"<what is missing; what the human can do>\"`");
+  const { top, git } = repo(cwd);
+  let resolved = await resolveActive(top);
+  if (!resolved) {
+    const id = await idFromBranch(git);
+    if (!id) throw new Error("No active work to block; start one with `ways start <id>` or `ways outcome open <id> ...`, then block it");
+    resolved = { active: await startChange(top, id) };
+  }
+  const { active } = resolved;
+  const input = await git.head();
+  const current: WorkRecord = resolved.record ?? { schemaVersion: 2, id: active.id, kind: "change", criteria: [], policy: { review: "none", approval: "none" }, openedAt: active.startedAt };
+  const next: WorkRecord = { ...current, blocked: { at: new Date().toISOString(), reason: text.slice(0, 2000), input } };
+  const path = await writeRecord(top, next);
+  const commit = await git.harnessCommit([path], `chore(ways): block ${active.id}`, { work: active.id, state: "blocked" });
+  return { id: active.id, commit };
 }
 
 export interface Terminal {

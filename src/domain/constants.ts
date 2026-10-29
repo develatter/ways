@@ -18,6 +18,7 @@ export const DEFAULT_VERIFIER_PATHS: readonly string[] = [
   "**/test_*.py",
   "**/*_test.go",
   ".ways/config.json",
+  ".ways/allowed_signers",
   "package.json",
   ".github/workflows/**",
   "vitest.config.*",

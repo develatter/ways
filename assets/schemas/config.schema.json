@@ -40,7 +40,25 @@
         "services": { "type": "array", "items": { "$ref": "#/$defs/service" } }
       }
     },
-    "historySince": { "type": "string", "minLength": 7 }
+    "historySince": { "type": "string", "minLength": 7 },
+    "evaluation": { "enum": ["clean", "fast"], "description": "clean (default): `ways done` runs in a clean checkout of the commit; fast: in the working tree, leaving the clean run to CI (`ways verify`)" },
+    "approvals": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "signature": { "enum": ["required", "optional"], "description": "required: approvals count only with an SSH signature verified against .ways/allowed_signers of the base" },
+        "verifierChanges": { "enum": ["human", "human-or-review"], "description": "who may accept changes to existing tests or check configuration (default human-or-review: the human, or an attested independent review that accepts them)" },
+        "criteria": { "enum": ["required", "none"], "description": "required: every new outcome needs the human's approval before it closes" }
+      }
+    },
+    "reviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agent": { "enum": ["claude", "pi"] },
+        "command": { "$ref": "#/$defs/command", "description": "reads the review prompt on stdin and prints the review JSON" }
+      }
+    }
   },
   "$defs": {
     "service": {

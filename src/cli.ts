@@ -185,7 +185,7 @@ async function dispatch(command: string, args: string[], cwd: string): Promise<n
   if (command === "done") {
     const { done } = await import("./work/work.js");
     const message = option(args, "--message");
-    const result = await done(cwd, message === undefined ? {} : { message });
+    const result = await done(cwd, { ...(message === undefined ? {} : { message }), fast: args.includes("--fast"), notes: options(args, "--note") });
     const { printDone } = await import("./work/report.js");
     printDone(result);
     return result.status === "failed" ? 1 : 0;
@@ -207,6 +207,14 @@ async function dispatch(command: string, args: string[], cwd: string): Promise<n
     const { approve } = await import("./work/work.js");
     const result = await approve(cwd);
     console.log(result.status === "closed" ? "Approved; work closed." : "Approved.");
+    return 0;
+  }
+
+  if (command === "block") {
+    const reason = args.filter((arg) => !arg.startsWith("--")).join(" ");
+    const { block } = await import("./work/work.js");
+    const result = await block(cwd, reason);
+    console.log(`Work ${result.id} is blocked; the human sees why. Stop here: that is a valid end of this task. A later passing \`ways done\` clears the block; \`ways cancel\` drops the work.`);
     return 0;
   }
 

@@ -5,6 +5,7 @@ import type { IntegrityIssue, WorkRecord } from "../domain/types.js";
 import { validateWorkRecord } from "../domain/validation.js";
 import { stableJson } from "../fs/files.js";
 import { GitRepository, type CommitInfo } from "../git/git.js";
+import { baseConfig } from "../work/evaluate.js";
 import { pending } from "../work/record.js";
 
 export interface HistoryOptions {
@@ -12,7 +13,7 @@ export interface HistoryOptions {
   to?: string;
 }
 
-const HARNESS_STATES = new Set(["opened", "verifying", "reviewed", "approved", "closed", "cancelled"]);
+const HARNESS_STATES = new Set(["opened", "verifying", "reviewed", "approved", "blocked", "closed", "cancelled"]);
 
 export async function manifestIntroduction(git: GitRepository): Promise<string | undefined> {
   const hashes = (await git.run(["log", "--format=%H", "--diff-filter=A", "--", MANIFEST_PATH])).split("\n").filter(Boolean);
@@ -90,8 +91,13 @@ async function recordVersionIssues(git: GitRepository, commit: CommitInfo, path:
     if (evidence.input.commit !== parent) fail("history-evidence-unbound", `evidence of ${id} is for ${evidence.input.commit.slice(0, 12)}, not for the commit it was recorded on`);
     else if (await git.treeId(parent) !== evidence.input.tree) fail("history-evidence-unbound", `evidence of ${id} names another tree than its input commit`);
     if (!evidence.passed) fail("history-evidence-failed", `evidence of ${id} records a failure; ways records only passing evidence`);
-    const contract = await committedContract(git, evidence.input.commit);
-    if (contract && !sameContract(contract, evidence.contract)) fail("history-evidence-contract", `evidence of ${id} ran other commands than the configuration of its input`);
+    // The checks run with the base's configuration; only a base without one falls back to the input's.
+    const contract = await committedContract(git, evidence.base) ?? await committedContract(git, evidence.input.commit);
+    if (contract && !sameContract(contract, evidence.contract)) fail("history-evidence-contract", `evidence of ${id} ran other commands than the check configuration of its base ${evidence.base.slice(0, 12)}`);
+    const policy = ((await baseConfig(git, evidence.base)) ?? await baseConfig(git, evidence.input.commit))?.approvals as { signature?: string; verifierChanges?: string } | undefined;
+    if (evidence.approvals && (evidence.approvals.signature !== (policy?.signature === "required" ? "required" : "optional") || evidence.approvals.verifierChanges !== (policy?.verifierChanges === "human" ? "human" : "human-or-review"))) {
+      fail("history-evidence-policy", `evidence of ${id} names another approval policy than the configuration of its base`);
+    }
     for (const criterion of record.criteria) {
       const entry = evidence.criteria[criterion.id];
       const expected = criterion.verify ? "passed" : "review-only";

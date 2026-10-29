@@ -58,9 +58,19 @@ export const COMMANDS: readonly CommandSpec[] = [
   {
     name: "done",
     summary: "Finish the active work: run integrity, checks and verifiers once, record the evidence, close when nothing is missing",
-    usage: ["ways done [--message=<subject>]"],
-    examples: ["ways done", "ways done --message=\"fix: button padding\""],
+    usage: [
+      "ways done [--message=<subject>] [--fast] [--note=<ID>:<text>]...",
+      "  runs in a clean checkout of HEAD with the base's checks; --fast runs in place and leaves the clean run to CI",
+    ],
+    examples: ["ways done", "ways done --message=\"fix: button padding\"", "ways done --fast"],
     actions: ["done"],
+  },
+  {
+    name: "block",
+    summary: "Stop on purpose when the task cannot be done as asked: record what is missing and what would unblock it, for the human",
+    usage: ["ways block \"<what is missing; what would unblock it>\""],
+    examples: ["ways block \"AC2 needs the payments sandbox key; set PAYMENTS_KEY in .env.test or drop AC2\""],
+    actions: ["block"],
   },
   {
     name: "review",

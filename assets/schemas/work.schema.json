@@ -69,7 +69,22 @@
         "commit": { "$ref": "#/$defs/sha" },
         "verdict": { "enum": ["pass", "fail"] },
         "findings": { "type": "array" },
-        "submittedAt": { "type": "string", "format": "date-time" }
+        "submittedAt": { "type": "string", "format": "date-time" },
+        "provenance": {
+          "type": "object",
+          "required": ["via"],
+          "properties": { "via": { "enum": ["process", "subagent", "terminal"] } }
+        }
+      }
+    },
+    "blocked": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "reason", "input"],
+      "properties": {
+        "at": { "type": "string", "format": "date-time" },
+        "reason": { "type": "string", "minLength": 1 },
+        "input": { "$ref": "#/$defs/sha" }
       }
     },
     "approval": {
@@ -81,7 +96,18 @@
         "at": { "type": "string", "format": "date-time" },
         "input": { "$ref": "#/$defs/sha" },
         "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "reasons": { "type": "array", "items": { "type": "string" } }
+        "reasons": { "type": "array", "items": { "type": "string" } },
+        "via": { "enum": ["ssh-signature", "terminal"] },
+        "signature": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["namespace", "principal", "signature"],
+          "properties": {
+            "namespace": { "const": "ways-approval" },
+            "principal": { "type": "string", "minLength": 1 },
+            "signature": { "type": "string", "pattern": "^-----BEGIN SSH SIGNATURE-----" }
+          }
+        }
       }
     },
     "closed": { "$ref": "#/$defs/event" },

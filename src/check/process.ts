@@ -54,6 +54,25 @@ class OutputCapture {
 
 export type CapturedResult = ExecutionResult & RunOutput;
 
+export type RetriedResult = CapturedResult & { attempts: number; /** The first failing attempt, when a retry passed. */ flakyFailure?: CapturedResult };
+
+/**
+ * Runs a captured command, and again up to `retries` times while it fails or
+ * times out. A pass after a failure is flaky: the result says so and keeps the
+ * first failure. A command that cannot start is not retried.
+ */
+export async function executeWithRetries(command: string[], cwd: string, timeoutMs: number | undefined, strict: boolean, retries: number): Promise<RetriedResult> {
+  let first: CapturedResult | undefined;
+  for (let attempt = 1; ; attempt += 1) {
+    const result = await execute(command, cwd, timeoutMs, strict, "capture");
+    const failed = result.status === "failed" || result.status === "timed-out";
+    if (!failed || attempt > retries) {
+      return { ...result, attempts: attempt, ...(first && result.status === "passed" ? { flakyFailure: first } : {}) };
+    }
+    first ??= result;
+  }
+}
+
 /**
  * Runs an argv without a shell. With `stdio: "capture"` the output is not
  * shown; the result carries its duration, sha256 and last lines instead.

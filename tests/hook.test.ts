@@ -43,7 +43,7 @@ describe("the commit hook", () => {
   it("never starts a change under the id of an existing record", async () => {
     const { cwd, git } = await installed();
     await git.run(["checkout", "-q", "-b", "fix-padding"]);
-    await openOutcome(cwd, "fix-padding", { goal: "Pad", criteria: ["AC1:x"], verify: ["AC1:true"], strength: [], review: "none" });
+    await openOutcome(cwd, "fix-padding", { goal: "Pad", criteria: ["AC1:x"], verify: ["AC1:test -f p.txt"], strength: [], review: "none" });
     await commitFile(git, cwd, "p.txt", "p\n", "fix: pad");
     expect((await done(cwd)).status).toBe("closed");
     await commitFile(git, cwd, "q.txt", "q\n", "fix: more padding");

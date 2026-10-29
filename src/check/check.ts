@@ -1,8 +1,10 @@
 import { loadConfig } from "../config/config.js";
-import { CHECK_NAMES, type CheckName, type EnvironmentResult, type IntegrityIssue, type NamedCheckResult, type NamedChecksConfig } from "../domain/types.js";
+import { CHECK_NAMES, type CheckContract, type CheckName, type EnvironmentResult, type IntegrityIssue, type NamedCheckResult, type NamedChecksConfig } from "../domain/types.js";
 import { checkIntegrity } from "../integrity/integrity.js";
+import { effectiveContract } from "./contract.js";
 import { startEnvironment, type Environment } from "./environment.js";
-import { execute, type CapturedResult } from "./process.js";
+import { execute, executeWithRetries, type CapturedResult } from "./process.js";
+import { testsRan } from "./tests-count.js";
 
 export { treeKillArgs } from "./process.js";
 
@@ -13,6 +15,8 @@ export interface CheckResult {
   /** Setup and service results, present only when they were started. */
   environment?: EnvironmentResult[];
   passed: boolean;
+  /** Checks that failed and then passed on a retry, with their first failure. */
+  flaky?: FlakyRuns;
 }
 
 export interface RunChecksOptions {
@@ -21,8 +25,12 @@ export interface RunChecksOptions {
   services?: boolean;
   /** Record duration, output sha256 and tail instead of streaming the output. */
   capture?: boolean;
-  /** Contract to run instead of the configured one. */
-  contract?: NamedChecksConfig;
+  /** Contract to run instead of the configured one (the base's, for an evaluation). */
+  contract?: CheckContract;
+  /** With `capture`: run a failing check again up to this many times before recording the failure. */
+  retries?: number;
+  /** The setup already ran for this checkout and its inputs: record this detail instead of running it. */
+  setupCached?: string;
 }
 
 const unhealthy = (status: string): boolean => status === "failed" || status === "timed-out" || status === "unavailable";
@@ -56,8 +64,10 @@ function validContract(contract: NamedChecksConfig): void {
   }
 }
 
-function resultFor(name: CheckName, command: string[] | undefined, result: Omit<Partial<CapturedResult>, "status"> & { status: NamedCheckResult["status"] }): NamedCheckResult {
+function resultFor(name: CheckName, command: string[] | undefined, result: Omit<Partial<CapturedResult>, "status"> & { status: NamedCheckResult["status"]; attempts?: number }): NamedCheckResult {
+  const tests = name === "test" || name === "e2e" ? testsRan(result.tail) : undefined;
   return {
+    id: `check:${name}`,
     name,
     status: result.status,
     ...(command ? { command: [...command] } : {}),
@@ -66,15 +76,33 @@ function resultFor(name: CheckName, command: string[] | undefined, result: Omit<
     ...(result.durationMs === undefined ? {} : { durationMs: result.durationMs }),
     ...(result.outputSha256 === undefined ? {} : { outputSha256: result.outputSha256 }),
     ...(result.tail === undefined ? {} : { tail: result.tail }),
+    ...(result.attempts && result.attempts > 1 ? { attempts: result.attempts } : {}),
+    ...(tests === undefined ? {} : { tests }),
   };
+}
+
+/** Flaky executions of the last `runChecks`, keyed by execution id, with their first failure. */
+export type FlakyRuns = Record<string, CapturedResult>;
+
+async function run(command: string[], cwd: string, timeoutMs: number | undefined, strict: boolean, options: RunChecksOptions, id: string, flaky: FlakyRuns): Promise<CapturedResult & { attempts?: number }> {
+  if (!options.capture) return execute(command, cwd, timeoutMs, strict, "inherit");
+  const result = await executeWithRetries(command, cwd, timeoutMs, strict, options.retries ?? 0);
+  if (result.flakyFailure) flaky[id] = result.flakyFailure;
+  return result;
 }
 
 async function runNamedChecks(cwd: string, issues: IntegrityIssue[], contract: NamedChecksConfig, options: RunChecksOptions): Promise<CheckResult> {
   validContract(contract);
   const timeoutMs = contract.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const environment: Environment | undefined = options.services && issues.length === 0 && (contract.setup || contract.services?.length)
-    ? await startEnvironment(cwd, contract, timeoutMs)
+  const flaky: FlakyRuns = {};
+  const { setup: _cached, ...withoutSetup } = contract;
+  const prepared: NamedChecksConfig = options.setupCached ? withoutSetup : contract;
+  const environment: Environment | undefined = options.services && issues.length === 0 && (prepared.setup || prepared.services?.length)
+    ? await startEnvironment(cwd, prepared, timeoutMs)
     : undefined;
+  const cachedSetup: EnvironmentResult[] = options.setupCached && contract.setup && options.services && issues.length === 0
+    ? [{ kind: "setup", name: "setup", status: "passed", command: [...contract.setup], detail: options.setupCached }]
+    : [];
   try {
     const required = new Set(contract.required);
     const checks: NamedCheckResult[] = [];
@@ -89,13 +117,14 @@ async function runNamedChecks(cwd: string, issues: IntegrityIssue[], contract: N
       } else if (environment && !environment.healthy) {
         checks.push(resultFor(name, command, { status: "skipped", detail: "Skipped because the environment is not healthy" }));
       } else {
-        checks.push(resultFor(name, command, await execute(command, cwd, timeoutMs, true, options.capture ? "capture" : "inherit")));
+        checks.push(resultFor(name, command, await run(command, cwd, timeoutMs, true, options, `check:${name}`, flaky)));
       }
     }
     if (environment) await environment.stop();
-    const results = environment?.results.map((result) => ({ ...result }));
+    const started = environment?.results.map((result) => ({ ...result }));
+    const results = cachedSetup.length > 0 || started ? [...cachedSetup, ...(started ?? [])] : undefined;
     const passed = issues.length === 0 && !checks.some((check) => unhealthy(check.status)) && !(results ?? []).some((result) => unhealthy(result.status));
-    return { issues, checks, ...(results ? { environment: results } : {}), passed };
+    return { issues, checks, ...(results ? { environment: results } : {}), passed, flaky };
   } finally {
     await environment?.stop();
   }
@@ -108,12 +137,12 @@ async function runNamedChecks(cwd: string, issues: IntegrityIssue[], contract: N
 export async function runChecks(cwd: string, options: RunChecksOptions = {}): Promise<CheckResult> {
   const issues = await checkIntegrity(cwd);
   if (options.integrityOnly) return { issues, checks: [], passed: issues.length === 0 };
-  const config = await loadConfig(cwd);
-  const named = options.contract ?? config.commands;
-  if (named) return runNamedChecks(cwd, issues, named, options);
-  if (issues.length > 0) return { issues, checks: [resultFor("test", config.testCommand, { status: "skipped", detail: "Skipped because integrity checks failed" })], passed: false };
-  const result = await execute(config.testCommand, cwd, undefined, false, options.capture ? "capture" : "inherit");
-  return { issues, checks: [resultFor("test", config.testCommand, result)], passed: result.status === "passed" };
+  const contract = options.contract ?? effectiveContract(await loadConfig(cwd));
+  if (contract.commands) return runNamedChecks(cwd, issues, contract.commands, options);
+  if (issues.length > 0) return { issues, checks: [resultFor("test", contract.testCommand, { status: "skipped", detail: "Skipped because integrity checks failed" })], passed: false };
+  const flaky: FlakyRuns = {};
+  const result = await run(contract.testCommand, cwd, undefined, false, options, "check:test", flaky);
+  return { issues, checks: [resultFor("test", contract.testCommand, result)], passed: result.status === "passed", flaky };
 }
 
 export function failedCheckDetails(result: Pick<CheckResult, "checks" | "environment">): string[] {

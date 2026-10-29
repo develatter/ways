@@ -3,6 +3,7 @@ import { WAYS_DIR } from "../domain/constants.js";
 import type { EarlierRun, Enforcement, Strength } from "../domain/types.js";
 import { GitRepository } from "../git/git.js";
 import { relevantConcepts, type RelevantConcept } from "../memory/memory.js";
+import { readQuarantine, type FlakyEntry } from "../runtime/ledger.js";
 import { gitDirs, readRuns } from "../runtime/runtime.js";
 import { HARNESS_VERSION } from "../version.js";
 import { formatCommandLine } from "./argv.js";
@@ -24,6 +25,8 @@ export interface StatusPacket {
   active: ActiveStatus | null;
   next: string;
   memory: RelevantConcept[];
+  /** Checks and verifiers that failed and then passed on a retry (local quarantine). */
+  quarantine: FlakyEntry[];
 }
 
 export interface ActiveStatus {
@@ -36,8 +39,10 @@ export interface ActiveStatus {
   criteria: Array<{ id: string; text: string; strength: Strength; verify: string | null; result: "passed" | "failed" | "review-only" | "not run" }>;
   evidence: { input: string; passed: boolean; fresh: boolean; ranAt: string } | null;
   lastRun: EarlierRun | null;
-  review: { reviewer: string; verdict: "pass" | "fail"; blockers: string[]; notes: string[]; fresh: boolean } | null;
+  review: { reviewer: string; verdict: "pass" | "fail"; blockers: string[]; notes: string[]; fresh: boolean; via: string | null } | null;
   pending: Pending;
+  /** Why the agent stopped on purpose (`ways block`), until a passing `ways done` clears it. */
+  blocked: string | null;
 }
 
 async function tryRun(git: GitRepository, args: readonly string[]): Promise<string | undefined> {
@@ -60,7 +65,7 @@ export async function buildStatus(cwd: string): Promise<StatusPacket> {
   } catch (error) {
     problem = error instanceof Error ? error.message : String(error);
   }
-  const packet: StatusPacket = { schemaVersion: 2, version: HARNESS_VERSION, enforcement, head, branch, problem, active: null, next: "", memory: [] };
+  const packet: StatusPacket = { schemaVersion: 2, version: HARNESS_VERSION, enforcement, head, branch, problem, active: null, next: "", memory: [], quarantine: readQuarantine(top) };
   if (!head) {
     packet.next = "Make a first commit, then run `ways bootstrap`.";
     return packet;
@@ -109,12 +114,14 @@ export async function buildStatus(cwd: string): Promise<StatusPacket> {
     }),
     evidence: evidence ? { input: evidence.input.commit, passed: evidence.passed, fresh, ranAt: evidence.ranAt } : null,
     lastRun,
-    review: review ? { reviewer: review.reviewer, verdict: review.verdict, blockers: reviewBlockers(review), notes: reviewNotes(review), fresh: fresh && review.commit === evidence?.input.commit } : null,
+    review: review ? { reviewer: review.reviewer, verdict: review.verdict, blockers: reviewBlockers(review), notes: reviewNotes(review), fresh: fresh && review.commit === evidence?.input.commit, via: review.provenance?.via ?? null } : null,
     pending: missing,
+    blocked: record?.blocked?.reason ?? null,
   };
-  if (uncommitted.length > 0) packet.next = "Commit your changes (the hook adds Harness-Work), then run `ways done`; or `ways done --message=\"<subject>\"`.";
+  if (record?.blocked) packet.next = `The work is blocked, waiting on the human: ${record.blocked.reason}. Once that is resolved, commit and run \`ways done\`; or \`ways cancel\` it.`;
+  else if (uncommitted.length > 0) packet.next = "Commit your changes (the hook adds Harness-Work), then run `ways done`; or `ways done --message=\"<subject>\"`.";
   else if (!fresh) packet.next = lastRun && !lastRun.passed && lastRun.input === head ? `Fix what failed (${lastRun.failed.join(", ") || "see the last run"}), commit, then run \`ways done\` again.` : "Run `ways done` when the work is finished.";
-  else if (missing.review) packet.next = `${missing.review}: have a reviewer in a fresh read-only session (e.g. the ways-reviewer agent) review \`git diff ${active.base.slice(0, 12)} ${evidence!.input.commit.slice(0, 12)}\` against the criteria, write {"reviewer", "commit": "${evidence!.input.commit}", "verdict", "findings"} to a file outside .ways/work, then run \`ways review submit <file>\`.`;
+  else if (missing.review) packet.next = `${missing.review}: run \`ways review\` (an independent read-only reviewer of ${evidence!.input.commit.slice(0, 12)}; in Claude Code the ways-reviewer subagent also works, and ways records its verdict itself).`;
   else if (missing.approval) packet.next = `Human approval needed (${missing.approval}): ask the human to run \`ways approve\` in their own terminal.`;
   else packet.next = "Run `ways done` to close.";
   const changed = (await tryRun(git, ["diff", "--name-only", active.base, "--"]))?.split("\n").filter((path) => path && !path.startsWith(`${WAYS_DIR}/`)) ?? [];
@@ -138,7 +145,12 @@ export function renderStatus(packet: StatusPacket): string {
       lines.push(`Review: ${active.review.verdict} by ${active.review.reviewer}${active.review.fresh ? "" : " (stale)"}${active.review.blockers.length > 0 ? `, blocked by ${active.review.blockers.join(", ")}` : ""}`);
       for (const note of active.review.notes) lines.push(`  note ${note}`);
     }
+    if (active.blocked) lines.push(`Blocked: ${active.blocked}`);
     if (active.uncommitted.length > 0) lines.push(`Uncommitted: ${active.uncommitted.join(", ")}`);
+  }
+  if (packet.quarantine.length > 0) {
+    lines.push("Unstable (passed only on a retry):");
+    for (const entry of packet.quarantine) lines.push(`  ${entry.key} — ${entry.count} time${entry.count === 1 ? "" : "s"}, last on ${entry.lastCommit.slice(0, 12)}${entry.tail ? `: ${entry.tail.split("\n").at(-1)}` : ""}`);
   }
   if (packet.memory.length > 0) {
     lines.push("Memory for the code you are changing:");

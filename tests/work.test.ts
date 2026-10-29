@@ -35,6 +35,11 @@ async function writeReview(cwd: string, review: Record<string, unknown>): Promis
   return path;
 }
 
+/** A review typed in by a human at a terminal (agents go through `ways review`). */
+async function review(cwd: string, value: Record<string, unknown>): ReturnType<typeof submitReview> {
+  return submitReview(cwd, await writeReview(cwd, value), terminal(""));
+}
+
 describe("a small change", () => {
   it("is started by its first commit in observe mode and closed by one `ways done`, without a commit of its own", async () => {
     const { cwd, git } = await project();
@@ -187,23 +192,25 @@ describe("an outcome", () => {
     const result = await done(cwd);
     expect(result.status).toBe("verifying");
     expect(result.pending.review).toBe("an independent review is required");
-    expect(result.evidence.criteria.AC2).toEqual({ strength: "review-only", status: "review-only" });
-    expect((await buildStatus(cwd)).next).toContain(`"commit": "${input}"`);
+    expect(result.evidence.criteria.AC2).toMatchObject({ strength: "review-only", effective: "review-only", status: "review-only" });
+    // An agent cannot hand ways a review file: it would not know where it came from.
+    await expect(submitReview(cwd, await writeReview(cwd, { reviewer: "me", commit: input, verdict: "pass", findings: [] }), { ...terminal(""), interactive: false })).rejects.toThrow(/interactive terminal[\s\S]*`ways review`/);
+    expect((await buildStatus(cwd)).next).toContain(`run \`ways review\` (an independent read-only reviewer of ${input.slice(0, 12)}`);
 
     // A rerun of done without changes neither re-evaluates nor commits.
     const verifying = await git.head();
     expect((await done(cwd)).status).toBe("verifying");
     expect(await git.head()).toBe(verifying);
 
-    await expect(submitReview(cwd, await writeReview(cwd, { reviewer: "someone", commit: "0".repeat(40), verdict: "pass", findings: [] }))).rejects.toThrow(/review that commit/);
-    await expect(submitReview(cwd, await writeReview(cwd, { reviewer: "Ways Test <ways@example.test>", commit: input, verdict: "pass", findings: [] }))).rejects.toThrow(/authored or committed/);
-    await expect(submitReview(cwd, await writeReview(cwd, { reviewer: "x", commit: input }))).rejects.toThrow(/Invalid review/);
+    await expect(review(cwd, { reviewer: "someone", commit: "0".repeat(40), verdict: "pass", findings: [] })).rejects.toThrow(/review that commit/);
+    await expect(review(cwd, { reviewer: "Ways Test <ways@example.test>", commit: input, verdict: "pass", findings: [] })).rejects.toThrow(/authored or committed/);
+    await expect(review(cwd, { reviewer: "x", commit: input })).rejects.toThrow(/Invalid review/);
 
     // Uncommitted scratch files are not part of what closes and do not get in the way.
     await writeFile(join(cwd, "scratch.txt"), "notes\n");
-    const blocked = await submitReview(cwd, await writeReview(cwd, { reviewer: "ways-reviewer", commit: input, verdict: "pass", findings: [{ id: "F1", severity: "high", summary: "unclear" }, { id: "F2", severity: "low", summary: "typo" }] }));
+    const blocked = await review(cwd, { reviewer: "ways-reviewer", commit: input, verdict: "pass", findings: [{ id: "F1", severity: "high", summary: "unclear" }, { id: "F2", severity: "low", summary: "typo" }] });
     expect(blocked).toMatchObject({ status: "verifying", blockers: ["F1"], notes: ["F2 (low): typo"] });
-    const passed = await submitReview(cwd, await writeReview(cwd, { reviewer: "ways-reviewer", commit: input.slice(0, 12), verdict: "pass", findings: [{ id: "F1", severity: "high", summary: "unclear", disposition: "fixed" }] }));
+    const passed = await review(cwd, { reviewer: "ways-reviewer", commit: input.slice(0, 12), verdict: "pass", findings: [{ id: "F1", severity: "high", summary: "unclear", disposition: "fixed" }] });
     expect(passed.status).toBe("closed");
     expect(await committedRecord(git, "docs")).toMatchObject({ review: { reviewer: "ways-reviewer", commit: input }, closed: expect.any(Object) });
     expect(await checkHistory(cwd)).toEqual([]);
@@ -214,7 +221,7 @@ describe("an outcome", () => {
     await openOutcome(cwd, "docs", { goal: "Document it", criteria: ["AC1:readme exists"], verify: ["AC1:test -f README.md"], strength: [] });
     await commitFile(git, cwd, "README.md", "# Docs\n", "docs: readme");
     const first = (await done(cwd)).evidence.input.commit;
-    await submitReview(cwd, await writeReview(cwd, { reviewer: "ways-reviewer", commit: first, verdict: "fail", findings: [{ id: "F1", severity: "critical", summary: "wrong" }] }));
+    await review(cwd, { reviewer: "ways-reviewer", commit: first, verdict: "fail", findings: [{ id: "F1", severity: "critical", summary: "wrong" }] });
     await commitFile(git, cwd, "README.md", "# Docs, fixed\n", "docs: fix readme");
     const again = await done(cwd);
     expect(again.status).toBe("verifying");
@@ -230,7 +237,7 @@ describe("an outcome", () => {
     expect(result.status).toBe("verifying");
     await expect(approve(cwd, terminal("gated"))).rejects.toThrow(/Approval comes last/);
     const input = result.evidence.input.commit;
-    await submitReview(cwd, await writeReview(cwd, { reviewer: "ways-reviewer", commit: input, verdict: "pass", findings: [] }));
+    await review(cwd, { reviewer: "ways-reviewer", commit: input, verdict: "pass", findings: [] });
     const shown = terminal("gated");
     expect((await approve(cwd, shown)).status).toBe("closed");
     expect(shown.lines.join("\n")).toContain("AC1 file exists — passed");
@@ -327,7 +334,7 @@ describe("the history audit", () => {
   it("flags a record version written by a merge, but not one carried from a branch", async () => {
     const { cwd, git } = await project();
     await git.run(["checkout", "-q", "-b", "feature"]);
-    await openOutcome(cwd, "merged", { goal: "Merge", criteria: ["AC1:x"], verify: ["AC1:true"], strength: [], review: "none" });
+    await openOutcome(cwd, "merged", { goal: "Merge", criteria: ["AC1:x"], verify: ["AC1:test -f m.txt"], strength: [], review: "none" });
     await commitFile(git, cwd, "m.txt", "m\n", "feat: m");
     await done(cwd);
     await git.run(["checkout", "-q", "main"]);

@@ -49,14 +49,20 @@ export interface RunOutput {
   outputSha256?: string;
   /** Last lines of the combined output. */
   tail?: string;
+  /** Runs made; more than one means it failed and was retried (it is then flaky if it passed). */
+  attempts?: number;
 }
 
 export interface NamedCheckResult extends RunOutput {
+  /** Execution id criteria and reports cite: `check:<name>`. */
+  id?: string;
   name: CheckName;
   status: CheckStatus;
   command?: CommandArgv;
   exitCode?: number;
   detail?: string;
+  /** Tests the run executed, when the runner printed a known summary. */
+  tests?: number;
 }
 
 /** The commands an evaluation ran under: the test command plus the optional named contract. */
@@ -81,6 +87,28 @@ export interface HarnessConfig {
   verifierPaths?: string[];
   /** Oldest commit the history audit looks at. */
   historySince?: string;
+  /** Where `ways done` runs: a clean checkout of the commit (default) or the working tree (`fast`). */
+  evaluation?: EvaluationMode;
+  approvals?: ApprovalsConfig;
+  /** The reviewer `ways review` launches when no `--agent` is given. */
+  reviewer?: ReviewerConfig;
+}
+
+export type EvaluationMode = "clean" | "fast";
+
+export interface ApprovalsConfig {
+  /** `required`: an approval counts only with an SSH signature verified against `.ways/allowed_signers` of the base. */
+  signature?: "required" | "optional";
+  /** Who may accept changes to existing tests or check configuration: the human only, or also an attested independent review. */
+  verifierChanges?: "human" | "human-or-review";
+  /** `required`: every new outcome needs the human's approval of its criteria and evidence before it closes. */
+  criteria?: "required" | "none";
+}
+
+export interface ReviewerConfig {
+  agent?: "claude" | "pi";
+  /** A command that reads the review prompt on stdin and prints the review JSON; replaces the agent preset. */
+  command?: CommandArgv;
 }
 
 export interface ManagedManifest {
@@ -119,6 +147,27 @@ export interface ReviewFinding {
   severity: FindingSeverity;
   summary: string;
   disposition?: FindingDisposition;
+  /** Changed verifier-surface files (or `tests-ran`) the reviewer inspected and accepts as legitimate. */
+  accepts?: string[];
+}
+
+/**
+ * Where a review came from, as ways saw it, never as the reviewer declared:
+ * - `process`: ways launched the reviewer as a new read-only process with a prompt it built;
+ * - `subagent`: a Claude Code `ways-reviewer` subagent, recorded by the SubagentStop hook;
+ * - `terminal`: typed by a human at an interactive terminal.
+ */
+export interface ReviewProvenance {
+  via: "process" | "subagent" | "terminal";
+  agent?: string;
+  session?: string;
+  agentId?: string;
+  agentType?: string;
+  command?: CommandArgv;
+  /** sha256 of the prompt ways gave the reviewer. */
+  promptSha256?: string;
+  /** Tools the reviewer was limited to. */
+  tools?: string[];
 }
 
 export interface Review {
@@ -128,6 +177,15 @@ export interface Review {
   verdict: "pass" | "fail";
   findings: ReviewFinding[];
   submittedAt: string;
+  provenance?: ReviewProvenance;
+}
+
+export interface ApprovalSignature {
+  namespace: "ways-approval";
+  /** The principal of `.ways/allowed_signers` (at the base) whose key verified it. */
+  principal: string;
+  /** Armored SSH signature over the approval payload. */
+  signature: string;
 }
 
 export interface Approval {
@@ -138,14 +196,60 @@ export interface Approval {
   /** Digest of the criteria, evidence and review the human saw. */
   digest: string;
   reasons: string[];
+  /** How the human was told apart from the agent: an SSH signature, or only an interactive terminal. */
+  via?: "ssh-signature" | "terminal";
+  signature?: ApprovalSignature;
+}
+
+/** What a verifier returned on the base commit: it should fail there and pass on the input. */
+export interface BaselineResult {
+  id: string;
+  commit: string;
+  status: "failed" | "passed" | "error" | "not-run";
+  exitCode?: number;
+  outputSha256?: string;
+  tail?: string;
+  detail?: string;
 }
 
 export interface CriterionEvidence extends RunOutput {
+  /** Execution id: the criterion id for its run on the input. */
+  id?: string;
+  /** Declared strength. */
   strength: Strength;
+  /** Strength the evidence supports: `review-only` when the verifier already passes on the base. */
+  effective?: Strength;
   status: "passed" | "failed" | "review-only";
   command?: CommandArgv;
   exitCode?: number;
   detail?: string;
+  /** Ids of the executions this criterion rests on (input, base). */
+  runs?: string[];
+  baseline?: BaselineResult;
+  /** The agent's note, the only part of the evidence it writes. */
+  note?: string;
+}
+
+/** Where and with what the evaluation ran: enough to reproduce or question it. */
+export interface RunnerInfo {
+  /** A clean checkout of the input (true) or the working tree (`--fast`). */
+  clean: boolean;
+  platform: string;
+  arch: string;
+  node: string;
+  ways: string;
+  /** How dependencies were present in the checkout. */
+  dependencies: string;
+  /** Whose configuration the checks ran with: the base's (default) or the input's (the base has none). */
+  contractFrom: "base" | "input";
+}
+
+export interface TestsRatchet {
+  /** Tests the test check ran on the input. */
+  ran: number;
+  baseline?: { commit: string; ran: number };
+  /** Fewer tests ran than on the baseline: a change of the verifier surface. */
+  dropped: boolean;
 }
 
 export interface IntegrityIssue {
@@ -176,6 +280,12 @@ export interface Evidence {
   passed: boolean;
   ranAt: string;
   earlierRuns: EarlierRun[];
+  runner?: RunnerInfo;
+  tests?: TestsRatchet;
+  /** Execution ids that failed first and passed on a retry. */
+  flaky?: string[];
+  /** The approval policy of the base this evidence is judged under. */
+  approvals?: Pick<ApprovalsConfig, "signature" | "verifierChanges">;
 }
 
 export type WorkKind = "outcome" | "change";
@@ -197,6 +307,8 @@ export interface WorkRecord {
   evidence?: Evidence;
   review?: Review;
   approval?: Approval;
+  /** The agent stopped on purpose: what is missing and what would unblock it. A legitimate exit, waiting on the human. */
+  blocked?: { at: string; reason: string; input: string };
   closed?: { at: string };
   cancelled?: { at: string };
 }
