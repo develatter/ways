@@ -9,7 +9,7 @@ sources:
 reviewed: 2026-10-29
 source_hashes:
   src/work/work.ts: 6cf798d8e5c6
-  src/work/evaluate.ts: 9d05e6a07de2
+  src/work/evaluate.ts: 07fc688ed0ce
   src/work/policy.ts: 08dda9672054
   src/commands.ts: ed6b4c0f3337
 ---

@@ -127,7 +127,8 @@ interface Hunk {
 
 /** The hunks of one file's diff, without context lines. */
 async function lineChanges(git: GitRepository, base: string, input: string, path: string): Promise<Hunk[] | "binary"> {
-  const output = await git.run(["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", base, input, "--", path]);
+  // Literal: a file named like a pathspec (`:(glob)…`) is still only that file.
+  const output = await git.run(["--literal-pathspecs", "diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", base, input, "--", path]);
   const hunks: Hunk[] = [];
   let hunk: Hunk | undefined;
   for (const line of output.split("\n")) {

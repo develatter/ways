@@ -241,7 +241,7 @@ async function dispatch(command: string, args: string[], cwd: string, invoked = 
         const { describeReview } = await import("./work/review.js");
         const { prompt, commands } = await describeReview(cwd, agent);
         process.stdout.write(prompt.text);
-        console.log(`\n# To launch it yourself, save the prompt above and run one of:\n${Object.entries(commands).map(([name, line]) => `#   ${name}: ${line}`).join("\n")}\n# then record the answer at a terminal with \`ways review submit <file>\`.`);
+        console.log(`\n# To launch it yourself, save the prompt above and run one of:\n${Object.entries(commands).map(([name, line]) => `#   ${name}: ${line}`).join("\n")}\n# then record the answer at a terminal with \`ways review submit <file>\` and confirm it with \`ways approve\`.`);
         return 0;
       }
       const { launchReview } = await import("./work/review.js");

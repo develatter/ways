@@ -9,7 +9,7 @@ sources:
   - src/domain/constants.ts
 reviewed: 2026-10-29
 source_hashes:
-  src/work/evaluate.ts: 9d05e6a07de2
+  src/work/evaluate.ts: 07fc688ed0ce
   src/check/sandbox.ts: 52520ed18752
   src/work/policy.ts: 08dda9672054
   src/work/verify.ts: 7b677ecf9c3e
