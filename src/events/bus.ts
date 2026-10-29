@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { appendFileSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
+import { appendFileSync, closeSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { GitDirs } from "../runtime/runtime.js";
 
@@ -12,9 +12,9 @@ import type { GitDirs } from "../runtime/runtime.js";
  *
  * Writes are one `appendFileSync` (O_APPEND, a single write) of a line capped
  * at MAX_LINE_BYTES, so concurrent hooks never interleave lines. A session
- * file past MAX_FILE_BYTES is rotated to `<session>.1.jsonl` (the previous
- * rotation is dropped); `pruneEvents` keeps the directory under MAX_FILES and
- * MAX_TOTAL_BYTES. Readers skip lines they cannot parse.
+ * file past MAX_FILE_BYTES is renamed to `<session>.<ms>-<pid>.jsonl` and a
+ * new one starts; `pruneEvents` keeps the directory under MAX_FILES and
+ * MAX_TOTAL_BYTES, oldest first. Readers skip lines they cannot parse.
  *
  * Only Node built-ins: this runs on every hook.
  */
@@ -103,7 +103,11 @@ function clip(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
-/** Appends one event; rotates the session file when it is full. Throws on I/O errors (callers fail open). */
+/**
+ * Appends one event; a full session file is first renamed to a unique
+ * `<session>.<ms>-<pid>.jsonl`, so concurrent rotations never overwrite each
+ * other. Throws on I/O errors (callers fail open).
+ */
 export function appendEvent(dirs: Pick<GitDirs, "common">, event: WaysEvent): void {
   const path = eventFile(dirs, event.session);
   const line = eventLine(event);
@@ -111,7 +115,7 @@ export function appendEvent(dirs: Pick<GitDirs, "common">, event: WaysEvent): vo
   try {
     if (statSync(path).size + Buffer.byteLength(line) > MAX_FILE_BYTES) {
       try {
-        renameSync(path, path.replace(/\.jsonl$/, ".1.jsonl"));
+        renameSync(path, path.replace(/\.jsonl$/, `.${String(Date.now()).padStart(15, "0")}-${process.pid}.jsonl`));
       } catch {
         // Another hook rotated it first.
       }
@@ -120,6 +124,18 @@ export function appendEvent(dirs: Pick<GitDirs, "common">, event: WaysEvent): vo
     // First event of the session.
   }
   appendFileSync(path, line, { encoding: "utf8", flag: "a" });
+}
+
+/** The session's files, oldest first: rotated ones by name (time), then the current one. */
+function sessionFiles(dirs: Pick<GitDirs, "common">, session: string): string[] {
+  const key = sessionKey(session);
+  let rotated: string[] = [];
+  try {
+    rotated = readdirSync(eventsDir(dirs)).filter((name) => name.startsWith(`${key}.`) && name.endsWith(".jsonl") && name !== `${key}.jsonl`).sort();
+  } catch {
+    // No events yet.
+  }
+  return [...rotated.map((name) => join(eventsDir(dirs), name)), eventFile(dirs, session)];
 }
 
 /** Parses JSONL text, skipping lines that are not version-1 events (a torn or foreign line). */
@@ -137,11 +153,10 @@ export function parseEvents(text: string): WaysEvent[] {
   return events;
 }
 
-/** The events of one session, oldest first (the rotated file, then the current one). */
+/** The events of one session, oldest first (rotated files, then the current one). */
 export function readSessionEvents(dirs: Pick<GitDirs, "common">, session: string): WaysEvent[] {
-  const path = eventFile(dirs, session);
   const events: WaysEvent[] = [];
-  for (const file of [path.replace(/\.jsonl$/, ".1.jsonl"), path]) {
+  for (const file of sessionFiles(dirs, session)) {
     try {
       events.push(...parseEvents(readFileSync(file, "utf8")));
     } catch {
@@ -149,6 +164,26 @@ export function readSessionEvents(dirs: Pick<GitDirs, "common">, session: string
     }
   }
   return events;
+}
+
+/** The last events of a session's current file, read from its tail only: what a hook needs, at a bounded cost. */
+export function readRecentSessionEvents(dirs: Pick<GitDirs, "common">, session: string, maxBytes = 256 * 1024): WaysEvent[] {
+  const path = eventFile(dirs, session);
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(path, "r");
+    const size = fstatSync(descriptor).size;
+    const length = Math.min(size, maxBytes);
+    const buffer = Buffer.alloc(length);
+    readSync(descriptor, buffer, 0, length, size - length);
+    const text = buffer.toString("utf8");
+    // A tail that starts mid-line drops that first partial line.
+    return parseEvents(length < size ? text.slice(text.indexOf("\n") + 1) : text);
+  } catch {
+    return [];
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
 }
 
 /** Every event in the bus, oldest first, for the board and the review provenance. */

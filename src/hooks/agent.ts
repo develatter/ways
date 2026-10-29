@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import type { BriefSection, SectionId } from "../context/brief.js";
 import { CONFIG_PATH } from "../domain/constants.js";
 import type { Enforcement } from "../domain/types.js";
-import { appendEvent, pruneEvents, readSessionEvents, type EventResult, type EventType, type WaysEvent } from "../events/bus.js";
+import { appendEvent, pruneEvents, readRecentSessionEvents, type EventResult, type EventType, type WaysEvent } from "../events/bus.js";
 import { currentBranchOf, gitDirs, readActive, type GitDirs } from "../runtime/runtime.js";
 import { guard, toolPaths } from "./guard.js";
 import { formatOutput, normalizePayload, type AgentEvent, type AgentId, type HookDecision, type HookPayload } from "./providers.js";
@@ -39,7 +39,7 @@ function enforcementOf(top: string): Enforcement | undefined {
 /** Paths the session's tool calls named, most recent first. */
 function touchedPaths(dirs: GitDirs, session: string): string[] {
   const seen = new Set<string>();
-  const events = readSessionEvents(dirs, session);
+  const events = readRecentSessionEvents(dirs, session);
   for (let index = events.length - 1; index >= 0 && seen.size < MAX_TOUCHED; index -= 1) {
     const event = events[index]!;
     if (event.worktree !== dirs.top || (event.type !== "tool.started" && event.type !== "tool.finished")) continue;

@@ -1,4 +1,4 @@
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, posix, relative, resolve } from "node:path";
 import { WORK_DIR } from "../domain/constants.js";
 import type { Enforcement } from "../domain/types.js";
 
@@ -157,18 +157,24 @@ export function readShell(command: string): ShellReading {
     if (token.kind === "op") segments.push([]);
     else segments.at(-1)!.push(token);
   }
+  // `cd` changes where later relative paths point; `dir` is relative to the agent's cwd unless absolute.
+  let dir = "";
+  const at = (path: string): string => posix.isAbsolute(path) || !dir ? path : posix.join(dir, path);
   for (const segment of segments) {
     const words: string[] = [];
+    const redirected: string[] = [];
     for (let index = 0; index < segment.length; index += 1) {
       const token = segment[index]!;
       if (token.kind === "redirect") {
         const target = segment[index + 1];
         if (target?.kind === "word") {
-          if (target.value !== "/dev/null") writes.push(target.value);
+          if (target.value !== "/dev/null") redirected.push(target.value);
           index += 1;
         }
       } else if (token.kind === "word") words.push(token.value);
     }
+    const before = writes.length;
+    writes.push(...redirected);
     let start = 0;
     for (;;) {
       const word = words[start];
@@ -194,6 +200,12 @@ export function readShell(command: string): ShellReading {
       const sub = args.filter((arg, index) => !arg.startsWith("-") && args[index - 1] !== "-c" && args[index - 1] !== "-C");
       if (sub[0] === "config" && sub.some((arg) => /^core\.hookspath$/i.test(arg)) && (sub.length > 2 || args.some((arg) => arg.startsWith("--unset")))) bypass = "git config core.hooksPath";
       if (sub[0] === "rm") writes.push(...sub.slice(1));
+    }
+    for (let index = before; index < writes.length; index += 1) writes[index] = at(writes[index]!);
+    if (name === "cd" || name === "pushd") {
+      const target = operands[0];
+      // `cd`, `cd -` or `cd ~`: a target this reading cannot know, so later relative writes are not judged.
+      dir = target === undefined || target === "-" || target.startsWith("~") ? "/\0unknown" : posix.isAbsolute(target) ? target : posix.join(dir || ".", target);
     }
   }
   return { writes, ...(bypass ? { bypass } : {}) };
