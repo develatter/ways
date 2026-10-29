@@ -16,7 +16,7 @@ npx ways bootstrap --test-command='["npm","test"]'
 git add -A && git commit -m "chore: install ways"
 ```
 
-Bootstrap writes 18 files: `.ways/config.json`, two commit hooks and the agent-hook wrapper, `scripts/check.sh`, an `AGENTS.md` for you to fill in as a map of your project, a `CLAUDE.md` that imports it, the memory index, and the Claude Code and pi adapters (hooks, two skills, a reviewer agent). Codex and Cursor are available with `--agents=claude,pi,codex,cursor`.
+Bootstrap writes 19 files: `.ways/config.json`, two commit hooks and the agent-hook wrapper, `scripts/check.sh`, a CI job (`.github/workflows/ways.yml`, running `ways verify`), an `AGENTS.md` for you to fill in as a map of your project, a `CLAUDE.md` that imports it, the memory index, and the Claude Code and pi adapters (hooks, two skills, a reviewer agent). Codex and Cursor are available with `--agents=claude,pi,codex,cursor`.
 
 Fill in `AGENTS.md` (what the project is, where things live, the commands): that is the part only you can write.
 
@@ -25,10 +25,16 @@ Fill in `AGENTS.md` (what the project is, where things live, the commands): that
 **A small change.** Work and commit as you like (any number of commits), then:
 
 ```bash
-npx ways done        # integrity + your checks, once; closes the change
+npx ways done        # integrity + your checks, once, in a clean checkout; closes the change
 ```
 
-In the default `observe` mode the first commit starts the change, named after the branch; `npx ways start <id>` names it yourself. If the checks fail, fix, commit and run `ways done` again.
+In the default `observe` mode the first commit starts the change, named after the branch; `npx ways start <id>` names it yourself. If the checks fail, fix, commit and run `ways done` again. `ways done` runs the checks as your base commit configured them, in a clean checkout of your commit (so leftovers in your working tree do not count), and retries a failure twice before recording it; `--fast` runs in place and leaves the clean run to CI.
+
+**When it cannot be done as asked**, the agent stops and says why instead of working around a check:
+
+```bash
+npx ways block "AC2 needs the payments sandbox key; set PAYMENTS_KEY in .env.test or drop AC2"
+```
 
 **A delivery with criteria.** Say what done means, in one line per criterion, with the strongest verifier you have:
 
@@ -37,19 +43,21 @@ npx ways outcome open auth-refresh --goal="Refresh tokens before they expire" \
   --criterion="AC1:refreshes 60 s before expiry" --verify='AC1:npm test -- -t "refresh before expiry"' \
   --criterion="AC2:never refreshes a revoked token" --verify='AC2:npm test -- -t "revoked"'
 # ... implement and commit ...
-npx ways done                      # runs checks and verifiers, records the evidence
-npx ways review submit review.json # only when a review is required (the default); closes the work
+npx ways done      # runs checks and verifiers, records the evidence
+npx ways review    # only when a review is required (the default): an independent read-only reviewer; closes the work
 ```
 
-You review the criteria, not the diff. A criterion without `--verify` is `review-only` and makes the independent review mandatory; `--strength=AC1:property` (or `proof`, `e2e`) records how strong a verifier is. `--review=none` drops the review for criteria that all have verifiers, and `--approval=required` adds a human approval at the end.
+You review the criteria, not the diff: `outcome open` prints them with their verifiers in one block. Each verifier must fail on the base and pass on your commit; one that already passes before the work counts as `review-only`, like a criterion without `--verify`, and makes the independent review mandatory. `--strength=AC1:property` (or `proof`, `e2e`) records how strong a verifier is, and `ways done` says what backs the delivery (`Backed by: 1 property, 2 test`). `--review=none` drops the review for criteria that all have discriminating verifiers, and `--approval=required` adds a human approval at the end.
 
-**Human approvals** are needed when you ask for them, and always when the work modifies or deletes an existing test or changes the check commands (adding tests never needs one). The human runs, in their own terminal:
+`ways review` launches the reviewer as a new process that only has read tools and gets its prompt from ways (`claude -p` or `pi -p`; `--agent=claude|pi`, or `"reviewer"` in `.ways/config.json`), and records its verdict itself; in Claude Code the `ways-reviewer` subagent works too. Only `critical` and `high` findings block.
+
+**Human approvals** are needed when you ask for them, and when the work modifies or deletes an existing test, changes the check configuration or runs fewer tests, unless the independent review accepted that change (adding tests never needs one). The human runs, in their own terminal:
 
 ```bash
-npx ways approve
+npx ways approve                       # or --key=~/.ssh/id_ed25519_sk to sign it
 ```
 
-It refuses without a terminal, shows the criteria, the evidence and the review, asks for the work id and, if nothing else is missing, closes the work.
+It refuses without a terminal, shows the criteria, the evidence and the review, asks for the work id and, if nothing else is missing, closes the work. With your SSH key in a committed `.ways/allowed_signers` it signs the approval, and `"approvals": {"signature": "required"}` makes unsigned approvals not count; use a FIDO key (`ed25519-sk`) so that an agent running as you cannot sign. See [docs/VERIFICATION.md](docs/VERIFICATION.md).
 
 **Memory.** When you learn something durable (a convention, a decision, a pitfall, how to verify something):
 
@@ -61,7 +69,7 @@ It writes one short file under `.ways/knowledge/`; commit it with the change. `w
 
 **Where am I?** `npx ways status` shows the active work, its criteria, what is missing and the exact next command. `npx ways cancel` drops the active work.
 
-**What the agent sees.** In Claude Code and pi you do not have to tell the agent about ways. Hooks hand it, at session start, a short brief (the active work and its criteria, what fails, what waits on whom, the next command, and the memory of the code in play), then only what changed, and say nothing when nothing did. Before a tool call they refuse hand edits of `.ways/work/`; at the end of a turn they remind the agent once of a failing run or a missing review, and tell you, not the agent, when your approval is pending. Claude Code also gets each memory as a path rule, loaded when it opens that code. `npx ways context --brief` prints the brief; [docs/CONTEXT.md](docs/CONTEXT.md) explains it.
+**What the agent sees.** In Claude Code and pi you do not have to tell the agent about ways. Hooks hand it, at session start, a short brief (the active work and its criteria, what fails, what waits on whom, the next command, and the memory of the code in play), then only what changed, and say nothing when nothing did. Before a tool call they refuse hand edits of `.ways/work/`; at the end of a turn they remind the agent once of a failing run or a missing review, and tell you, not the agent, when your approval is pending or the agent blocked. Claude Code also gets each memory as a path rule, loaded when it opens that code. `npx ways context --brief` prints the brief; [docs/CONTEXT.md](docs/CONTEXT.md) explains it.
 
 The skills `ways-outcome` and `ways-remember` and the `ways-reviewer` agent are there when you want them (`/ways-outcome` in Claude Code).
 
@@ -69,13 +77,14 @@ The skills `ways-outcome` and `ways-remember` and the `ways-reviewer` agent are 
 
 | Guarantee | How |
 | --- | --- |
-| The definition of done does not move | The goal and criteria are committed when the outcome opens; the commit hook refuses any hand edit of `.ways/work/`, and `ways check --history` flags one that bypassed the hook |
-| Evidence is the harness's, bound to its input | `ways done` writes it (commands, exit codes, durations, output digests and tails) for the exact commit and tree it ran on; closing requires the closed tree to be that tree |
-| Tests are not weakened silently | Modifying or deleting an existing test or check command needs a human approval |
-| Reviews are of what is closed | A review names the evaluated commit; any later change needs a new `ways done` and a new review. Only `critical` and `high` findings block |
-| Approvals come from a human | `ways approve` needs a real terminal; the approval covers the criteria, evidence and review |
+| The definition of done does not move | The goal and criteria are committed when the outcome opens; the commit hook refuses any hand edit of `.ways/work/`, and the history audit flags one that bypassed the hook |
+| Evidence is the harness's, bound to its input | `ways done` writes it (commands, exit codes, durations, output digests and tails, attempts, where it ran) for the exact commit and tree it ran on, in a clean checkout, with the base's checks; closing requires the closed tree to be that tree |
+| A criterion shows the work did something | Its verifier must fail on the base and pass on the commit; otherwise it is review-only |
+| Tests are not weakened silently | Modifying or deleting an existing test or check file, or running fewer tests, needs a human approval or an independent review that accepts it |
+| Reviews are independent | Only a reviewer ways launched (or the `ways-reviewer` subagent it handed the prompt to) counts; it has read tools only and ways records its answer itself |
+| Approvals come from a human | `ways approve` needs a real terminal; with `allowed_signers` it is SSH-signed, and the policy can require that |
 
-Locally, an agent with a shell can bypass any hook (`WAYS_DISABLE=1`, or pointing `core.hooksPath` elsewhere; `--no-verify` alone does not skip the record check, which runs in `prepare-commit-msg`). The CI is the final judge: run `scripts/check.sh --history` on pull requests (see [docs/BRANCH_PROTECTION.md](docs/BRANCH_PROTECTION.md)).
+Locally, an agent with a shell can bypass any hook (`WAYS_DISABLE=1`, or pointing `core.hooksPath` elsewhere; `--no-verify` alone does not skip the record check, which runs in `prepare-commit-msg`). **The CI is the final judge**: the `ways verify` job bootstrap writes re-runs everything from scratch on every pull request; make it a required check ([docs/BRANCH_PROTECTION.md](docs/BRANCH_PROTECTION.md)). What this does and does not protect against is in [docs/VERIFICATION.md](docs/VERIFICATION.md).
 
 `enforcement` in `.ways/config.json` is `observe` by default: the hook only refuses commits that hand-edit a work record. With `enforce` it also refuses commits outside an active work.
 
@@ -89,6 +98,8 @@ npx ways bootstrap --test-command='["npm","test"]' \
 ```
 
 The contract can add a `setup` command and `services` (`{"name", "command", "ready", "timeoutMs"}`, where `ready` is one of `{"command": [...]}`, `{"tcp": {"port": 5432}}` or `{"http": "http://127.0.0.1:3000/health"}`). `ways done` and `ways check --with-services` start them around the checks, log them under `.git/ways/services/` and stop only the processes they started.
+
+`setup` (for example `["npm","ci"]`) is how the clean checkout gets its dependencies; it runs again only when a lockfile changes. Without it, ways links your working tree's `node_modules` or `.venv` into the clean checkout, and says so in the evidence. If the clean run is too slow for your loop, set `"evaluation": "fast"`: CI still runs it clean.
 
 ## Commands
 
@@ -122,12 +133,15 @@ The contract can add a `setup` command and `services` (`{"name", "command", "rea
 
 | Path | What | Committed |
 | --- | --- | --- |
-| `.ways/config.json` | Checks, enforcement, review default, verifier globs | yes |
-| `.ways/work/<id>.json` | One record per outcome: criteria, evidence, review, approval (written only by ways) | yes |
+| `.ways/config.json` | Checks, enforcement, review default, verifier globs, approval policy, reviewer | yes |
+| `.ways/allowed_signers` | Optional: the SSH keys whose signatures count as the human's approval | yes |
+| `.ways/work/<id>.json` | One record per outcome (and per change that needed an approval or was blocked): criteria, evidence, review, approval (written only by ways) | yes |
+| `.github/workflows/ways.yml` | The CI job running `ways verify` (written once; yours to adapt) | yes |
 | `.ways/knowledge/` | Memory: short OKF concepts | yes |
 | `.ways/hooks/`, `scripts/check.sh` | Managed Git hooks, agent-hook wrapper and check script (hashed in `.ways/manifest.json`) | yes |
 | `.claude/rules/ways-*.md` | Memory as Claude Code path rules (generated; `ways memory index`) | yes |
-| `.git/ways/` | Active work, run log, search index, service logs, context caches, agent sessions and the [event log](docs/EVENTS.md) | no |
+| `.git/ways/` | Active work, run log, flaky quarantine, test counts, base-run cache, search index, service logs, context caches, agent sessions and the [event log](docs/EVENTS.md) | no |
+| `$TMPDIR/ways-eval/` | The clean checkout `ways done` evaluates in (a Git worktree, reused) | no |
 
 ## Upgrading from 0.2
 
@@ -140,7 +154,7 @@ The check contract and the memory carry over (coverage globs become `paths:` on 
 
 ## Harness evals
 
-`ways evals run` grades a fixed corpus in disposable repositories without ways (A), with checks only (B), as a change with `ways done` (C) or as an outcome (E); `ways evals compare` builds a matched report with 95% intervals and no single score. See [docs/EVALS.md](docs/EVALS.md).
+`ways evals run` grades a fixed corpus in disposable repositories without ways (A), with checks only (B), as a change with `ways done` (C) or as an outcome (E); `ways evals compare` builds a matched report with 95% intervals and no single score. `--corpus=assets/evals/adversarial.json` runs the traps (edit the test, loosen the checks, review yourself, fake the approval, force an impossible task) against real models. See [docs/EVALS.md](docs/EVALS.md).
 
 ## Development
 

@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ways.dev/schemas/review-v2.json",
-  "title": "Review submitted with `ways review submit <file>`",
+  "title": "Review recorded by ways review (from the reviewer process), the ways-reviewer subagent hook, or a human with ways review submit <file>",
   "type": "object",
   "additionalProperties": false,
   "required": ["reviewer", "commit", "verdict", "findings"],
   "properties": {
-    "reviewer": { "type": "string", "minLength": 1, "description": "who reviewed; must not be an author or committer of the reviewed increment" },
+    "reviewer": { "type": "string", "minLength": 1, "description": "who reviewed (a label; independence comes from the provenance ways records, not from this name); must not be an author or committer of the increment" },
     "commit": { "type": "string", "pattern": "^[0-9a-f]{7,64}$", "description": "the evaluated commit printed by `ways done`" },
     "verdict": { "enum": ["pass", "fail"] },
     "findings": {

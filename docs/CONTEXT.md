@@ -47,8 +47,10 @@ Without `--brief` nothing is capped; `--json` gives the same data to an orchestr
 | Each prompt | `UserPromptSubmit` | `before_agent_start` | Only the sections that changed since this session last heard them, a one-line note for a section that went away, and memory not yet given. Usually nothing. |
 | Before a tool call | `PreToolUse` | `tool_call` | Refuses a write, move or delete of `.ways/work/**` (every mode), and in `enforce` mode a command that switches the commit hooks off. Otherwise nothing. |
 | After a tool call | `PostToolUse` (in the background) | `tool_result` | Logs the paths. In pi, appends the memory of a newly touched area to the tool result (Claude Code gets it from the rules). |
-| Stop | `Stop` | `agent_end` | Once per blocker and session: if the last `ways done` failed on HEAD or a review is required, the agent is told and keeps going; a pending human approval is shown to the human only. |
+| Stop | `Stop` | `agent_end` | Once per blocker and session: if the last `ways done` failed on HEAD or a review is required, the agent is told and keeps going; a pending human approval or a `ways block` is shown to the human only. |
 | Session end | `SessionEnd` | `session_shutdown` | Logs it. |
+| Reviewer starts | `SubagentStart` (matcher `ways-reviewer`) | — | Hands the subagent the review prompt ways builds (criteria, evidence, diff of the evaluated commit). |
+| Reviewer ends | `SubagentStop` (matcher `ways-reviewer`) | — | Records its final answer as the review, if ways started it and its tool calls show no writes; asks once for the JSON when it is missing. pi has no subagents: `ways review --agent=pi` launches a reviewer process instead. |
 
 Every event is recorded in the [event bus](EVENTS.md).
 

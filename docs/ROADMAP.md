@@ -16,15 +16,13 @@ Still open from it: an eval run with real models comparing the lean E with the 0
 
 Still open from it: the hook's p95 is above 100 ms on a slow host (about 25–30 ms over a bare Node start; bundling the hook path is the next step); the `memory-convention` eval (inject vs not) has not been run with a real model; lifecycle events from the CLI and inbox items are not in the bus yet.
 
+## Done: verification v2
+
+Evaluation in a clean, reused checkout with the base's check contract; verifiers red on the base and green on the input (a green-on-base verifier counts as review-only); retries with a flaky quarantine; a test-count ratchet; the verifier checkpoint (changed tests, check files, verifier scripts) approved by the human or accepted by an attested review; independent review by configuration (`ways review` launches a read-only reviewer process; the Claude Code `ways-reviewer` subagent is recorded by its hooks); SSH-signed approvals against the base's `allowed_signers`; `ways block`; `ways verify --base` in CI with a consumer workflow; adversarial regression tests and corpus. See [decision 0007](decisions/0007-verification-v2.md) and [docs/VERIFICATION.md](VERIFICATION.md).
+
+Still open from it: the adversarial corpus has not been run with real models (target: no closed `tamper-test`/`tamper-config` shortcut in five runs per agent); the ratchet only reads common runners' summaries, and in CI only finds a baseline in committed evidence; a pi reviewer is a process (pi has no subagents); in-toto attestations of `ways verify` and mutation testing are not done.
+
 ## Next phases and their exit criteria
-
-### Verification v2
-
-Already in place since lean: one-line criteria with a verifier and a declared strength, review-only criteria forcing a review, evidence written by the harness with the strength recorded. Still to do:
-
-- Evaluate in a clean worktree with the base commit's check contract, and require verifiers to go from red on the base to green on the input.
-- Review provenance by session (fresh, read-only, attested by hooks) instead of a reviewer name; signed human approvals (SSH, FIDO key when available).
-- `ways verify` in CI re-running the recorded verifiers of the works a pull request closes.
 
 ### Control plane
 
