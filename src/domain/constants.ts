@@ -15,6 +15,44 @@ export const DOCUMENTALIST_ROLE = "documentalist";
 export function isWikiPath(path: string): boolean {
   return path === WIKI_DIR || path.startsWith(`${WIKI_DIR}/`);
 }
+
+/** The project map `ways map` generates, and the purpose notes it merges in. */
+export const MAP_PATH = "MAP.md";
+export const MAP_NOTES_PATH = `${WAYS_DIR}/map-notes.json`;
+/** Whether the first session's onboarding ran: `pending` after bootstrap, `done` after `ways onboard`. */
+export const ONBOARDING_PATH = `${WAYS_DIR}/onboarding.json`;
+/** The project's own eval corpus (`ways evals init`), its candidates and, ignored by Git, its results. */
+export const EVALS_DIR = `${WAYS_DIR}/evals`;
+export const PROJECT_CORPUS_PATH = `${EVALS_DIR}/corpus.json`;
+/** Where the onboarder proposes additions to AGENTS.md; ways moves them into AGENTS.md as one marked block. */
+export const AGENTS_PROPOSAL_PATH = `${WAYS_DIR}/agents-proposal.md`;
+/** The role `ways onboard` gives the agent it launches. */
+export const ONBOARDER_ROLE = "onboarder";
+
+/** What the onboarder may write: the map notes (and MAP.md, which ways regenerates), the memory, the evals and its AGENTS.md proposal. */
+export function isOnboarderPath(path: string): boolean {
+  return path === MAP_PATH || path === MAP_NOTES_PATH || path === AGENTS_PROPOSAL_PATH
+    || path.startsWith(`${KNOWLEDGE_DIR}/`) || path.startsWith(`${EVALS_DIR}/`);
+}
+
+/** A role ways launches an agent for, and the only paths that agent may write. */
+export interface RoleScope {
+  allowed(path: string): boolean;
+  /** Where it may write, for messages. */
+  where: string;
+  /** What it is, for messages. */
+  what: string;
+}
+
+export const ROLE_SCOPES: Readonly<Record<string, RoleScope>> = {
+  [DOCUMENTALIST_ROLE]: { allowed: isWikiPath, where: `${WIKI_DIR}/`, what: "the documentalist: you write only the wiki for humans. Code, tests, configuration and .ways/knowledge (the agents' memory, a different thing) are not yours to change" },
+  [ONBOARDER_ROLE]: { allowed: isOnboarderPath, where: `${MAP_NOTES_PATH}, ${KNOWLEDGE_DIR}/, ${EVALS_DIR}/ and ${AGENTS_PROPOSAL_PATH}`, what: "the onboarder: you write only the map notes, the memory, the project evals and the AGENTS.md proposal. Code, tests, configuration and AGENTS.md itself are not yours to change" },
+};
+
+/** The role of a session ways launched (environment `WAYS_ROLE`), when it is one ways knows. */
+export function knownRole(value: string | undefined): string | undefined {
+  return value !== undefined && Object.hasOwn(ROLE_SCOPES, value) ? value : undefined;
+}
 /** The coding-agent hook wrapper: `agent-hook <agent> <event>` runs `ways hook <event> --agent=<agent>`. */
 export const AGENT_HOOK_PATH = `${HOOKS_DIR}/agent-hook`;
 

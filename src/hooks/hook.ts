@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { CONFIG_PATH, DOCUMENTALIST_ROLE, isWikiPath, isWorkId, MANIFEST_PATH, slugify, WIKI_DIR, WORK_DIR } from "../domain/constants.js";
+import { CONFIG_PATH, isWorkId, knownRole, MANIFEST_PATH, ROLE_SCOPES, slugify, WORK_DIR } from "../domain/constants.js";
 import type { ActiveWork } from "../domain/types.js";
 import { clearRuns, currentBranchOf, gitDirs, readActive, writeActive, type GitDirs } from "../runtime/runtime.js";
 
@@ -99,7 +99,7 @@ export function addRoleTrailer(message: string, role: string): string {
 
 /** The role a session was launched for, from the environment ways set when it started the agent. */
 function sessionRole(): string | undefined {
-  return process.env.WAYS_ROLE === DOCUMENTALIST_ROLE ? DOCUMENTALIST_ROLE : undefined;
+  return knownRole(process.env.WAYS_ROLE);
 }
 
 /**
@@ -146,11 +146,12 @@ async function judge(cwd: string, messagePath: string, stage: "prepare" | "final
   const staged = (): Map<string, string> => (changes ??= stagedChanges(dirs));
   const role = sessionRole();
   if (stage === "prepare" && role) {
-    const outside = [...staged().keys()].filter((path) => !isWikiPath(path)).sort();
+    const scope = ROLE_SCOPES[role]!;
+    const outside = [...staged().keys()].filter((path) => !scope.allowed(path)).sort();
     if (outside.length > 0) {
       return {
         accepted: false,
-        message: `ways: refused: this commit comes from the ${role} session and changes ${outside.join(" ")}, outside ${WIKI_DIR}/. The documentalist writes only the wiki for humans; code, tests, configuration and .ways/knowledge (the agents' memory) are not its to change. Unstage them with \`git restore --staged ${outside.join(" ")}\` and commit only ${WIKI_DIR}/.`,
+        message: `ways: refused: this commit comes from the ${role} session and changes ${outside.join(" ")}, outside ${scope.where}. That session is ${scope.what}. Unstage them with \`git restore --staged ${outside.join(" ")}\` and commit only ${scope.where}.`,
       };
     }
   }

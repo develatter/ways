@@ -31,6 +31,18 @@ describe("the PreToolUse guard", () => {
     expect(guard({ tool: "read", toolInput: { path: "src/b.ts" }, top: TOP, cwd: TOP, enforcement: "observe" })).toEqual({ paths: ["src/b.ts"] });
   });
 
+  it("confines each role ways launches to its own scope", () => {
+    const write = (role: string, path: string): ReturnType<typeof guard> => guard({ tool: "Write", toolInput: { file_path: path }, top: TOP, cwd: TOP, enforcement: "observe", role });
+    expect(write("documentalist", "docs/wiki/a.md")).toEqual({ paths: ["docs/wiki/a.md"] });
+    expect(write("documentalist", ".ways/knowledge/x.md")).toMatchObject({ code: "role-scope", deny: expect.stringMatching(/outside docs\/wiki\/.*the documentalist/) });
+    for (const allowed of [".ways/map-notes.json", ".ways/knowledge/conventions/x.md", ".ways/agents-proposal.md", "MAP.md"]) expect(write("onboarder", allowed), allowed).toEqual({ paths: [allowed] });
+    for (const refused of ["src/a.ts", "AGENTS.md", ".ways/config.json", "docs/wiki/a.md"]) expect(write("onboarder", refused), refused).toMatchObject({ code: "role-scope", deny: expect.stringMatching(/the onboarder/) });
+    expect(guard({ tool: "Bash", toolInput: { command: "echo x > src/a.ts" }, top: TOP, cwd: TOP, enforcement: "observe", role: "onboarder" })).toMatchObject({ code: "role-scope" });
+    expect(guard({ tool: "Bash", toolInput: { command: "export WAYS_DISABLE=1" }, top: TOP, cwd: TOP, enforcement: "observe", role: "onboarder" })).toMatchObject({ code: "hooks-bypass" });
+    // An unknown role is no role: nothing is confined.
+    expect(write("someone", "src/a.ts")).toEqual({ paths: ["src/a.ts"] });
+  });
+
   it("refuses shell commands that write, move or delete a record", () => {
     for (const command of [
       "echo '{}' > .ways/work/x.json",

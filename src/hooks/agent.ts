@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BriefSection, SectionId } from "../context/brief.js";
-import { CONFIG_PATH, DOCUMENTALIST_ROLE } from "../domain/constants.js";
+import { CONFIG_PATH, knownRole } from "../domain/constants.js";
 import type { Enforcement } from "../domain/types.js";
 import { appendEvent, pruneEvents, readRecentSessionEvents, type EventResult, type EventType, type WaysEvent } from "../events/bus.js";
 import { currentBranchOf, gitDirs, readActive, type GitDirs } from "../runtime/runtime.js";
@@ -223,7 +223,7 @@ export async function runAgentHook(event: AgentEvent, agent: AgentId, stdin: str
     // ways is not installed in this repository: say nothing, log nothing.
     if (!enforcement) return { stdout: "", exitCode: 0 };
     // A session `ways wiki update` launched says so in its environment; every event it logs carries the role.
-    const role = process.env.WAYS_ROLE === DOCUMENTALIST_ROLE ? DOCUMENTALIST_ROLE : undefined;
+    const role = knownRole(process.env.WAYS_ROLE);
     base = {
       v: 1,
       session: payload.session,

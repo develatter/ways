@@ -1,6 +1,6 @@
 import { committedContract, sameContract } from "../check/contract.js";
 import { enforcementOf, loadConfig } from "../config/config.js";
-import { DOCUMENTALIST_ROLE, isWikiPath, MANIFEST_PATH, WIKI_DIR, WORK_DIR } from "../domain/constants.js";
+import { knownRole, MANIFEST_PATH, ROLE_SCOPES, WORK_DIR } from "../domain/constants.js";
 import type { IntegrityIssue, WorkRecord } from "../domain/types.js";
 import { validateWorkRecord } from "../domain/validation.js";
 import { stableJson } from "../fs/files.js";
@@ -182,10 +182,12 @@ export async function auditHistory(git: GitRepository, commits: readonly CommitI
     if (options.untraced && !commit.trailers.work) {
       issues.push({ code: "history-untraced", path: commit.hash.slice(0, 12), message: `Commit "${commit.subject}" lacks a Harness-Work trailer (enforcement: enforce)` });
     }
-    if (commit.trailers.role === DOCUMENTALIST_ROLE) {
-      // The commit hook adds the trailer to a documentalist session's commits and refuses them outside the wiki; this is the check that does not depend on the hook having run.
-      const outside = (await git.run(["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", commit.hash])).split("\0").filter((path) => path && !isWikiPath(path));
-      if (outside.length > 0) issues.push({ code: "history-role-scope", path: commit.hash.slice(0, 12), message: `Commit "${commit.subject}" is the documentalist's but changes ${outside.join(", ")}, outside ${WIKI_DIR}/; the documentalist writes only the wiki for humans, never code or .ways/knowledge` });
+    const role = knownRole(commit.trailers.role);
+    if (role) {
+      // The commit hook adds the trailer to a role session's commits and refuses them outside its scope; this is the check that does not depend on the hook having run.
+      const scope = ROLE_SCOPES[role]!;
+      const outside = (await git.run(["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", commit.hash])).split("\0").filter((path) => path && !scope.allowed(path));
+      if (outside.length > 0) issues.push({ code: "history-role-scope", path: commit.hash.slice(0, 12), message: `Commit "${commit.subject}" is the ${role}'s but changes ${outside.join(", ")}, outside ${scope.where}; the ${role} may write nothing else` });
     }
     const records = (await git.run(["diff-tree", "--no-commit-id", "--name-only", "-r", commit.hash, "--", `${WORK_DIR}/`])).split("\n").filter((path) => path.endsWith(".json"));
     for (const path of records) issues.push(...await recordVersionIssues(git, commit, path));
