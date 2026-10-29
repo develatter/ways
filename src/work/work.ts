@@ -7,7 +7,7 @@ import { STRENGTHS, type ActiveWork, type ApprovalPolicy, type Criterion, type E
 import { validationDetails } from "../domain/validation.js";
 import { GitRepository, parseTrailers } from "../git/git.js";
 import { relevantConcepts, type RelevantConcept } from "../memory/memory.js";
-import { appendRun, clearActive, clearRuns, gitDirs, readActive, readRuns, writeActive } from "../runtime/runtime.js";
+import { appendRun, clearActive, clearRuns, gitDirs, readActive, readRuns, writeActive, writeLastRun } from "../runtime/runtime.js";
 import { formatCommandLine, parseCommandLine } from "./argv.js";
 import { evaluate, evidenceFailures } from "./evaluate.js";
 import { approvalDigest, approvalReasons, committedRecord, isOpen, openRecords, pending, recordIntroduction, reviewBlockers, reviewNotes, writeRecord, type Pending } from "./record.js";
@@ -288,6 +288,7 @@ export async function done(cwd: string, options: { message?: string } = {}): Pro
     const failures = evidenceFailures(evidence);
     evidence.earlierRuns = readRuns(top, active.id);
     appendRun(top, active.id, { at: evidence.ranAt, input: evidence.input.commit, passed: evidence.passed, failed: failedNames(evidence) });
+    writeLastRun(top, active.id, { at: evidence.ranAt, input: evidence.input.commit, passed: evidence.passed, failures });
     if (!evidence.passed) {
       return { id: active.id, kind: active.kind, status: "failed", evidence, pending: {}, failures, commits, memory: [] };
     }

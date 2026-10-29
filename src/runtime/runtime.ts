@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { isWorkId } from "../domain/constants.js";
 import type { ActiveWork, EarlierRun } from "../domain/types.js";
@@ -77,6 +77,40 @@ export function currentBranchOf(dirs: GitDirs): string | undefined {
   }
 }
 
+/**
+ * The commit HEAD points at, read from the Git directory without spawning git
+ * (loose ref, then packed-refs). Undefined on an unborn branch or a layout it
+ * does not understand; callers that need certainty ask git.
+ */
+export function headCommitOf(dirs: GitDirs): string | undefined {
+  let head: string;
+  try {
+    head = readFileSync(join(dirs.gitDir, "HEAD"), "utf8").trim();
+  } catch {
+    return undefined;
+  }
+  if (/^[0-9a-f]{40,64}$/.test(head)) return head;
+  if (!head.startsWith("ref: ")) return undefined;
+  const ref = head.slice("ref: ".length);
+  for (const dir of new Set([dirs.gitDir, dirs.common])) {
+    try {
+      const value = readFileSync(join(dir, ref), "utf8").trim();
+      if (/^[0-9a-f]{40,64}$/.test(value)) return value;
+    } catch {
+      // Not a loose ref here.
+    }
+  }
+  try {
+    for (const line of readFileSync(join(dirs.common, "packed-refs"), "utf8").split("\n")) {
+      const [hash, name] = line.split(" ");
+      if (name === ref && hash && /^[0-9a-f]{40,64}$/.test(hash)) return hash;
+    }
+  } catch {
+    // No packed refs.
+  }
+  return undefined;
+}
+
 export function runtimeDir(cwd: string, shared = true): string {
   const dirs = gitDirs(cwd);
   return join(shared ? dirs.common : dirs.gitDir, "ways");
@@ -139,4 +173,40 @@ export function readRuns(cwd: string, id: string): EarlierRun[] {
 
 export function clearRuns(cwd: string, id: string): void {
   rmSync(runLogPath(cwd, id), { force: true });
+  rmSync(lastRunPath(cwd, id), { force: true });
+}
+
+/** What the latest `ways done` said, in a few lines, for the context brief. Runtime only. */
+export interface LastRun {
+  at: string;
+  input: string;
+  passed: boolean;
+  /** The failure lines `ways done` printed, capped. */
+  failures: string[];
+}
+
+const LAST_RUN_LINES = 30;
+const LAST_RUN_LINE_CHARS = 240;
+
+function lastRunPath(cwd: string, id: string): string {
+  return join(runtimeDir(cwd), "runs", `${id}.last.json`);
+}
+
+export function writeLastRun(cwd: string, id: string, run: LastRun): void {
+  const path = lastRunPath(cwd, id);
+  mkdirSync(dirname(path), { recursive: true });
+  const failures = run.failures.slice(0, LAST_RUN_LINES).map((line) => line.length > LAST_RUN_LINE_CHARS ? `${line.slice(0, LAST_RUN_LINE_CHARS - 1)}…` : line);
+  const temporary = `${path}.tmp-${process.pid}`;
+  writeFileSync(temporary, `${JSON.stringify({ ...run, failures })}\n`, "utf8");
+  renameSync(temporary, path);
+}
+
+export function readLastRun(cwd: string, id: string): LastRun | undefined {
+  try {
+    const value = JSON.parse(readFileSync(lastRunPath(cwd, id), "utf8")) as Partial<LastRun>;
+    if (typeof value.at !== "string" || typeof value.input !== "string" || typeof value.passed !== "boolean" || !Array.isArray(value.failures)) return undefined;
+    return { at: value.at, input: value.input, passed: value.passed, failures: value.failures.filter((line): line is string => typeof line === "string") };
+  } catch {
+    return undefined;
+  }
 }
