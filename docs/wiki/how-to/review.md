@@ -8,8 +8,8 @@ sources:
   - src/commands.ts
 reviewed: 2026-10-29
 source_hashes:
-  src/work/review.ts: b5a2d2e93ac0
-  src/work/policy.ts: 79e59809a124
+  src/work/review.ts: 283fd8bf61d5
+  src/work/policy.ts: 08dda9672054
   src/work/signature.ts: 6ee11de63cd0
   src/commands.ts: ed6b4c0f3337
 ---

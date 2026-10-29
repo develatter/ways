@@ -12,7 +12,7 @@ source_hashes:
   src/hooks/hook.ts: fd41f9993c45
   src/hooks/guard.ts: 4d3ff1f5e49b
   src/integrity/history.ts: 7dc05c41c7b6
-  src/work/policy.ts: 79e59809a124
+  src/work/policy.ts: 08dda9672054
   src/config/config.ts: 4cbe2b4bb94f
 ---
 

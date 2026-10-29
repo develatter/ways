@@ -11,8 +11,8 @@ reviewed: 2026-10-29
 source_hashes:
   src/work/evaluate.ts: 9d05e6a07de2
   src/check/sandbox.ts: 52520ed18752
-  src/work/policy.ts: 79e59809a124
-  src/work/verify.ts: cdbe7d42f767
+  src/work/policy.ts: 08dda9672054
+  src/work/verify.ts: 7b677ecf9c3e
   src/domain/constants.ts: c77b27ca061a
 ---
 

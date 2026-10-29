@@ -84,7 +84,7 @@ export function acceptedByReview(record: WorkRecord): Set<string> {
 function verifierReason(evidence: Evidence, entries: readonly string[]): string {
   const files = entries.filter((entry) => entry !== "tests-ran");
   const parts = [
-    ...(files.length > 0 ? [`the change modifies or deletes existing tests or check configuration: ${files.join(", ")}`] : []),
+    ...(files.length > 0 ? [`the change removes or changes lines of existing tests, disables or narrows tests, or changes check configuration: ${files.join(", ")}`] : []),
     ...(entries.includes("tests-ran") && evidence.tests?.baseline ? [`fewer tests ran than on the base (${evidence.tests.ran} < ${evidence.tests.baseline.ran} at ${evidence.tests.baseline.commit.slice(0, 12)})`] : []),
   ];
   return parts.join("; ");

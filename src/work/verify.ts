@@ -13,9 +13,9 @@ import { committedRecord } from "./record.js";
  * scratch rather than read from what the branch says about itself. It runs
  * the base's checks on the head in a clean checkout, re-runs every criterion
  * verifier of the works the range touched (green on the head, red on each
- * work's base), requires every changed existing test or check file in the
- * range to be covered by a closed work that got it approved or accepted, and
- * audits the records the range changed. The report says, per work, what
+ * work's base), requires every entry of the range's verifier checkpoint to be
+ * covered by a closed work that got that very content approved or accepted,
+ * and audits the records the range changed. The report says, per work, what
  * backs what was delivered.
  */
 export interface VerifyReport {
@@ -113,7 +113,7 @@ export async function verifyRange(cwd: string, options: { base: string; head?: s
   for (const entry of uncovered) {
     failures.push(entry === TESTS_RAN
       ? `fewer tests ran than on the base (${main.tests?.ran} < ${main.tests?.baseline?.ran}) and no closed work in the range had that approved`
-      : `${entry} is an existing test or check file the range modifies or deletes, and no closed work in the range had that version approved or accepted by an independent review`);
+      : `${entry}: the range removes or changes lines of existing tests, disables or narrows tests, or changes check configuration there, and no closed work in the range had that version approved or accepted by an independent review`);
   }
   // The base decides whether untraced commits fail, so a range cannot switch itself to observe.
   const enforcement = (await baseConfig(git, base))?.enforcement ?? config?.enforcement;

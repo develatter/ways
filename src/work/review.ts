@@ -98,7 +98,7 @@ async function promptFor(git: GitRepository, record: WorkRecord & { evidence: No
     `- Evaluated commit ${input} (base ${base}), ${evidence.runner?.clean === false ? "in place" : "in a clean checkout"}: ${evidence.passed ? "passed" : "failed"}.`,
     ...evidence.checks.filter((check) => check.status !== "skipped").map((check) => `- check ${check.name}: ${check.status}${check.tests ? `, ${check.tests} tests` : ""}${check.attempts ? `, after ${check.attempts} attempts` : ""}`),
     ...(record.criteria.length > 0 ? [`- Backed by: ${strengthSummary(evidence)}.`] : []),
-    ...(checkpoint.length > 0 ? [`- CHANGED VERIFIERS: ${checkpoint.join(", ")}. The change modifies or deletes existing tests or check configuration${evidence.tests?.dropped ? " (or runs fewer tests)" : ""}. Read each one: was a test weakened, skipped or deleted to make the change pass? If a change is legitimate, add a finding (severity low) with "accepts": [<those entries>]; if not, a high finding.`] : []),
+    ...(checkpoint.length > 0 ? [`- CHANGED VERIFIERS: ${checkpoint.join(", ")}. The change removes or changes lines of existing tests, disables or narrows tests, or changes check configuration${evidence.tests?.dropped ? " (or runs fewer tests)" : ""}. Read each one: was a test weakened, skipped or deleted to make the change pass? If a change is legitimate, add a finding (severity low) with "accepts": [<those entries>]; if not, a high finding.`] : []),
     "",
     "## Diff",
     "```",

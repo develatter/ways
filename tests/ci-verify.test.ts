@@ -40,7 +40,7 @@ describe("ways verify", () => {
     const report = await verifyRange(cwd, { base });
     expect(report.passed).toBe(false);
     expect(report.verifierChanges).toEqual({ changed: ["tests/existing.test.js"], uncovered: ["tests/existing.test.js"] });
-    expect(report.failures.join("\n")).toMatch(/tests\/existing\.test\.js is an existing test or check file the range modifies or deletes, and no closed work/);
+    expect(report.failures.join("\n")).toMatch(/tests\/existing\.test\.js: the range removes or changes lines of existing tests[\s\S]*and no closed work/);
     // Through the CLI, as CI runs it: exit 1 and a JSON report.
     const result = spawnSync(process.execPath, [process.env.WAYS_CLI!, "verify", `--base=${base}`, "--json=report.json", "--markdown=report.md"], { cwd, encoding: "utf8" });
     expect(result.status).toBe(1);
