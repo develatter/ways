@@ -20,16 +20,23 @@ export const RETRIES = 2;
 export const TESTS_RAN = "tests-ran";
 
 /**
- * Check configuration on the verifier surface: any change to it, adding it
- * included, decides what runs, so it always counts. Everything else on the
- * surface (tests, fixtures, helpers) is judged by what changed inside it.
+ * CI pipelines. Changing or deleting one counts; adding one does not: a new
+ * pipeline adds jobs, it cannot stop the others from running, and which
+ * checks are required is the branch protection's to say.
+ */
+const CI_CONFIG: readonly string[] = [".github/workflows/**", ".gitlab-ci.yml"];
+
+/**
+ * Check configuration on the verifier surface: any change to it decides what
+ * runs, so it counts, adding it included (but see {@link CI_CONFIG}).
+ * Everything else on the surface (tests, fixtures, helpers) is judged by what
+ * changed inside it.
  */
 const CHECK_CONFIG: readonly string[] = [
   CONFIG_PATH,
   `${WAYS_DIR}/allowed_signers`,
   "package.json",
-  ".github/workflows/**",
-  ".gitlab-ci.yml",
+  ...CI_CONFIG,
   "**/vitest.config.*",
   "**/vitest.workspace.*",
   "**/jest.config.*",
@@ -96,7 +103,7 @@ export async function verifierChanges(git: GitRepository, base: string, input: s
       continue;
     }
     if (matchesAny(path, CHECK_CONFIG)) {
-      if (added && installs) continue;
+      if (added && (installs || matchesAny(path, CI_CONFIG))) continue;
       // Structured files count only when the part that decides what is verified changes.
       const watched = WATCHED_FIELDS[path];
       if (watched && await watchedValue(git, base, path, watched) === await watchedValue(git, input, path, watched)) continue;
@@ -167,12 +174,14 @@ function widensImport(before: string, after: string): boolean {
 
 /**
  * The ways config counts when what decides verification changes (commands,
- * verifier globs and markers, review and approval policy, enforcement, where
- * evaluations run, the reviewer), not its version; `package.json` when its
- * scripts or a test runner's settings change (not a dependency bump).
+ * verifier globs and markers, review and approval policy, where evaluations
+ * run, the reviewer), not its version; `package.json` when its scripts or a
+ * test runner's settings change (not a dependency bump). `enforcement` is not
+ * watched: `ways verify` takes it from the base, so a range cannot relax it
+ * for itself.
  */
 const WATCHED_FIELDS: Record<string, readonly string[]> = {
-  [CONFIG_PATH]: ["testCommand", "commands", "verifierPaths", "testMarkers", "review", "evaluation", "approvals", "reviewer", "enforcement", "historySince"],
+  [CONFIG_PATH]: ["testCommand", "commands", "verifierPaths", "testMarkers", "review", "evaluation", "approvals", "reviewer"],
   "package.json": ["scripts", "jest", "vitest", "mocha", "ava", "c8", "nyc"],
 };
 

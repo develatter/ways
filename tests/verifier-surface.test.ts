@@ -92,7 +92,9 @@ describe("the verifier surface, by content", () => {
 
   it("needs approval for adding or changing the configuration of checks, even by appending", async () => {
     expect(await changesOf({ "vitest.config.mjs": "export default { test: { include: ['nothing'] } };\n" })).toEqual(["vitest.config.mjs"]);
-    expect(await changesOf({ ".github/workflows/ci.yml": "on: push\n" })).toEqual([".github/workflows/ci.yml"]);
+    expect(await changesOf({ ".github/workflows/ci.yml": "on: push\njobs: {}\n" }, { ".github/workflows/ci.yml": "on: push\n" })).toEqual([".github/workflows/ci.yml"]);
+    // A new pipeline only adds jobs; branch protection says which are required.
+    expect(await changesOf({ ".github/workflows/extra.yml": "on: push\n" })).toEqual([]);
     expect(await changesOf({ "conftest.py": "def pytest_collection_modifyitems(items):\n    items.clear()\n" })).toEqual(["conftest.py"]);
     expect(await changesOf({ "tests/conftest.py": "import pytest\n# appended\n" }, { "tests/conftest.py": "import pytest\n" })).toEqual(["tests/conftest.py"]);
     expect(await changesOf({ "package.json": "{\"scripts\":{\"test\":\"true\"}}\n" })).toEqual(["package.json"]);
