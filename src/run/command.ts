@@ -27,10 +27,13 @@ export interface RunReport {
  * order, without the slow ones unless `--all`), each through the same
  * wrapper `ways done` uses, reported as one compact summary.
  */
-export async function runChecksCompact(cwd: string, names: readonly string[], options: { all?: boolean } = {}): Promise<RunReport> {
+export async function runChecksCompact(cwd: string, names: readonly string[], options: { all?: boolean; extra?: readonly string[] } = {}): Promise<RunReport> {
   const dirs = gitDirs(cwd);
   const contract = effectiveContract(await loadConfig(dirs.top));
-  const configured = configuredChecks(contract);
+  const extra = options.extra ?? [];
+  if (extra.length > 0 && names.length !== 1) throw new Error("Extra arguments go to one check: `ways run test -- <args>`");
+  // Extra arguments run a narrower command: it is compared only with earlier runs of that same command.
+  const configured = configuredChecks(contract).map((check) => (names.includes(check.name) && extra.length > 0 ? { ...check, command: [...check.command, ...extra] } : check));
   const file = readChecksFile(dirs.top);
   for (const name of names) {
     if (!configured.some((check) => check.name === name)) {
@@ -84,8 +87,10 @@ export async function runRunCommand(args: readonly string[], cwd: string, { opti
     process.stdout.write(`${showRun(gitDirs(cwd), show, { ...(grep === undefined ? {} : { grep }), ...(parsed === undefined ? {} : { tail: parsed }) })}\n`);
     return 0;
   }
-  const names = args.filter((arg) => !arg.startsWith("--"));
-  const report = await runChecksCompact(cwd, names, { all: args.includes("--all") });
+  const separator = args.indexOf("--");
+  const own = separator >= 0 ? args.slice(0, separator) : args;
+  const names = own.filter((arg) => !arg.startsWith("--"));
+  const report = await runChecksCompact(cwd, names, { all: own.includes("--all"), ...(separator >= 0 ? { extra: args.slice(separator + 1) } : {}) });
   if (args.includes("--json")) process.stdout.write(`${JSON.stringify({ exitCode: report.exitCode, runs: report.runs.map((run) => run.record), skipped: report.skipped }, null, 2)}\n`);
   else process.stdout.write(`${report.text}\n`);
   return report.exitCode;

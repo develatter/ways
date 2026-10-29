@@ -44,6 +44,7 @@ export function renderCheckReport(result: CheckResult): string {
     }
     lines.push(`${check.status === "passed" ? "✓" : "✗"} ${check.name}: ${check.status}${check.exitCode === undefined || check.status === "passed" ? "" : ` (exit ${check.exitCode})`}${check.detail ? ` — ${check.detail}` : ""}`);
   }
+  lines.push("- work records, trailers and the verifier surface: `ways check --history` (CI runs it) and `ways done`");
   lines.push(result.passed ? "Checks passed." : "Checks failed: fix what is marked ✗ above.");
   return lines.join("\n");
 }

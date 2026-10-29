@@ -109,6 +109,7 @@ export async function verifierChanges(git: GitRepository, base: string, input: s
       // Structured files count only when the part that decides what is verified changes.
       const watched = WATCHED_FIELDS[path];
       if (watched && await watchedValue(git, base, path, watched) === await watchedValue(git, input, path, watched)) continue;
+      if (path === CONFIG_PATH && await onlyAddsChecks(git, base, input)) continue;
       changed.push(path);
       continue;
     }
@@ -197,6 +198,37 @@ async function watchedValue(git: GitRepository, ref: string, path: string, names
   } catch {
     return "unreadable";
   }
+}
+
+/**
+ * Adding a check is free, like adding a test: the config counts as unchanged
+ * when every watched field but `commands` is the same and every check the
+ * base ran is still there, with the same command and still required (a base
+ * with only `testCommand` ran it as `test`). Timeouts, setup and services
+ * must not change either.
+ */
+async function onlyAddsChecks(git: GitRepository, base: string, input: string): Promise<boolean> {
+  const read = async (ref: string): Promise<Record<string, unknown> | undefined> => {
+    try {
+      const value: unknown = JSON.parse(await git.run(["show", `${ref}:${CONFIG_PATH}`]));
+      return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const before = await read(base);
+  const after = await read(input);
+  if (!before || !after) return false;
+  const others = WATCHED_FIELDS[CONFIG_PATH]!.filter((name) => name !== "commands" && name !== "testCommand");
+  if (JSON.stringify(others.map((name) => before[name] ?? null)) !== JSON.stringify(others.map((name) => after[name] ?? null))) return false;
+  type Commands = Record<string, unknown> & { required?: unknown };
+  const commandsOf = (config: Record<string, unknown>): Commands => (config.commands && typeof config.commands === "object" ? config.commands as Commands : { required: ["test"], test: config.testCommand });
+  const old = commandsOf(before);
+  const next = commandsOf(after);
+  if (!Array.isArray(old.required) || !Array.isArray(next.required)) return false;
+  for (const name of ["timeoutMs", "setup", "services"]) if (JSON.stringify(old[name] ?? null) !== JSON.stringify(next[name] ?? null)) return false;
+  const required = new Set(next.required as unknown[]);
+  return (old.required as unknown[]).every((name) => typeof name === "string" && required.has(name) && JSON.stringify(old[name] ?? null) === JSON.stringify(next[name] ?? null));
 }
 
 /** The base's config as committed, or undefined when it has none (the work installs ways). */

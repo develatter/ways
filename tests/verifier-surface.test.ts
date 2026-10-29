@@ -102,6 +102,17 @@ describe("the verifier surface, by content", () => {
     expect(await changesOf({ "package.json": "{\"scripts\":{\"test\":\"node --test\"},\"dependencies\":{\"x\":\"1\"}}\n" })).toEqual([]);
   });
 
+  it("lets a check be added to the config, but not changed or dropped", async () => {
+    const config = (commands: unknown, extra: Record<string, unknown> = {}): string => `${JSON.stringify({ schemaVersion: 2, testCommand: ["npm", "test"], ...(commands ? { commands } : {}), ...extra })}\n`;
+    const base = { ".ways/config.json": config(undefined) };
+    // `ways check add lint` on a base that ran only the test command.
+    expect(await changesOf({ ".ways/config.json": config({ required: ["test", "lint"], test: ["npm", "test"], lint: ["npm", "run", "lint"] }) }, base)).toEqual([]);
+    expect(await changesOf({ ".ways/config.json": config({ required: ["test"], test: ["true"] }) }, base)).toEqual([".ways/config.json"]);
+    const two = { ".ways/config.json": config({ required: ["test", "lint"], test: ["npm", "test"], lint: ["npm", "run", "lint"] }) };
+    expect(await changesOf({ ".ways/config.json": config({ required: ["test"], test: ["npm", "test"], lint: ["npm", "run", "lint"] }) }, two)).toEqual([".ways/config.json"]);
+    expect(await changesOf({ ".ways/config.json": config({ required: ["test", "lint"], test: ["npm", "test"], lint: ["npm", "run", "lint"] }, { review: "none" }) }, two)).toEqual([".ways/config.json"]);
+  });
+
   it("ignores dependency and build directories that happen to match a test glob", async () => {
     const vendored = { "node_modules/lib/a.test.js": "assert(1);\n", "vendor/lib/b_test.go": "x\n", "dist/c.spec.js": "x\n", "coverage/d.test.js": "x\n" };
     expect(await changesOf(Object.fromEntries(Object.keys(vendored).map((path) => [path, "changed\n"])), vendored)).toEqual([]);
