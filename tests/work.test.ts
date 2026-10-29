@@ -184,7 +184,7 @@ describe("an outcome", () => {
     expect(record?.evidence?.earlierRuns).toEqual([expect.objectContaining({ input: head, passed: false, failed: ["AC1"] })]);
   });
 
-  it("waits for an independent review bound to the evaluated commit, then closes on submit", async () => {
+  it("waits for an independent review bound to the evaluated commit; a review typed in at a terminal closes with the human's approval", async () => {
     const { cwd, git } = await project();
     await openOutcome(cwd, "docs", { goal: "Document it", criteria: ["AC1:readme exists", "AC2:the wording is clear"], verify: ["AC1:test -f README.md"], strength: [] });
     await commitFile(git, cwd, "README.md", "# Docs\n", "docs: readme");
@@ -211,7 +211,9 @@ describe("an outcome", () => {
     const blocked = await review(cwd, { reviewer: "ways-reviewer", commit: input, verdict: "pass", findings: [{ id: "F1", severity: "high", summary: "unclear" }, { id: "F2", severity: "low", summary: "typo" }] });
     expect(blocked).toMatchObject({ status: "verifying", blockers: ["F1"], notes: ["F2 (low): typo"] });
     const passed = await review(cwd, { reviewer: "ways-reviewer", commit: input.slice(0, 12), verdict: "pass", findings: [{ id: "F1", severity: "high", summary: "unclear", disposition: "fixed" }] });
-    expect(passed.status).toBe("closed");
+    // A pseudo-terminal gives an agent the same terminal, so the review alone does not close it.
+    expect(passed).toMatchObject({ status: "verifying", pending: { approval: expect.stringMatching(/typed in at a terminal/) } });
+    expect((await approve(cwd, terminal("docs"))).status).toBe("closed");
     expect(await committedRecord(git, "docs")).toMatchObject({ review: { reviewer: "ways-reviewer", commit: input }, closed: expect.any(Object) });
     expect(await checkHistory(cwd)).toEqual([]);
   });

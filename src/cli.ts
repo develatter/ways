@@ -238,6 +238,7 @@ async function dispatch(command: string, args: string[], cwd: string, invoked = 
     console.log(result.blockers.length > 0 ? `Review recorded; it blocks: ${result.blockers.join(", ")}. Fix them, commit, run \`ways done\` and \`ways review\` again.` : "Review recorded: pass.");
     for (const note of result.notes) console.log(`  non-blocking ${note}`);
     if (result.status === "closed") console.log("Work closed.");
+    else if (result.pending.approval && action === "submit") console.log(`Approval needed too (${result.pending.approval}): if you are the human, run \`ways approve\` now.`);
     else if (result.pending.approval) console.log(`Human approval needed (${result.pending.approval}): ask the human to run \`ways approve\` in their own terminal.`);
     return 0;
   }

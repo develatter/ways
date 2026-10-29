@@ -111,6 +111,35 @@ describe("self-review: the implementer reviewing its own work", () => {
     expect((await committedRecord(git, "docs"))?.review).toBeUndefined();
   });
 
+  it("does not let a review typed in at a (pseudo-)terminal close a required review: the human approves it", async () => {
+    const { cwd, git, input } = await waitingForReview();
+    const file = join(cwd, "..", `pty-review-${Date.now()}.json`);
+    await writeFile(file, JSON.stringify({ reviewer: "someone-else", commit: input, verdict: "pass", findings: [] }));
+    // `script -qc "ways review submit ..."` passes the terminal check.
+    const outcome = await submitReview(cwd, file, human(""));
+    expect(outcome.status).toBe("verifying");
+    expect(outcome.pending.review).toBeUndefined();
+    expect(outcome.pending.approval).toMatch(/typed in at a terminal/);
+    expect((await committedRecord(git, "docs"))?.closed).toBeUndefined();
+    expect((await approve(cwd, human("docs"))).status).toBe("closed");
+  });
+
+  it("flags in CI a record closed on a terminal review alone", async () => {
+    const { cwd, git, input } = await waitingForReview();
+    const path = join(cwd, ".ways/work/docs.json");
+    const record = JSON.parse(await readFile(path, "utf8")) as WorkRecord;
+    const base = record.evidence!.base;
+    record.review = { reviewer: "someone-else", commit: input, verdict: "pass", findings: [], submittedAt: new Date().toISOString(), provenance: { via: "terminal" } };
+    record.closed = { at: new Date().toISOString() };
+    await writeFile(path, JSON.stringify(record, null, 2));
+    await git.run(["add", "-A"]);
+    await git.run(["commit", "-q", "-m", "chore(ways): close docs", "-m", "Harness-Work: docs\nHarness-State: closed"], { WAYS_DISABLE: "1" });
+    expect((await checkHistory(cwd)).map((issue) => issue.code)).toContain("history-close-approval");
+    const report = await verifyRange(cwd, { base });
+    expect(report.passed).toBe(false);
+    expect(report.failures.join("\n")).toMatch(/docs closed although .*typed in at a terminal/);
+  });
+
   it("does not count a review the agent wrote into the record itself", async () => {
     const { cwd, git, input } = await waitingForReview();
     const path = join(cwd, ".ways/work/docs.json");

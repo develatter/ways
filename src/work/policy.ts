@@ -59,7 +59,7 @@ export function verifierCheckpoint(evidence: Evidence): string[] {
   return [...evidence.verifierChanges, ...(evidence.tests?.dropped ? ["tests-ran"] : [])];
 }
 
-/** A review counts only with provenance ways recorded itself, for the evaluated commit. */
+/** A review counts only with provenance ways recorded itself, for the evaluated commit; one from a terminal needs the human's approval too ({@link terminalReview}). */
 export function attestedReview(record: WorkRecord): Review | undefined {
   const review = record.review;
   return review && review.provenance && review.commit === record.evidence?.input.commit ? review : undefined;
@@ -90,10 +90,23 @@ function verifierReason(evidence: Evidence, entries: readonly string[]): string 
   return parts.join("; ");
 }
 
+/**
+ * A review typed in at a terminal (`ways review submit`): ways cannot tell a
+ * human there from an agent with a pseudo-terminal (`script -qc`), so where a
+ * review is required it stands only together with the human's approval, which
+ * then covers it (the approval digest includes the review) and can be signed.
+ */
+export function terminalReview(record: WorkRecord): boolean {
+  return attestedReview(record)?.provenance?.via === "terminal" && reviewRequired(record);
+}
+
+const TERMINAL_REVIEW = "the required review was typed in at a terminal, which an agent can reach through a pseudo-terminal";
+
 /** Why a human must approve. The verifier checkpoint drops out when an attested review accepted every entry and the policy allows it. */
 export function approvalReasons(record: WorkRecord, evidence: Evidence): string[] {
   const reasons: string[] = [];
   if (record.policy.approval === "required") reasons.push("the work was opened with --approval=required");
+  if (terminalReview({ ...record, evidence })) reasons.push(TERMINAL_REVIEW);
   const checkpoint = verifierCheckpoint(evidence);
   if (checkpoint.length > 0) {
     const accepted = approvalsPolicy(evidence).verifierChanges === "human-or-review" ? acceptedByReview({ ...record, evidence }) : new Set<string>();
