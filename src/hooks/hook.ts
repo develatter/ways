@@ -1,287 +1,148 @@
-import { readFile } from "node:fs/promises";
-import { MANIFEST_PATH, STATE_PATH } from "../domain/constants.js";
-import type { RemediationRecord, WorkState } from "../domain/types.js";
-import { validateApproval, validateRemediation, validateState, validateValidationFailure } from "../domain/validation.js";
-import { GitRepository, parseTrailers } from "../git/git.js";
-import { loadState } from "../state/store.js";
-import { approvalBinds, approvalPath, requiresApproval } from "../work/approve.js";
-import { attemptNumber, attemptPhasePath, attemptReviewPath, isPriorAttemptArtifact, remediationRecordPath, validationFailureRecordPath } from "../work/attempt.js";
-import { remediationEvidenceFailure } from "../work/remediation.js";
-import { validationFailureRecordFailure, validationFailureReplayFailure } from "../work/validation-failure.js";
-import { committedMismatch } from "../work/sdd.js";
-import { indexReader, outcomeApprovalFailure } from "../work/outcome-approvals.js";
-import { committedExecutionPolicy } from "../work/outcome-policy.js";
-import { attemptFailureCommit, closeCommitExtraPaths, isPriorOutcomeArtifact, OUTCOME_PHASES, OUTCOME_STATES, outcomeCheckFailurePath, outcomeCloseFailure, outcomeEvaluationPath, outcomeEvidencePath, outcomeMemoryReviewPath, outcomeReviewPath, remediationContentFailure } from "../work/outcome.js";
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { CONFIG_PATH, isWorkId, MANIFEST_PATH, slugify, WORK_DIR } from "../domain/constants.js";
+import type { ActiveWork } from "../domain/types.js";
+import { clearRuns, gitDirs, readActive, writeActive, type GitDirs } from "../runtime/runtime.js";
 
+/**
+ * The Git commit hooks. This runs on every commit, so it only loads Node
+ * built-ins and the runtime module and spawns git at most a few times.
+ *
+ * What breaks a guarantee, and is refused in every mode: a commit not made by
+ * ways that adds, changes or deletes a work record under `.ways/work/` (the
+ * criteria fixed at open, the evidence ways wrote, a review or a human
+ * approval). In `enforce` mode a commit outside any active work is refused
+ * too. Everything else is accepted; the hook only adds `Harness-Work`.
+ */
 export interface HookVerdict {
   accepted: boolean;
-  reason: string;
+  /** Shown on stderr: the refusal, or a one-line note such as an automatic start. */
+  message?: string;
 }
 
-const CLOSING_STATES = new Set(["completed", "cancelled"]);
+const DEFAULT_BRANCHES = new Set(["main", "master", "trunk"]);
+const TRAILER = /^Harness-Work:\s*(\S+)\s*$/m;
 
-async function headState(git: GitRepository): Promise<WorkState | undefined> {
+function git(cwd: string, args: readonly string[]): { ok: boolean; out: string } {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  return { ok: result.status === 0, out: (result.stdout ?? "").trimEnd() };
+}
+
+function enforcement(top: string): "observe" | "enforce" | undefined {
   try {
-    const value: unknown = JSON.parse(await git.run(["show", `HEAD:${STATE_PATH}`]));
-    return validateState(value) ? value : undefined;
+    const config = JSON.parse(readFileSync(join(top, CONFIG_PATH), "utf8")) as { enforcement?: unknown };
+    return config.enforcement === "enforce" ? "enforce" : "observe";
   } catch {
     return undefined;
   }
 }
 
-async function stagesStateDeletion(git: GitRepository): Promise<boolean> {
-  const output = await git.run(["diff", "--cached", "--name-only", "--diff-filter=D", "--", STATE_PATH]);
-  return output.split("\n").includes(STATE_PATH);
+/** Staged record files that do not come verbatim from a commit being merged, cherry-picked or rebased. */
+function tamperedRecords(dirs: GitDirs): string[] {
+  const staged = git(dirs.top, ["diff", "--cached", "--name-only", "-z", "--no-renames"]).out.split("\0").filter((path) => path.startsWith(`${WORK_DIR}/`));
+  if (staged.length === 0) return [];
+  const sources = ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REBASE_HEAD"].filter((ref) => existsSync(join(dirs.gitDir, ref)));
+  return staged.filter((path) => {
+    const index = git(dirs.top, ["rev-parse", "-q", "--verify", `:${path}`]);
+    return !sources.some((ref) => {
+      const source = git(dirs.top, ["rev-parse", "-q", "--verify", `${ref}:${path}`]);
+      return source.ok === index.ok && source.out === index.out;
+    });
+  });
 }
 
-/** A certification of a supervised human gate must carry a matching approval artifact in the same commit. */
-async function stagedApprovalFailure(git: GitRepository, work: WorkState, committed: WorkState | undefined, phase: string): Promise<string | undefined> {
-  const path = approvalPath(work.id, phase, work.attempt);
-  let value: unknown;
+/** Splits a message into its content and the trailing comment block Git strips. */
+function splitComments(message: string): { content: string; comments: string } {
+  const lines = message.split("\n");
+  let end = lines.length;
+  while (end > 0 && (lines[end - 1]!.startsWith("#") || lines[end - 1]!.trim() === "")) end -= 1;
+  return { content: lines.slice(0, end).join("\n"), comments: lines.slice(end).join("\n") };
+}
+
+export function addTrailer(message: string, id: string): string {
+  const { content, comments } = splitComments(message);
+  if (!content.trim() || TRAILER.test(content)) return message;
+  const paragraphs = content.split(/\n\s*\n/);
+  const last = paragraphs.at(-1) ?? "";
+  const isTrailerBlock = paragraphs.length > 1 && last.split("\n").every((line) => /^[A-Za-z0-9-]+:\s/.test(line));
+  const next = `${content}${isTrailerBlock ? "\n" : "\n\n"}Harness-Work: ${id}\n`;
+  return comments ? `${next}${comments.startsWith("\n") ? "" : "\n"}${comments}` : next;
+}
+
+/** An outcome left open at HEAD by a harness commit, found without parsing every record. */
+function openOutcomeAtHead(top: string): ActiveWork | undefined {
+  const last = git(top, ["log", "-1", "--format=%B%x00%H"]);
+  if (!last.ok) return undefined;
+  const [body = "", head = ""] = last.out.split("\0");
+  const id = TRAILER.exec(body)?.[1];
+  if (!id || !isWorkId(id)) return undefined;
   try {
-    value = JSON.parse(await git.run(["show", `:${path}`]));
+    const record = JSON.parse(readFileSync(join(top, WORK_DIR, `${id}.json`), "utf8")) as { kind?: string; openedAt?: string; closed?: unknown; cancelled?: unknown };
+    if (record.closed || record.cancelled || (record.kind !== "outcome" && record.kind !== "change")) return undefined;
+    return { schemaVersion: 1, id, kind: record.kind, base: head.trim(), startedAt: record.openedAt ?? new Date().toISOString(), origin: "outcome" };
   } catch {
-    return `certification of human gate ${phase} must stage a human approval at ${path}`;
-  }
-  if (!validateApproval(value)) return `staged approval at ${path} is invalid`;
-  // The approval was written against the gate recorded by the state committed at HEAD.
-  return approvalBinds(value, { workId: work.id, phase, gateCommit: committed?.gateCommit ?? await git.head(), attempt: work.attempt });
-}
-
-/** The close gate removes the SDD folder, so its approval must be present at HEAD's working tree and staged for deletion. */
-async function deletedApprovalFailure(git: GitRepository, work: WorkState): Promise<string | undefined> {
-  const path = approvalPath(work.id, "close", work.attempt);
-  const deleted = (await git.run(["diff", "--cached", "--name-only", "--diff-filter=D", "--", path])).split("\n").includes(path);
-  if (!deleted) return `closing commit must stage the deletion of a committed approval at ${path}`;
-  let value: unknown;
-  try {
-    value = JSON.parse(await git.run(["show", `HEAD:${path}`]));
-  } catch {
-    return `approval at ${path} is not committed at HEAD`;
-  }
-  if (!validateApproval(value)) return `approval at ${path} is invalid`;
-  return approvalBinds(value, { workId: work.id, phase: "close", gateCommit: work.gateCommit, attempt: work.attempt });
-}
-
-function trailerAttemptMatches(value: string | undefined, attempt: number | undefined): boolean {
-  const expected = attemptNumber(attempt);
-  return expected === 0 ? value === undefined || value === "0" : value === String(expected);
-}
-
-async function stagedRemediationFailure(git: GitRepository, active: WorkState, committed: WorkState | undefined): Promise<string | undefined> {
-  const remediation = active.remediation;
-  const attempt = attemptNumber(active.attempt);
-  if (!committed || committed.mode !== "sdd" || !remediation || attempt === 0 || remediation.attempt !== attempt) {
-    return "remediation state is incomplete";
-  }
-  if ((committed.phase !== "review" && committed.phase !== "validate") || remediation.source !== committed.phase
-    || active.phase !== remediation.target || attempt !== attemptNumber(committed.attempt) + 1
-    || remediation.priorCheckpoint !== await git.head() || active.gateCommit !== remediation.priorCheckpoint) {
-    return "remediation state does not form the next legal transition";
-  }
-  const path = remediationRecordPath(active.id, attempt);
-  const added = (await git.run(["diff", "--cached", "--name-only", "--diff-filter=A", "--", path])).split("\n").includes(path);
-  let record: RemediationRecord | undefined;
-  try {
-    const value: unknown = JSON.parse(await git.run(["show", `:${path}`]));
-    if (validateRemediation(value)) record = value;
-  } catch {
-    // Report a stable failure below.
-  }
-  if (!added || !record || record.workId !== active.id || record.source !== remediation.source || record.target !== remediation.target
-    || record.attempt !== attempt || record.priorCheckpoint !== remediation.priorCheckpoint
-    || JSON.stringify(record.evidence) !== JSON.stringify(remediation.evidence)
-    || record.reason !== remediation.reason || record.timestamp !== remediation.timestamp) {
-    return `must stage matching remediation evidence at ${path}`;
-  }
-  const tree = await git.run(["write-tree"]);
-  return remediationEvidenceFailure(git, record, await git.head(), tree);
-}
-
-async function stagedPriorArtifactFailure(git: GitRepository, active: WorkState, allowed: ReadonlySet<string> = new Set()): Promise<string | undefined> {
-  const attempt = attemptNumber(active.attempt);
-  if (attempt === 0) return undefined;
-  const changed = (await git.run(["diff", "--cached", "--name-only", "HEAD"])).split("\n").filter(Boolean);
-  const protectedPath = changed.find((path) => !allowed.has(path) && isPriorAttemptArtifact(path, active.id, attempt));
-  return protectedPath ? `prior SDD artifact is immutable: ${protectedPath}` : undefined;
-}
-
-function remediationTransitionArtifacts(active: WorkState): Set<string> {
-  const remediation = active.remediation!;
-  const sourceAttempt = attemptNumber(active.attempt) - 1;
-  const allowed = new Set([remediationRecordPath(active.id, attemptNumber(active.attempt))]);
-  // Legacy review remediation captures its submitted review and phase context
-  // in the transition. Recorded validation failures were committed earlier.
-  if (remediation.source === "review") {
-    allowed.add(attemptPhasePath(active.id, sourceAttempt, remediation.source));
-    allowed.add(attemptReviewPath(active.id, sourceAttempt));
-  }
-  return allowed;
-}
-
-async function headHasManifest(git: GitRepository): Promise<boolean> {
-  try {
-    await git.run(["cat-file", "-e", `HEAD:${MANIFEST_PATH}`]);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Outside its own transitions, an outcome work accepts task commits, and traced direct commits when isolation is optional. */
-async function outcomeCommitFailure(git: GitRepository, active: WorkState, trailers: ReturnType<typeof parseTrailers>): Promise<string | undefined> {
-  if (trailers.phase === OUTCOME_PHASES.open) {
-    if (trailers.state !== "opened") return "opening commits carry Harness-State: opened";
-    return await headState(git) ? "the work is already open" : undefined;
-  }
-  const attempt = active.attempt ?? 0;
-  const staged = (await git.run(["diff", "--cached", "--name-only", "HEAD"])).split("\n").filter(Boolean);
-  const remediating = trailers.phase === OUTCOME_PHASES.evaluate && trailers.state === OUTCOME_STATES.remediated;
-  const exempt = remediating ? outcomeReviewPath(active.id, attempt - 1) : undefined;
-  const mutated = staged.find((path) => path !== exempt && isPriorOutcomeArtifact(path, active.id, attempt));
-  if (mutated) return `artifacts of earlier attempts are immutable: ${mutated}`;
-  if (trailers.phase === OUTCOME_PHASES.evaluate) {
-    if (active.stage !== "execute") return "evaluate transitions come only from ways outcome evaluate or remediate";
-    if (trailers.state === OUTCOME_STATES.failed) {
-      const path = outcomeCheckFailurePath(active.id, attempt);
-      const extra = staged.filter((changed) => changed !== path && changed !== outcomeEvidencePath(active.id, attempt));
-      if (!staged.includes(path) || extra.length > 0) return `a failed evaluation stages only ${path} and its evidence`;
-      try {
-        const value: unknown = JSON.parse(await git.run(["show", `:${path}`]));
-        if (!validateValidationFailure(value) || validationFailureRecordFailure(value) || value.workId !== active.id || value.attempt !== attempt
-          || value.inputCommit !== await git.head() || value.inputTree !== await git.run(["rev-parse", "HEAD^{tree}"])) {
-          return "the failure record does not bind the current committed input";
-        }
-        return await validationFailureReplayFailure(git, value);
-      } catch {
-        return "the failure record is unreadable";
-      }
-    }
-    if (remediating) {
-      if (attempt < 1 || !active.remediation || active.remediation.attempt !== attempt) return "remediation trailers do not match the active attempt";
-      return await remediationContentFailure(git, active.id, attempt, await git.head(), "")
-        ?? await outcomeApprovalFailure(git, active.id, "remediate", attempt - 1, await git.head(), indexReader(git));
-    }
-    return "unknown evaluate transition";
-  }
-  if (trailers.phase === OUTCOME_PHASES.execute) {
-    if (trailers.state !== "completed" || active.stage !== "evaluate") return "execution is certified only by ways outcome evaluate";
-    try {
-      const evaluation = JSON.parse(await git.run(["show", `:${outcomeEvaluationPath(active.id, active.attempt)}`])) as { inputCommit?: string; passed?: boolean };
-      if (evaluation.inputCommit !== await git.head() || evaluation.passed !== true) return "execution certification needs a passing evaluation of HEAD";
-    } catch {
-      return "execution certification must stage its evaluation";
-    }
     return undefined;
   }
-  if (active.stage !== "execute") return "the evaluated increment is frozen; close it or cancel the work";
-  if (await attemptFailureCommit(git, active.id, attempt)) return `attempt ${attempt} has a recorded evaluation failure; run ways outcome remediate --reason=<text> first`;
-  if (trailers.task || (await committedExecutionPolicy(git, active.id)).isolation === "optional") return undefined;
-  return "isolation is required; commit in a task worktree (ways task prepare) and integrate it";
 }
 
-export async function judgeCommitMessage(cwd: string, message: string): Promise<HookVerdict> {
-  const trailers = parseTrailers(message);
-  const git = new GitRepository(cwd);
-
-  const active = await loadState(cwd);
-  if (active) {
-    if (trailers.work === active.id) {
-      const committed = await headState(git);
-      const opening = trailers.state === "opened" && !committed;
-      const mismatch = opening ? undefined : committedMismatch(committed, active);
-      if (mismatch) return { accepted: false, reason: `${mismatch}; run ways repair` };
-      if (!trailerAttemptMatches(trailers.attempt, active.attempt)) {
-        return { accepted: false, reason: `Commit attempt does not match active remediation attempt ${attemptNumber(active.attempt)}` };
-      }
-      if (trailers.state === "validation-failed") {
-        if (trailers.phase !== "validate" || active.phase !== "validate") {
-          return { accepted: false, reason: "Validation failure trailers do not match the active validate phase" };
-        }
-        const path = validationFailureRecordPath(active.id, active.attempt);
-        const changed = (await git.run(["diff", "--cached", "--name-only", "HEAD"])).split("\n").filter(Boolean);
-        if (changed.length !== 1 || changed[0] !== path) {
-          return { accepted: false, reason: `Validation failure must stage only ${path}` };
-        }
-        try {
-          const value: unknown = JSON.parse(await git.run(["show", `:${path}`]));
-          if (!validateValidationFailure(value) || validationFailureRecordFailure(value) || value.workId !== active.id
-            || value.attempt !== attemptNumber(active.attempt) || value.inputCommit !== await git.head()
-            || value.inputTree !== await git.run(["rev-parse", "HEAD^{tree}"])) {
-            return { accepted: false, reason: "Validation failure record does not bind the current committed input" };
-          }
-          const replayFailure = await validationFailureReplayFailure(git, value);
-          if (replayFailure) return { accepted: false, reason: replayFailure };
-        } catch {
-          return { accepted: false, reason: "Validation failure record is unreadable" };
-        }
-      } else if (trailers.state?.startsWith("remediated")) {
-        const remediation = active.remediation;
-        if (!trailers.state.startsWith("remediated-") || !remediation || trailers.phase !== remediation.source || trailers.state !== `remediated-${remediation.target}`) {
-          return { accepted: false, reason: "Remediation trailers do not match active remediation state" };
-        }
-        const failure = await stagedRemediationFailure(git, active, committed);
-        if (failure) return { accepted: false, reason: `Remediation of ${active.id}: ${failure}` };
-        const immutable = await stagedPriorArtifactFailure(git, active, remediationTransitionArtifacts(active));
-        if (immutable) return { accepted: false, reason: immutable };
-      } else {
-        const failure = await stagedPriorArtifactFailure(git, active);
-        if (failure) return { accepted: false, reason: failure };
-      }
-      if (active.mode === "outcome") {
-        const failure = await outcomeCommitFailure(git, active, trailers);
-        if (failure) return { accepted: false, reason: `Outcome ${active.id}: ${failure}` };
-        return { accepted: true, reason: `Commit traced to active outcome work ${active.id}` };
-      }
-      const certified = active.lastCompletedPhase;
-      const certifying = trailers.state === "completed" && certified !== undefined && trailers.phase === certified;
-      if (certifying && requiresApproval({ ...active, phase: certified })) {
-        const failure = await stagedApprovalFailure(git, active, committed, trailers.phase!);
-        if (failure) return { accepted: false, reason: `Human gate ${trailers.phase} of ${active.id}: ${failure}` };
-      }
-      return { accepted: true, reason: `Commit traced to active ${active.mode} work ${active.id}` };
-    }
-    return { accepted: false, reason: `Active ${active.mode} work is ${active.id}; commit through the harness so it carries Harness-Work: ${active.id}` };
+function autoStartId(top: string, message: string): string {
+  const branch = git(top, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+  if (branch.ok && branch.out && !DEFAULT_BRANCHES.has(branch.out)) {
+    const fromBranch = slugify(branch.out);
+    if (fromBranch) return fromBranch;
   }
-
-  const closing = await headState(git);
-  if (closing) {
-    const traced = trailers.work === closing.id && trailers.state !== undefined && CLOSING_STATES.has(trailers.state);
-    const phased = closing.mode === "outcome"
-      ? trailers.state === "cancelled" || trailers.phase === OUTCOME_PHASES.close
-      : closing.mode !== "sdd" || trailers.state === "cancelled" || trailers.phase === "close";
-    if (traced && phased && trailerAttemptMatches(trailers.attempt, closing.attempt) && await stagesStateDeletion(git)) {
-      if (closing.mode === "outcome" && trailers.phase === OUTCOME_PHASES.close) {
-        const extra = closeCommitExtraPaths((await git.run(["diff", "--cached", "--name-only", "HEAD"])).split("\n").filter(Boolean), closing.id, closing.attempt);
-        if (extra.length > 0) return { accepted: false, reason: `Close of outcome ${closing.id} may only record its review: ${extra.join(", ")}` };
-        const staged = async (path: string): Promise<unknown> => {
-          try {
-            return JSON.parse(await git.run(["show", `:${path}`]));
-          } catch {
-            return undefined;
-          }
-        };
-        const failure = await outcomeCloseFailure(git, closing.id, await git.head(), await staged(outcomeReviewPath(closing.id, closing.attempt)),
-          closing.attempt ?? 0, await staged(outcomeMemoryReviewPath(closing.id, closing.attempt)));
-        if (failure) return { accepted: false, reason: `Close of outcome ${closing.id} refused: ${failure}` };
-        const approval = await outcomeApprovalFailure(git, closing.id, "close", closing.attempt ?? 0, await git.head(), indexReader(git));
-        if (approval) return { accepted: false, reason: `Close of outcome ${closing.id} refused: ${approval}` };
-      }
-      if (trailers.phase === "close" && requiresApproval({ ...closing, phase: "close" })) {
-        const failure = await deletedApprovalFailure(git, closing);
-        if (failure) return { accepted: false, reason: `Human gate close of ${closing.id}: ${failure}` };
-      }
-      return { accepted: true, reason: `Closing commit for ${closing.id}` };
-    }
-    return { accepted: false, reason: `HEAD still records work ${closing.id}; only its closing commit, deleting ${STATE_PATH}, may follow. Run ways repair diagnose` };
-  }
-
-  if (!await headHasManifest(git)) return { accepted: true, reason: "Bootstrap commit accepted" };
-  return { accepted: false, reason: "No active work. Open one first, for example: ways quick start <id>" };
+  return slugify(splitComments(message).content.split("\n")[0] ?? "") ?? "change";
 }
 
-export async function runCommitMsgHook(cwd: string, messagePath: string): Promise<HookVerdict> {
-  const raw = await readFile(messagePath, "utf8");
-  const message = raw.split("\n").filter((line) => !line.startsWith("#")).join("\n");
-  return judgeCommitMessage(cwd, message);
+async function judge(cwd: string, messagePath: string, stage: "prepare" | "final"): Promise<HookVerdict> {
+  if (process.env.WAYS_DISABLE === "1") return { accepted: true };
+  const dirs = gitDirs(cwd);
+  const mode = enforcement(dirs.top);
+  if (!mode) return { accepted: true };
+  if (stage === "prepare") {
+    const tampered = tamperedRecords(dirs);
+    if (tampered.length > 0) {
+      const list = tampered.join(" ");
+      return {
+        accepted: false,
+        message: `ways: refused: this commit changes ${list}, which only ways writes (the criteria fixed at open, the evidence it ran, reviews and human approvals). Unstage it with \`git restore --staged ${list} && git restore ${list}\`; use \`ways done\`, \`ways review submit\` or \`ways approve\` instead. Integrating a branch that already contains the record with a squash? Commit with WAYS_DISABLE=1.`,
+      };
+    }
+  }
+  const message = readFileSync(messagePath, "utf8");
+  if (TRAILER.test(splitComments(message).content)) return { accepted: true };
+  let active = readActive(dirs.top);
+  let note: string | undefined;
+  if (!active) {
+    active = openOutcomeAtHead(dirs.top);
+    if (active) await writeActive(dirs.top, active);
+  }
+  if (!active) {
+    // The commit that installs ways is not work of its own.
+    if (!git(dirs.top, ["cat-file", "-e", `HEAD:${MANIFEST_PATH}`]).ok) return { accepted: true };
+    if (mode === "enforce") {
+      return { accepted: false, message: "ways: refused: no active work (enforcement: enforce). Start one with `ways start <id>` or `ways outcome open <id> --goal=... --criterion=AC1:...`, then commit again." };
+    }
+    if (stage === "final" || !splitComments(message).content.trim()) return { accepted: true };
+    const head = git(dirs.top, ["rev-parse", "-q", "--verify", "HEAD"]);
+    if (!head.ok) return { accepted: true };
+    active = { schemaVersion: 1, id: autoStartId(dirs.top, message), kind: "change", base: head.out, startedAt: new Date().toISOString(), origin: "commit" };
+    await writeActive(dirs.top, active);
+    clearRuns(dirs.top, active.id);
+    note = `ways: this commit starts change ${active.id}; run \`ways done\` when it is finished.`;
+  }
+  const next = addTrailer(message, active.id);
+  if (next !== message) writeFileSync(messagePath, next, "utf8");
+  return { accepted: true, ...(note ? { message: note } : {}) };
+}
+
+/** `prepare-commit-msg <file> [source] [sha]`: refuses record tampering, then adds the trailer. */
+export function prepareCommitMsg(cwd: string, messagePath: string): Promise<HookVerdict> {
+  return judge(cwd, messagePath, "prepare");
+}
+
+/** `commit-msg <file>`: adds the trailer to a message written in the editor after prepare-commit-msg ran. */
+export function commitMsg(cwd: string, messagePath: string): Promise<HookVerdict> {
+  return judge(cwd, messagePath, "final");
 }

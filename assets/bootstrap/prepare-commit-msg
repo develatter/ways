@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+# Managed by ways. Adds the Harness-Work trailer and refuses hand-made changes to .ways/work/.
+# WAYS_DISABLE=1 skips it for one command.
+[ "${WAYS_DISABLE:-}" = "1" ] && exit 0
+if [ -n "${WAYS_CLI:-}" ]; then exec node "$WAYS_CLI" hook prepare-commit-msg "$@"; fi
+main="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
+if [ -f "$main/node_modules/@develatter/ways/dist/cli.js" ]; then exec node "$main/node_modules/@develatter/ways/dist/cli.js" hook prepare-commit-msg "$@"; fi
+if command -v ways >/dev/null 2>&1; then exec ways hook prepare-commit-msg "$@"; fi
+echo "ways: the ways CLI is not installed (npm i -D @develatter/ways); commit not checked" >&2
+exit 0

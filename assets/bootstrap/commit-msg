@@ -1,7 +1,8 @@
-#!/usr/bin/env bash
-# Managed by ways. Rejects commits that are not traced to an active work.
-set -euo pipefail
+#!/usr/bin/env sh
+# Managed by ways. Adds the Harness-Work trailer to messages written in the editor.
+[ "${WAYS_DISABLE:-}" = "1" ] && exit 0
+if [ -n "${WAYS_CLI:-}" ]; then exec node "$WAYS_CLI" hook commit-msg "$@"; fi
 main="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
-if [[ -n "${WAYS_CLI:-}" ]]; then exec node "$WAYS_CLI" hook commit-msg "$1"; fi
-if [[ -f "$main/node_modules/@develatter/ways/dist/cli.js" ]]; then exec node "$main/node_modules/@develatter/ways/dist/cli.js" hook commit-msg "$1"; fi
-cd "$main" && exec npx --no-install ways hook commit-msg "$1"
+if [ -f "$main/node_modules/@develatter/ways/dist/cli.js" ]; then exec node "$main/node_modules/@develatter/ways/dist/cli.js" hook commit-msg "$@"; fi
+if command -v ways >/dev/null 2>&1; then exec ways hook commit-msg "$@"; fi
+exit 0
