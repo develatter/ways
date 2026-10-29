@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { GitRepository } from "../git/git.js";
 import { matchesGlob, normalizeRepoPath } from "../memory/glob.js";
@@ -33,6 +33,16 @@ export async function repositoryFiles(cwd: string): Promise<string[]> {
   return [...new Set(output.split("\0").filter(Boolean))].sort();
 }
 
+/** Listed by git but removed from the disk: not part of the folder any more. */
+async function exists(cwd: string, path: string): Promise<boolean> {
+  try {
+    await access(join(cwd, path));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function fileHash(cwd: string, path: string): Promise<string | undefined> {
   try {
     return blobHash(await readFile(join(cwd, path))).slice(0, HASH_LENGTH);
@@ -49,8 +59,7 @@ export async function hashSources(cwd: string, sources: readonly string[], files
     if (source.endsWith("/")) {
       const inside: string[] = [];
       for (const path of known) {
-        if (!path.startsWith(source)) continue;
-        if (await fileHash(cwd, path) !== undefined) inside.push(path);
+        if (path.startsWith(source) && await exists(cwd, path)) inside.push(path);
       }
       result.set(source, inside.length === 0 ? undefined : createHash("sha1").update(inside.join("\n")).digest("hex").slice(0, HASH_LENGTH));
     } else {

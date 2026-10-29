@@ -187,6 +187,7 @@ export function readShell(command: string): ShellReading {
       if (word === undefined) break;
       if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) {
         if (/^WAYS_DISABLE=1$/.test(word)) bypass = "WAYS_DISABLE=1";
+        if (/^WAYS_ROLE=/.test(word)) bypass = "changing WAYS_ROLE";
         start += 1;
       } else if (word === "env" || WRAPPERS.has(basename(word))) start += 1;
       else if (word.startsWith("-") && start > 0) start += 1;
@@ -196,6 +197,8 @@ export function readShell(command: string): ShellReading {
     const args = words.slice(start + 1);
     const operands = args.filter((arg) => !arg.startsWith("-"));
     if (name === "export" && args.some((arg) => arg === "WAYS_DISABLE=1")) bypass = "WAYS_DISABLE=1";
+    // A session launched for a job (WAYS_ROLE) keeps it: the commit hook reads the role from the environment.
+    if ((name === "export" && args.some((arg) => /^WAYS_ROLE(=|$)/.test(arg))) || (name === "unset" && args.includes("WAYS_ROLE")) || words.some((word, index) => word === "WAYS_ROLE" && words[index - 1] === "-u")) bypass = "changing WAYS_ROLE";
     if (["tee", "rm", "rmdir", "unlink", "truncate", "shred", "mv"].includes(name)) writes.push(...operands);
     else if (["cp", "install", "ln", "rsync"].includes(name) && operands.length > 0) writes.push(operands.at(-1)!);
     else if ((name === "sed" || name === "perl") && args.some((arg) => /^(-[a-zA-Z]*i|--in-place)/.test(arg))) writes.push(...operands);
@@ -219,7 +222,7 @@ export function readShell(command: string): ShellReading {
 
 const RECORD_REFUSAL = (paths: string[]): string => `ways: refused: ${paths.join(", ")} ${paths.length === 1 ? "is a work record" : "are work records"}: the criteria fixed at open, the evidence ways ran, reviews and human approvals. Only ways writes ${WORK_DIR}/, and a commit that changes it is refused in every mode. Evidence comes from \`ways done\`; a review from \`ways review\` (an independent reviewer whose verdict ways records itself); an approval from the human running \`ways approve\`.`;
 
-const BYPASS_REFUSAL = (how: string, documentalist: boolean): string => `ways: refused: ${how} switches off the ways commit hooks, and ${documentalist ? "the documentalist may not do that" : "enforcement is `enforce` in this repository"}. Commit without it; if the hook refuses a commit, its message says why and what to run.`;
+const BYPASS_REFUSAL = (how: string, documentalist: boolean): string => `ways: refused: ${how} ${how.startsWith("changing") ? "gets around" : "switches off"} the ways commit hooks, and ${documentalist ? "the documentalist may not do that" : "enforcement is `enforce` in this repository"}. Commit without it; if the hook refuses a commit, its message says why and what to run.`;
 
 const ROLE_REFUSAL = (paths: string[]): string => `ways: refused: ${paths.join(", ")} is outside ${WIKI_DIR}/, and you are the documentalist: you write only the wiki for humans. Code, tests, configuration and .ways/knowledge (the agents' memory, a different thing) are not yours to change; if a page needs something changed elsewhere, say so in your final answer.`;
 

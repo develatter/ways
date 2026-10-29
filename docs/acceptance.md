@@ -14,7 +14,7 @@ What a repository gets from `ways bootstrap`, written from the consumer's side. 
 10. Memory concepts are short facts; `paths:` ties them to code, and they are flagged possibly stale when that code's content changes after them. `stale_after` and long concepts only warn.
 11. Bootstrap installs Claude Code and pi by default, writes at most 30 files, writes nothing that points at the ways repository itself, and makes `CLAUDE.md` import `AGENTS.md`.
 12. Upgrades move a 0.2.x repository to this model without losing its checks, memory or active quick work, and never overwrite modified managed files without approval.
-13. The CLI offers at most 28 actions; `ways --help` lists every command and `ways <command> --help` shows its usage and examples.
+13. The CLI offers at most 37 actions (28 for the lean core, 5 for the control plane, 4 for the wiki); `ways --help` lists every command and `ways <command> --help` shows its usage and examples.
 14. `ways hook` adds well under 100 ms to a commit beyond Node's start-up.
 15. In Claude Code and pi, the agent receives at session start a deterministic brief of at most 6,000 characters (active work, criteria results, failures, what waits on whom, the next command, up to five memory facts for the code in play, possibly stale ones marked); later prompts receive only what changed, or nothing.
 16. Agent hooks never break a session: bad input, no repository, no ways or an internal error answer nothing with exit 0. The only refusal is a tool call that writes `.ways/work/` (and, in `enforce` mode, one that switches the commit hooks off).
@@ -25,3 +25,6 @@ What a repository gets from `ways bootstrap`, written from the consumer's side. 
 21. `ways block "<reason>"` ends a task that cannot be done as asked: the reason is committed in the work, the human is told, and a later passing `ways done` clears it.
 22. `ways verify --base=<sha>` re-runs, from scratch, the base's checks and the verifiers of the works the range touched, fails on a changed existing test no closed work had approved, and audits the records; bootstrap writes a CI job that runs it.
 23. The adversarial regression tests (tamper-test, tamper-config, self-review, fake-approval, legit-block) pass, and fail when their guarantee is switched off.
+24. `ways wiki check` passes on a repository without a wiki, and on a wiki whose frontmatter, links, sources, examples and coverage hold and whose pages are fresh; a change to a file a page cites makes `ways wiki stale` list the page and `ways wiki check` fail, and the page is fresh again only when ways stamps it.
+25. `ways wiki update` starts the documentalist with a deterministic brief and only the tools of its role, and fails the run, naming the paths, when anything outside `docs/wiki/` changed or was committed; it launches nothing when the wiki needs nothing.
+26. The wiki and the memory stay apart: context, the memory index and staleness ignore `docs/wiki`; the documentalist's writes and commits outside `docs/wiki` (`.ways/knowledge` included) are refused, and `ways check --history` flags one that bypassed the hook; a concept citing `docs/wiki` fails `ways memory check`.

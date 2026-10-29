@@ -1,7 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { run } from "../src/cli.js";
 import { buildBrief } from "../src/context/brief.js";
 import { guard } from "../src/hooks/guard.js";
 import { loadIndexes } from "../src/knowledge/indexes.js";
@@ -44,6 +45,26 @@ describe("1. context and the memory index never read the wiki", () => {
     expect(loud.memory.map((concept) => concept.path)).toEqual([".ways/knowledge/conventions/docs-english.md"]);
     const uncommitted = await buildBrief(dirs);
     expect(uncommitted.memory.map((concept) => concept.path)).toEqual([".ways/knowledge/conventions/docs-english.md"]);
+  });
+
+  it("shows nothing of the wiki in `ways context`, whatever a concept's paths cover", async () => {
+    const { cwd, git } = await installed();
+    await write(cwd, "docs/README.md", "# Docs\n");
+    await remember(cwd, "Docs are written in British English", { paths: ["docs/**"], id: "docs-english" });
+    await remember(cwd, "Everything is UTF-8", { paths: ["**"], id: "utf8" });
+    await git.run(["add", "-A"]);
+    await git.run(["-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "docs: conventions"]);
+    await write(cwd, "docs/wiki/zebra.md", "---\ntitle: Zebracorn\n---\n\nThe zebracorn page, for humans.\n");
+    const chunks: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => (chunks.push(String(chunk)), true));
+    try {
+      expect(await run(["context", "--json", "--session=s1"], cwd)).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
+    const brief = JSON.parse(chunks.join("")) as { memory: unknown[]; sections: Array<{ text: string }> };
+    expect(brief.memory).toEqual([]);
+    expect(JSON.stringify(brief)).not.toMatch(/zebra|docs\/wiki/i);
   });
 
   it("does not make a concept stale when only the wiki changed", async () => {
@@ -114,6 +135,16 @@ describe("2. the documentalist cannot write outside docs/wiki", () => {
   it("does not let the documentalist switch the commit hooks off, in any enforcement mode", () => {
     expect(as("Bash", { command: "WAYS_DISABLE=1 git commit -m x" }, "documentalist").code).toBe("hooks-bypass");
     expect(as("Bash", { command: "WAYS_DISABLE=1 git commit -m x" })).toEqual({ paths: [] });
+  });
+
+  it("does not let the documentalist drop its role to commit outside the wiki", () => {
+    for (const command of ["WAYS_ROLE= git commit -m x", "WAYS_ROLE=other git commit -am x", "env -u WAYS_ROLE git commit -m x", "unset WAYS_ROLE; git commit -m x", "export WAYS_ROLE=; git commit -m x"]) {
+      expect(as("Bash", { command }, "documentalist").code, command).toBe("hooks-bypass");
+      expect(as("Bash", { command }), command).toEqual({ paths: [] });
+    }
+    // Reading about it is fine.
+    expect(as("Bash", { command: "grep -rn WAYS_ROLE docs/wiki" }, "documentalist").deny).toBeUndefined();
+    expect(as("Bash", { command: "echo $WAYS_ROLE" }, "documentalist").deny).toBeUndefined();
   });
 
   it("answers through the real hook from the environment ways set, and logs the role", async () => {

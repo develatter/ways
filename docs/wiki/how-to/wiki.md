@@ -15,7 +15,7 @@ source_hashes:
   src/wiki/command.ts: 9921f4eaa81c
   src/wiki/config.ts: 3d61e4198584
   src/wiki/pages.ts: 405df025b851
-  src/wiki/sources.ts: 78c444729c0a
+  src/wiki/sources.ts: db3ded8f7b84
 ---
 
 # Keep this wiki up to date

@@ -87,7 +87,7 @@ The session is logged on the event bus with `role: documentalist`, so the board 
 | | |
 | --- | --- |
 | Reading | Context (`ways context`, the hooks), the memory index and search read only `.ways/knowledge`. Touching or changing a wiki page does not bring up the memory of the code it describes and does not make a concept possibly stale. |
-| Writing | In a session with `WAYS_ROLE=documentalist` the guard refuses a file-tool or shell write outside `docs/wiki/` (and `WAYS_DISABLE=1`), in Claude Code through the `--settings` hook and in pi through the extension, which asks the guard about every call of such a session. |
+| Writing | In a session with `WAYS_ROLE=documentalist` the guard refuses a file-tool or shell write outside `docs/wiki/` (and `WAYS_DISABLE=1`, or unsetting or changing `WAYS_ROLE`), in Claude Code through the `--settings` hook and in pi through the extension, which asks the guard about every call of such a session. |
 | Commits | The commit hook refuses a commit from that session that stages anything outside `docs/wiki/`, `.ways/knowledge/**` included, and adds `Harness-Role: documentalist`. `ways check --history`, which CI runs, flags a commit with that trailer that left the wiki: `history-role-scope`. |
 | Citations | `ways memory check` fails a concept whose `sources`, `paths` or links point into `docs/wiki/` (`okf-wiki-citation`). |
 
