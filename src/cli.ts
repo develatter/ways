@@ -79,8 +79,20 @@ export async function run(argv: readonly string[], cwd = process.cwd()): Promise
     return 0;
   }
 
+  // A command works on the repository the shell is in, from any of its directories; paths the user
+  // types stay relative to where they typed them. The evals and the board need no repository.
+  let root = cwd;
+  if (findCommand(command) && command !== "evals" && command !== "serve" && !(command === "adapter" && args[0] === "list")) {
+    const { gitDirs } = await import("./runtime/runtime.js");
+    try {
+      root = gitDirs(cwd).top;
+    } catch {
+      throw new Error(`Not inside a Git repository: ${cwd}. Run \`ways ${command}\` from your project's directory (or \`git init\` one first).`);
+    }
+  }
+
   try {
-    return await dispatch(command, args, cwd);
+    return await dispatch(command, args, root, cwd);
   } catch (error) {
     // Usage errors point at the registry instead of leaving the caller to guess the next command.
     if (error instanceof Error && findCommand(command) && /^(Usage:|Missing required option)/.test(error.message)) {
@@ -105,7 +117,8 @@ function readStdin(): string {
   }
 }
 
-async function dispatch(command: string, args: string[], cwd: string): Promise<number> {
+/** `cwd` is the repository's top directory; `invoked` is where the user ran the command, for the paths they give. */
+async function dispatch(command: string, args: string[], cwd: string, invoked = cwd): Promise<number> {
   if (command === "hook") {
     const [name, messagePath] = args;
     const { AGENT_EVENTS, isAgentEvent, isAgentId } = await import("./hooks/providers.js");
@@ -203,7 +216,7 @@ async function dispatch(command: string, args: string[], cwd: string): Promise<n
     if (action === "submit") {
       if (!path) throw new Error("Usage: ways review submit <review.json>   (a human at a terminal; agents run `ways review`)");
       const { submitReview } = await import("./work/work.js");
-      result = await submitReview(cwd, userPath(cwd, path));
+      result = await submitReview(cwd, userPath(invoked, path));
     } else if (action === undefined || action.startsWith("--")) {
       const agent = option(args, "--agent");
       if (args.includes("--print")) {
@@ -237,7 +250,7 @@ async function dispatch(command: string, args: string[], cwd: string): Promise<n
     const key = option(args, "--key");
     const signatureFile = option(args, "--signature");
     const { readFile } = await import("node:fs/promises");
-    const signature = signatureFile === undefined ? undefined : await readFile(userPath(cwd, signatureFile), "utf8");
+    const signature = signatureFile === undefined ? undefined : await readFile(userPath(invoked, signatureFile), "utf8");
     const result = await approve(cwd, processTerminal(), { ...(key ? { key } : {}), ...(signature ? { signature } : {}) });
     console.log(`Approved${result.signedBy ? ` (signed by ${result.signedBy})` : ""}${result.status === "closed" ? "; work closed." : "."}`);
     return 0;
@@ -309,10 +322,10 @@ async function dispatch(command: string, args: string[], cwd: string): Promise<n
     const report = await verifyRange(cwd, { base, ...(head ? { head } : {}), inPlace: args.includes("--in-place") });
     const { appendFile, writeFile } = await import("node:fs/promises");
     const json = option(args, "--json");
-    if (json) await writeFile(userPath(cwd, json), `${JSON.stringify(report, null, 2)}\n`);
+    if (json) await writeFile(userPath(invoked, json), `${JSON.stringify(report, null, 2)}\n`);
     const markdown = renderVerifyMarkdown(report);
     const summary = option(args, "--markdown") ?? process.env.GITHUB_STEP_SUMMARY;
-    if (summary) await appendFile(userPath(cwd, summary), markdown);
+    if (summary) await appendFile(userPath(invoked, summary), markdown);
     for (const failure of report.failures) console.error(failure);
     const backed = Object.entries(report.strength).map(([strength, count]) => `${count} ${strength}`).join(", ");
     console.log(`ways verify ${report.passed ? "passed" : "failed"} for ${report.base.slice(0, 12)}..${report.head.slice(0, 12)}: ${report.checks.filter((check) => check.status === "passed").length} check(s) passed, ${report.works.length} work(s)${backed ? `, criteria backed by ${backed}` : ""}.`);

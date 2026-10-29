@@ -65,9 +65,9 @@ export function gitDirs(cwd: string): GitDirs {
   let dirs = locate(cwd);
   if (!dirs) {
     const result = childProcess().spawnSync("git", ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"], { cwd, encoding: "utf8" });
-    if (result.status !== 0) throw new Error(`Not inside a Git working tree: ${cwd}`);
+    if (result.status !== 0) throw new Error(`Not inside a Git working tree: ${cwd}; run ways from inside your repository`);
     const [top, gitDir, common] = result.stdout.trim().split("\n");
-    if (!top || !gitDir || !common) throw new Error(`Not inside a Git working tree: ${cwd}`);
+    if (!top || !gitDir || !common) throw new Error(`Not inside a Git working tree: ${cwd}; run ways from inside your repository`);
     dirs = { top, gitDir, common };
   }
   resolved.set(cwd, dirs);

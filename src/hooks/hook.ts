@@ -160,7 +160,7 @@ async function judge(cwd: string, messagePath: string, stage: "prepare" | "final
       const list = tampered.join(" ");
       return {
         accepted: false,
-        message: `ways: refused: this commit changes ${list}, which only ways writes (the criteria fixed at open, the evidence it ran, reviews and human approvals). Unstage it with \`git restore --staged ${list} && git restore ${list}\`; use \`ways done\`, \`ways review submit\` or \`ways approve\` instead. Integrating a branch that already contains the record with a squash? Commit with WAYS_DISABLE=1.`,
+        message: `ways: refused: this commit changes ${list}, which only ways writes (the criteria fixed at open, the evidence it ran, reviews and human approvals). Unstage it with \`git restore --staged ${list} && git restore ${list}\`; use \`ways done\` and \`ways review\` instead (approvals are the human's: \`ways approve\`). Integrating a branch that already contains the record with a squash? Commit with WAYS_DISABLE=1.`,
       };
     }
   }

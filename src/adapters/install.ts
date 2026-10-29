@@ -36,8 +36,19 @@ async function exists(path: string): Promise<boolean> {
 }
 
 async function readManifest(cwd: string): Promise<ManagedManifest> {
-  const value: unknown = JSON.parse(await readFile(join(cwd, MANIFEST_PATH), "utf8"));
-  if (!validateManifest(value)) throw new Error("Installed manifest is invalid");
+  let text: string;
+  try {
+    text = await readFile(join(cwd, MANIFEST_PATH), "utf8");
+  } catch {
+    throw new Error(`${MANIFEST_PATH} is missing: ways is not installed here. Run \`ways bootstrap --agents=<agents>\` instead, which installs ways and its adapters`);
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    value = undefined;
+  }
+  if (!validateManifest(value)) throw new Error(`${MANIFEST_PATH} is not a valid ways manifest; restore it with \`git checkout -- ${MANIFEST_PATH}\` or reinstall with \`ways bootstrap --force\``);
   return value;
 }
 
