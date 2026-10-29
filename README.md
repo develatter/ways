@@ -16,7 +16,7 @@ npx ways bootstrap --test-command='["npm","test"]'
 git add -A && git commit -m "chore: install ways"
 ```
 
-Bootstrap writes 19 files: `.ways/config.json`, two commit hooks and the agent-hook wrapper, `scripts/check.sh`, a CI job (`.github/workflows/ways.yml`, running `ways verify`), an `AGENTS.md` for you to fill in as a map of your project, a `CLAUDE.md` that imports it, the memory index, and the Claude Code and pi adapters (hooks, two skills, a reviewer agent). Codex and Cursor are available with `--agents=claude,pi,codex,cursor`.
+Bootstrap writes 21 files: `.ways/config.json`, two commit hooks and the agent-hook wrapper, `scripts/check.sh`, a CI job (`.github/workflows/ways.yml`, running `ways verify`), an `AGENTS.md` for you to fill in as a map of your project, a `CLAUDE.md` that imports it, the memory index, and the Claude Code and pi adapters (hooks, three skills, a reviewer agent). Codex and Cursor are available with `--agents=claude,pi,codex,cursor`.
 
 Fill in `AGENTS.md` (what the project is, where things live, the commands): that is the part only you can write.
 
@@ -71,7 +71,15 @@ It writes one short file under `.ways/knowledge/`; commit it with the change. `w
 
 **What the agent sees.** In Claude Code and pi you do not have to tell the agent about ways. Hooks hand it, at session start, a short brief (the active work and its criteria, what fails, what waits on whom, the next command, and the memory of the code in play), then only what changed, and say nothing when nothing did. Before a tool call they refuse hand edits of `.ways/work/`; at the end of a turn they remind the agent once of a failing run or a missing review, and tell you, not the agent, when your approval is pending or the agent blocked. Claude Code also gets each memory as a path rule, loaded when it opens that code. `npx ways context --brief` prints the brief; [docs/CONTEXT.md](docs/CONTEXT.md) explains it.
 
-The skills `ways-outcome` and `ways-remember` and the `ways-reviewer` agent are there when you want them (`/ways-outcome` in Claude Code).
+The skills `ways-outcome`, `ways-remember` and `ways-orchestrator` and the `ways-reviewer` agent are there when you want them (`/ways-outcome` in Claude Code).
+
+**See every agent at once, and what they wait on from you.**
+
+```bash
+npx ways serve --open      # or: npx ways serve --demo, to see it with made-up data
+```
+
+A local page (127.0.0.1, with a token in the URL it prints) with a live kanban of every worktree's work across your repositories (Preparing, Working, Verifying, Blocked, Waiting for you, Done), derived from the hooks, the records and `git worktree list`, and an inbox. Agents put questions there with `npx ways ask "<question>"` (or `--wait` for the answer now) and `ways block`; you answer on the page or with `npx ways inbox answer <id> "<answer>"`, and you tell an agent something with *Tell the agent* or `npx ways inbox tell "<instruction>" --work=<id>`. The agent gets each answer or instruction once, at its next prompt, stop or session start. Every inbox command takes `--json`, so an orchestrating agent can run the whole loop. See [docs/CONTROL_PLANE.md](docs/CONTROL_PLANE.md).
 
 ## What ways guarantees, and what it does not
 
@@ -143,7 +151,8 @@ The contract can add a `setup` command and `services` (`{"name", "command", "rea
 | `.ways/knowledge/` | Memory: short OKF concepts | yes |
 | `.ways/hooks/`, `scripts/check.sh` | Managed Git hooks, agent-hook wrapper and check script (hashed in `.ways/manifest.json`) | yes |
 | `.claude/rules/ways-*.md` | Memory as Claude Code path rules (generated; `ways memory index`) | yes |
-| `.git/ways/` | Active work, run log, flaky quarantine, test counts, base-run cache, search index, service logs, context caches, agent sessions and the [event log](docs/EVENTS.md) | no |
+| `.git/ways/` | Active work, run log, flaky quarantine, test counts, base-run cache, search index, service logs, context caches, agent sessions, the [event log](docs/EVENTS.md), the [inbox](docs/CONTROL_PLANE.md) and `serve.json` (the board's token, mode 0600) | no |
+| `~/.config/ways/` | `registry.json`: the repositories `ways serve` shows; `config.json`: `{"lang": "es"}` | no |
 | `$TMPDIR/ways-eval/` | The clean checkout `ways done` evaluates in (a Git worktree, reused) | no |
 
 ## Upgrading from 0.2

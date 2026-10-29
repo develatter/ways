@@ -22,12 +22,13 @@ Evaluation in a clean, reused checkout with the base's check contract; verifiers
 
 Still open from it: the adversarial corpus has not been run with real models (target: no closed `tamper-test`/`tamper-config` shortcut in five runs per agent); the ratchet only reads common runners' summaries, and in CI only finds a baseline in committed evidence; a pi reviewer is a process (pi has no subagents); in-toto attestations of `ways verify` and mutation testing are not done.
 
+## Done: control plane
+
+`ways serve`: a live board on 127.0.0.1 of every worktree's work across registered repositories, derived from worktrees, records, the last run, the event bus and the inbox; a typed inbox in files (`ways ask [--wait]`, `ways inbox list|show|answer|close|tell`, `--json` everywhere) whose answers and instructions the hooks deliver once; `ways block` in the inbox; approvals from the board where signatures are not required; one static page under 60 KB, en/es; a `ways-orchestrator` skill; `--demo`. See [decision 0008](decisions/0008-control-plane.md) and [docs/CONTROL_PLANE.md](CONTROL_PLANE.md).
+
+Still open from it: the round trip is tested with Claude Code and pi hook payloads, not yet with live agents; liveness depends on hook events, and Claude Code only reports guarded and file-writing tools, so a long shell command reads as stalled after 10 minutes; an idle agent gets an answer only at its next prompt; inbox transitions are not in the event bus.
+
 ## Next phases and their exit criteria
-
-### Control plane
-
-- A local, read-mostly kanban derived from the work state, and an inbox for the orchestrating agent (questions, approvals, blockers, decisions, instructions).
-- Bound to localhost, no new runtime dependencies.
 
 ### Documentalist
 

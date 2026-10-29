@@ -48,4 +48,4 @@ Never recorded: prompts (not even their length), file contents, command lines, c
 - **Tolerant readers.** `parseEvents` skips lines that do not parse or are not version 1. `readSessionEvents` reads a session's rotated files and current file in order; hooks only read the last 256 KiB of the current file.
 - **Never blocking.** A hook that cannot write its event still answers the agent; an internal error is logged as `hook.error` when the log itself is writable.
 
-The functions live in `src/events/bus.ts` (`appendEvent`, `readSessionEvents`, `readAllEvents`, `pruneEvents`) and are exported for the board.
+The functions live in `src/events/bus.ts` (`appendEvent`, `readSessionEvents`, `readAllEvents`, `pruneEvents`). The board (`ways serve`, [CONTROL_PLANE.md](CONTROL_PLANE.md)) follows the directory incrementally, reading only what was appended since its last refresh, and folds each session into its latest state: live, stopped (a `Stop` that let the agent stop), ended, or stalled (no event for 10 minutes).
